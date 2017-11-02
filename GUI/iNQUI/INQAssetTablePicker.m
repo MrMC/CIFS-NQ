@@ -100,8 +100,8 @@
 
 - (NSArray*)assetsForIndexPath:(NSIndexPath*)_indexPath {
     
-	int index = (_indexPath.row*4);
-	int maxIndex = (_indexPath.row*4+3);
+	NSInteger index = (_indexPath.row*4);
+	NSInteger maxIndex = (_indexPath.row*4+3);
     
 	if(maxIndex < [self.elcAssets count]) {
         

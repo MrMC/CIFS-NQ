@@ -64,7 +64,10 @@
     // Analyze対応 [Potential leak of an object stored into 'spaceButton']
     [spaceButton release];
     
-    self.toolbarItems = items;  
+    self.toolbarItems = items;
+    CGRect frame = self.tableView.frame;
+    frame.size.height -= 20 + (2 * self.navigationController.toolbar.frame.size.height);
+    self.tableView.frame = frame;
     
     // ---------------------------------------------------------------------
     // iOS7以降対応 : UINavigationBarとStatusBarをUIViewに上被せで表示させない処理
@@ -95,7 +98,18 @@
 }
 
 - (void)viewDidAppear:(BOOL)animated {
-    [super viewDidAppear:animated];    
+    [super viewDidAppear:animated];
+    //[self.tableView reloadData];
+}
+
+-(void)viewWillLayoutSubviews
+{
+  [super viewDidLayoutSubviews];
+  CGRect rect = self.navigationController.navigationBar.frame;
+  float y = -rect.origin.y;
+  rect = self.navigationController.toolbar.frame;
+  float b = -rect.size.height;
+  self.tableView.contentInset = UIEdgeInsetsMake(y, 0, b, 0);
 }
 
 #if 1

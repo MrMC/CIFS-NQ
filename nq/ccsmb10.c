@@ -2551,7 +2551,7 @@ static NQ_STATUS queryFsInfoByLevel(CCShare * pShare, CCVolumeInfo * pInfo, NQ_U
 	return NQ_SUCCESS;
 }
 
-void fsSizeCallback(CMBufferReader * pReader, CCVolumeInfo * pInfo)
+static void fsSizeCallback(CMBufferReader * pReader, CCVolumeInfo * pInfo)
 {
 	NQ_UINT64 temp64;		/* for parsing 64-bit values */
 	NQ_UINT32 temp32;		/* for parsing 32-bit values */
@@ -2567,7 +2567,7 @@ void fsSizeCallback(CMBufferReader * pReader, CCVolumeInfo * pInfo)
 	pInfo->bytesPerSector = (NQ_UINT)temp32;
 }
 
-void fsVolumeCallback(CMBufferReader * pReader, CCVolumeInfo * pInfo)
+static void fsVolumeCallback(CMBufferReader * pReader, CCVolumeInfo * pInfo)
 {
 	NQ_UINT32 temp32;		/* for parsing 32-bit values */
 

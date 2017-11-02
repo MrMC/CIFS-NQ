@@ -53,7 +53,7 @@ static void uncaughtExceptionHandler(NSException *exception)
     }
     
     [self initDocumentDirectory];        
-    [self startAllService];    
+    [self performSelectorInBackground:@selector(startAllService) withObject:nil];
     [self registerNotification];
     
     [self.naviController pushViewController:self.viewController animated:YES];
@@ -67,7 +67,7 @@ static void uncaughtExceptionHandler(NSException *exception)
     [[UIBarButtonItem appearance] setTitleTextAttributes: attributes
                                                 forState: UIControlStateNormal];
     
-    [self.window addSubview:self.naviController.view];    
+    [self.window setRootViewController:self.naviController];
     [self.window makeKeyAndVisible];
 
     DLog(@"Wifi LOCAL IP ADDRESS:%@",[self getIPAddress]);
@@ -107,7 +107,8 @@ static void uncaughtExceptionHandler(NSException *exception)
 - (void)startAllService {
     // INQ service 
     [[INQServiceManager sharedManager] startNetBios];
-    
+    sleep(5);
+
     // check for internet connection
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(checkNetworkStatus:) name:kReachabilityChangedNotification object:nil];
     
@@ -131,12 +132,11 @@ static void uncaughtExceptionHandler(NSException *exception)
             [[INQServiceManager sharedManager] startCifsServer];        
         }        
     }
-    
-    //[[INQServiceManager sharedManager] startBrowser];    
+    //[[INQServiceManager sharedManager] startBrowser];
 }
 
 - (void)stopAllService {
-    // [[INQServiceManager sharedManager] stopBrowser];
+    //[[INQServiceManager sharedManager] stopBrowser];
     [[INQServiceManager sharedManager] stopCifsServer];
     [[INQServiceManager sharedManager] stopNetBios];    
 }
@@ -310,10 +310,10 @@ static void uncaughtExceptionHandler(NSException *exception)
         NSString *computerName = [url host];
         // NSArray *arr = [computerName componentsSeparatedByString:@"//"];
         // computerName = [arr objectAtIndex:0];
-        int key = [[NSUserDefaults standardUserDefaults] integerForKey:@"KEY"];
+        NSInteger key = [[NSUserDefaults standardUserDefaults] integerForKey:@"KEY"];
         key++;        
         
-        computerId = [NSString stringWithFormat:@"%d",key];
+        computerId = [NSString stringWithFormat:@"%d",(int)key];
         [[NSUserDefaults standardUserDefaults] setInteger:key forKey:@"KEY"];
         
         NSMutableDictionary *data = [[NSMutableDictionary alloc]init];

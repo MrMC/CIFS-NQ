@@ -1724,7 +1724,7 @@ udDefSetUserAsAdministrator(
     else
     {
         rid  = -rid;
-         fprintf(tempFile, "%s:%s:%ld\n", matchName, matchPassword, rid);
+         fprintf(tempFile, "%s:%s:%d\n", matchName, matchPassword, rid);
     }
      fclose(tempFile);
     unlink(staticData->passwordFile);

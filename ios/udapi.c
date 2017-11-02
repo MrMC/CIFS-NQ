@@ -98,13 +98,14 @@ syInitPrinters(
     );
 #endif
 
+void joinDomain(void);
+
 #ifdef UD_CS_INCLUDEDOMAINMEMBERSHIP
 #if 0 // ITA - debug
 static
 #endif // ITA - debug//
 void
-joinDomain(
-    )
+joinDomain(void)
 {
     if (!udGetComputerSecret(NULL))
     {

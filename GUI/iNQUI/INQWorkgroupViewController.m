@@ -28,6 +28,7 @@
 @synthesize loadingMessageLabel;
 @synthesize backupDataTmpIndex;
 
+@synthesize addWorkgroupController = addWorkgroupController;
 /**
  * @brief 色定義関数(ナビゲーションバー、ツールバー用) 画面個別設定用
  */
@@ -60,6 +61,7 @@
 
 /**
  * @brief Viewが初めて呼び出される時に実行される処理(1回だけ)
+ * @brief View Processed when first invoked (once only)
  */
 - (void)viewDidLoad
 {
@@ -75,13 +77,13 @@
                                                      alpha:1.0];
     [self done:self];
 
-    //dataSource = [[INQComputerDataSource alloc]init];
-    //self.tableView.dataSource = dataSource;
+    dataSource = [[INQComputerDataSource alloc]init];
+    self.tableView.dataSource = dataSource;
     
-    //[dataSource setDelegate:self];
-    //self.tableView.delegate = self;
+    [dataSource setDelegate:self];
+    self.tableView.delegate = self;
     
-    //[dataSource getWorkgroups];
+    [dataSource getWorkgroups];
     
 
     INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
@@ -200,6 +202,7 @@
 
 /**
  * @brief ナビゲーションバーボタン"編集" クリックイベントハンドラ
+ * @brief Navigation bar button "Edit" Click event handler
  */
 
 - (void)loadWorkgroups
@@ -446,104 +449,104 @@
  */
 - (void)addWorkgroup
 {
-    INQAddWorkgroupViewController *controller = [[INQAddWorkgroupViewController alloc]init];
-
-    // ナビゲーションバーのタイトル識別子設定
-    INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
-    app.typeAddWorkGroupView = TRUE;
-
-    // ナビゲーションバーの戻るボタンのタイトルを設定
-    UIBarButtonItem *backButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Back",@"Back")
-                                                                  style:UIBarButtonItemStylePlain
-                                                                 target:nil
-                                                                 action:nil];
-    [self.navigationItem setBackBarButtonItem:backButton];
-    [backButton release];
-    
-    [self.navigationController pushViewController:controller animated:YES];
-    [controller release];    
+  INQAddWorkgroupViewController *controller = [[INQAddWorkgroupViewController alloc]init];
+  
+  // ナビゲーションバーのタイトル識別子設定
+  INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
+  app.typeAddWorkGroupView = TRUE;
+  
+  // ナビゲーションバーの戻るボタンのタイトルを設定
+  UIBarButtonItem *backButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Back",@"Back")
+                                                                style:UIBarButtonItemStylePlain
+                                                               target:nil
+                                                               action:nil];
+  [self.navigationItem setBackBarButtonItem:backButton];
+  [backButton release];
+  
+  [self.navigationController pushViewController:controller animated:YES];
+  [controller release];    
 }
 
 - (void)viewDidUnload
 {
-    [super viewDidUnload];
-    [dataSource release];
-    [data_ release];
-
-    [dataTmp_ release];
-    self.dataTmp = nil;
-
-    [textField release];
-    textField = nil;
-    self.data = nil;
-    dataSource = nil;  
+  [super viewDidUnload];
+  [dataSource release];
+  [data_ release];
+  
+  [dataTmp_ release];
+  self.dataTmp = nil;
+  
+  [textField release];
+  textField = nil;
+  self.data = nil;
+  dataSource = nil;  
 }
 
 - (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation {
-    return (interfaceOrientation == UIInterfaceOrientationPortrait);
+  return (interfaceOrientation == UIInterfaceOrientationPortrait);
 }
 
 /**
  * @brief Alert表示処理(テキスト入力処理付き)
  */
 /*- (void)showWithTitle:(NSString *)title text:(NSString *)text
-{
-    // text field付きアラート表示の処理変更
-    NSString* message = Nil;
-    NSString* buttonTitleCancel = @"Cancel";
-    NSString* buttonTitleOK = @"OK";
-    
-    UIAlertView* alert = [[UIAlertView alloc] initWithTitle:title
-                                                    message:message
-                                                   delegate:self
-                                          cancelButtonTitle:buttonTitleCancel
-                                          otherButtonTitles:buttonTitleOK,nil];
-    
-    alert.alertViewStyle = UIAlertViewStylePlainTextInput;
-    UITextField *textFieldLocal = [alert textFieldAtIndex:0];
-    
-    // alertView識別用タグの設定
-    alert.tag = 1000;
-    
-    // init a text field in a UIAlertView
-    [textFieldLocal setAutocorrectionType:UITextAutocorrectionTypeNo];
-    // 保存済みワークグループ名を初期表示として設定
-    [textFieldLocal setText:[self getSerachWorkgroupName]];
-    [alert show];
-    [alert release];
-}*/
+ {
+ // text field付きアラート表示の処理変更
+ NSString* message = Nil;
+ NSString* buttonTitleCancel = @"Cancel";
+ NSString* buttonTitleOK = @"OK";
+ 
+ UIAlertView* alert = [[UIAlertView alloc] initWithTitle:title
+ message:message
+ delegate:self
+ cancelButtonTitle:buttonTitleCancel
+ otherButtonTitles:buttonTitleOK,nil];
+ 
+ alert.alertViewStyle = UIAlertViewStylePlainTextInput;
+ UITextField *textFieldLocal = [alert textFieldAtIndex:0];
+ 
+ // alertView識別用タグの設定
+ alert.tag = 1000;
+ 
+ // init a text field in a UIAlertView
+ [textFieldLocal setAutocorrectionType:UITextAutocorrectionTypeNo];
+ // 保存済みワークグループ名を初期表示として設定
+ [textFieldLocal setText:[self getSerachWorkgroupName]];
+ [alert show];
+ [alert release];
+ }*/
 
 /**
  * @brief Alert表示処理(ユーザーID、パスワード入力欄付き)
  */
 - (void)showAlertWithInputUserIdAndPassWord:(NSString *)title
 {
-    // text field付きアラート表示の処理変更
-    NSString* message = nil;
-    NSString* buttonTitleCancel = @"Cancel";
-    NSString* buttonTitleOK = @"OK";
-    
-    UIAlertView* alert = [[UIAlertView alloc] initWithTitle:title
-                                                    message:message
-                                                   delegate:self
-                                          cancelButtonTitle:buttonTitleCancel
-                                          otherButtonTitles:buttonTitleOK,nil];
-    
-    alert.alertViewStyle = UIAlertViewStyleLoginAndPasswordInput;
-    
-    [[alert textFieldAtIndex:0] setPlaceholder:NSLocalizedString(@"UserID", @"UserID")];
-    
-    UITextField *textFieldLocal = [alert textFieldAtIndex:0];
-    UITextField *textFieldLocal2 = [alert textFieldAtIndex:1];
-    
-    // alertView識別用タグの設定
-    alert.tag = 1001;
-    
-    // init a text field in a UIAlertView
-    [textFieldLocal setAutocorrectionType:UITextAutocorrectionTypeNo];
-    [textFieldLocal2 setAutocorrectionType:UITextAutocorrectionTypeNo];
-    [alert show];
-    [alert release];
+  // text field付きアラート表示の処理変更
+  NSString* message = nil;
+  NSString* buttonTitleCancel = @"Cancel";
+  NSString* buttonTitleOK = @"OK";
+  
+  UIAlertView* alert = [[UIAlertView alloc] initWithTitle:title
+                                                  message:message
+                                                 delegate:self
+                                        cancelButtonTitle:buttonTitleCancel
+                                        otherButtonTitles:buttonTitleOK,nil];
+  
+  alert.alertViewStyle = UIAlertViewStyleLoginAndPasswordInput;
+  
+  [[alert textFieldAtIndex:0] setPlaceholder:NSLocalizedString(@"UserID", @"UserID")];
+  
+  UITextField *textFieldLocal = [alert textFieldAtIndex:0];
+  UITextField *textFieldLocal2 = [alert textFieldAtIndex:1];
+  
+  // alertView識別用タグの設定
+  alert.tag = 1001;
+  
+  // init a text field in a UIAlertView
+  [textFieldLocal setAutocorrectionType:UITextAutocorrectionTypeNo];
+  [textFieldLocal2 setAutocorrectionType:UITextAutocorrectionTypeNo];
+  [alert show];
+  [alert release];
 }
 
 /**
@@ -551,32 +554,32 @@
  */
 - (void)startLoadingView:(NSString *)workgroup
 {
-    //loadingView = [[UIView alloc] initWithFrame:self.navigationController.view.bounds];
-    loadingView = [[UIView alloc] initWithFrame:self.view.bounds];
-    [loadingView setBackgroundColor:[UIColor blackColor]];
-    [loadingView setAlpha:0.5];
-    
-    indicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhiteLarge];
-    
-    [self.view addSubview:loadingView];
-    [self.navigationController.view addSubview:loadingView];
-    [loadingView addSubview:indicator];
-    
-    CGRect rect = [[UIScreen mainScreen] bounds];
-    [indicator setFrame:CGRectMake (rect.size.width / 2 - 20 , rect.size.height / 2 - 40, 40, 40)];
-    [indicator startAnimating];
-
-    loadingMessageLabel = [[UILabel alloc]initWithFrame:CGRectMake( 0, indicator.frame.origin.y + 30, rect.size.width, 50)];
-    loadingMessageLabel.backgroundColor = [UIColor clearColor];
-    loadingMessageLabel.textColor = [UIColor colorWithRed:255.f/255.f green:255.f/255.f blue:255.f/255.f alpha:0.5];
-    loadingMessageLabel.font = [UIFont fontWithName:@"AppleGothic" size:12];
-    loadingMessageLabel.numberOfLines = 2;
-    loadingMessageLabel.minimumScaleFactor = 8.f/12.f;
-    loadingMessageLabel.textAlignment = NSTextAlignmentCenter;
-    [self.navigationController.view addSubview:loadingMessageLabel];
-    
-    NSString *labelText = [[NSLocalizedString(@"Searching...",@"Searching...") stringByAppendingString:@"\n"] stringByAppendingString:workgroup];
-    [loadingMessageLabel setText:labelText];
+  //loadingView = [[UIView alloc] initWithFrame:self.navigationController.view.bounds];
+  loadingView = [[UIView alloc] initWithFrame:self.view.bounds];
+  [loadingView setBackgroundColor:[UIColor blackColor]];
+  [loadingView setAlpha:0.5];
+  
+  indicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhiteLarge];
+  
+  [self.view addSubview:loadingView];
+  [self.navigationController.view addSubview:loadingView];
+  [loadingView addSubview:indicator];
+  
+  CGRect rect = [[UIScreen mainScreen] bounds];
+  [indicator setFrame:CGRectMake (rect.size.width / 2 - 20 , rect.size.height / 2 - 40, 40, 40)];
+  [indicator startAnimating];
+  
+  loadingMessageLabel = [[UILabel alloc]initWithFrame:CGRectMake( 0, indicator.frame.origin.y + 30, rect.size.width, 50)];
+  loadingMessageLabel.backgroundColor = [UIColor clearColor];
+  loadingMessageLabel.textColor = [UIColor colorWithRed:255.f/255.f green:255.f/255.f blue:255.f/255.f alpha:0.5];
+  loadingMessageLabel.font = [UIFont fontWithName:@"AppleGothic" size:12];
+  loadingMessageLabel.numberOfLines = 2;
+  loadingMessageLabel.minimumScaleFactor = 8.f/12.f;
+  loadingMessageLabel.textAlignment = NSTextAlignmentCenter;
+  [self.navigationController.view addSubview:loadingMessageLabel];
+  
+  NSString *labelText = [[NSLocalizedString(@"Searching...",@"Searching...") stringByAppendingString:@"\n"] stringByAppendingString:workgroup];
+  [loadingMessageLabel setText:labelText];
 }
 
 /**
@@ -584,9 +587,9 @@
  */
 - (void)stopLoadingView
 {
-    [indicator stopAnimating];
-    [loadingView removeFromSuperview];
-    [loadingMessageLabel removeFromSuperview];
+  [indicator stopAnimating];
+  [loadingView removeFromSuperview];
+  [loadingMessageLabel removeFromSuperview];
 }
 
 /**
@@ -594,15 +597,15 @@
  */
 - (NSString *)getSerachWorkgroupName
 {
-    NSString *workgroup = [[NSUserDefaults standardUserDefaults] objectForKey:@"SERACH_WORKGROUP"];
-    if( workgroup == nil )
-    {
-        workgroup = @"WORKGROUP";
-        // 更新
-        [self updateSerachWorkgroupName:workgroup];
-    }
-    
-    return workgroup;
+  NSString *workgroup = [[NSUserDefaults standardUserDefaults] objectForKey:@"SERACH_WORKGROUP"];
+  if( workgroup == nil )
+  {
+    workgroup = @"WORKGROUP";
+    // 更新
+    [self updateSerachWorkgroupName:workgroup];
+  }
+  
+  return workgroup;
 }
 
 /**
@@ -610,9 +613,9 @@
  */
 - (void)updateSerachWorkgroupName:(NSString *)workgroup
 {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    [defaults setObject:workgroup forKey:@"SERACH_WORKGROUP"];
-    [defaults synchronize];
+  NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+  [defaults setObject:workgroup forKey:@"SERACH_WORKGROUP"];
+  [defaults synchronize];
 }
 
 #pragma mark -
@@ -625,94 +628,94 @@
  */
 - (void)alertView:(UIAlertView *)alertView clickedButtonAtIndex:(NSInteger)buttonIndex
 {
-    
-
-	if (buttonIndex == 1)
+  
+  
+  if (buttonIndex == 1)
+  {
+    if(alertView.tag == 1001)
     {
-        if(alertView.tag == 1001)
-        {
-            
-            INQSharedFolderViewController *controller = [[INQSharedFolderViewController alloc]init];
-            controller.computerInfo = [self.data objectAtIndex:self.backupDataTmpIndex];
-            controller.isBookMark = self.isBookMark;
-            
-            // コンピュータ情報の更新(有効)
-            INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
-            app.isUpdateComputerInfo = TRUE;
-            
-            // ナビゲーションバーのタイトルにコンピュータの表示名を設定
-            controller.navigationItem.title = controller.computerInfo.displayName;
-            
-            controller.computerInfo.userName =
-            [[[alertView textFieldAtIndex:0] text]
-             stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            controller.computerInfo.password =
-            [[[alertView textFieldAtIndex:1] text]
-             stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            
-            [self.navigationController pushViewController:controller animated:NO];
-            [controller release];
-        }
-        /*
-        if(alertView.tag == 1000)
-        {
-            // text field付きアラート表示の処理変更
-            // textFieldの入力内容を取得
-            NSString *inputText =
-                [[[alertView textFieldAtIndex:0] text] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-
-            if (inputText == nil || [inputText length] == 0)
-            {
-                // テーブルビューの選択状態を解除
-                [self.tableView reloadData];
-
-                return;
-            }
-            
-            // 入力されたワークグループ名を保存
-            [self updateSerachWorkgroupName:inputText];
-            
-            // ロード中表示の開始
-            [self startLoadingView:inputText];
-            [self.addWorkgroupController startLoadingView:inputText];
-
-            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                [dataSource getComputers:inputText];
-            });
-        }
-        else if(alertView.tag == 1001)
-        {
-
-            INQSharedFolderViewController *controller = [[INQSharedFolderViewController alloc]init];
-            controller.computerInfo = [self.data objectAtIndex:self.backupDataTmpIndex];
-            controller.isBookMark = self.isBookMark;
-            
-            // コンピュータ情報の更新(有効)
-            INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
-            app.isUpdateComputerInfo = TRUE;
-            
-            // ナビゲーションバーのタイトルにコンピュータの表示名を設定
-            controller.navigationItem.title = controller.computerInfo.displayName;
-                
-            controller.computerInfo.userName =
-                [[[alertView textFieldAtIndex:0] text]
-                 stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            controller.computerInfo.password =
-                [[[alertView textFieldAtIndex:1] text]
-                 stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            
-            [self.navigationController pushViewController:controller animated:NO];
-            [controller release];
-        } */
-	}
-    
-    
-
-    else if( buttonIndex == 0)
-    {
-        // テーブルビューの選択状態を解除
-        [self.tableView reloadData];
+      
+      INQSharedFolderViewController *controller = [[INQSharedFolderViewController alloc]init];
+      controller.computerInfo = [self.data objectAtIndex:self.backupDataTmpIndex];
+      controller.isBookMark = self.isBookMark;
+      
+      // コンピュータ情報の更新(有効)
+      INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
+      app.isUpdateComputerInfo = TRUE;
+      
+      // ナビゲーションバーのタイトルにコンピュータの表示名を設定
+      controller.navigationItem.title = controller.computerInfo.displayName;
+      
+      controller.computerInfo.userName =
+      [[[alertView textFieldAtIndex:0] text]
+       stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      controller.computerInfo.password =
+      [[[alertView textFieldAtIndex:1] text]
+       stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+      
+      [self.navigationController pushViewController:controller animated:NO];
+      [controller release];
     }
+    /*
+     if(alertView.tag == 1000)
+     {
+     // text field付きアラート表示の処理変更
+     // textFieldの入力内容を取得
+     NSString *inputText =
+     [[[alertView textFieldAtIndex:0] text] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+     
+     if (inputText == nil || [inputText length] == 0)
+     {
+     // テーブルビューの選択状態を解除
+     [self.tableView reloadData];
+     
+     return;
+     }
+     
+     // 入力されたワークグループ名を保存
+     [self updateSerachWorkgroupName:inputText];
+     
+     // ロード中表示の開始
+     [self startLoadingView:inputText];
+     [self.addWorkgroupController startLoadingView:inputText];
+     
+     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+     [dataSource getComputers:inputText];
+     });
+     }
+     else if(alertView.tag == 1001)
+     {
+     
+     INQSharedFolderViewController *controller = [[INQSharedFolderViewController alloc]init];
+     controller.computerInfo = [self.data objectAtIndex:self.backupDataTmpIndex];
+     controller.isBookMark = self.isBookMark;
+     
+     // コンピュータ情報の更新(有効)
+     INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
+     app.isUpdateComputerInfo = TRUE;
+     
+     // ナビゲーションバーのタイトルにコンピュータの表示名を設定
+     controller.navigationItem.title = controller.computerInfo.displayName;
+     
+     controller.computerInfo.userName =
+     [[[alertView textFieldAtIndex:0] text]
+     stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+     controller.computerInfo.password =
+     [[[alertView textFieldAtIndex:1] text]
+     stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+     
+     [self.navigationController pushViewController:controller animated:NO];
+     [controller release];
+     } */
+  }
+  
+  
+  
+  else if( buttonIndex == 0)
+  {
+    // テーブルビューの選択状態を解除
+    [self.tableView reloadData];
+  }
 }
 
 #pragma mark -
@@ -726,103 +729,103 @@
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
 #if 0
-    {
+  {
     INQAppDelegate *delegate = (INQAppDelegate*)[[UIApplication sharedApplication] delegate];
-
+    
     // search workgroup
-
+    
     // wifi check
     if (!delegate.isWifi)
     {
-        [self alertMessage:NSLocalizedString(@"WifiOnly", @"wifi is off")];
-        return;
+      [self alertMessage:NSLocalizedString(@"WifiOnly", @"wifi is off")];
+      return;
     }
-
+    
     // セクション数が 1 の場合で且つ検索データ件数とセルの位置が一致する場合はワークグループ入力
     if(([tableView numberOfSections] == 1) && (indexPath.row == [self.dataTmp count]))
     {
-        [self showWithTitle:NSLocalizedString(@"InputWorkgroup", @"Input Workgroup") text:@"WORKGROUP"];
-        return;
+      [self showWithTitle:NSLocalizedString(@"InputWorkgroup", @"Input Workgroup") text:@"WORKGROUP"];
+      return;
     }
     else if ([tableView numberOfSections] == 1)
     {
-        self.backupDataTmpIndex = indexPath.row;
-        // ユーザID、パスワードを入力用Alert表示
-        [self showAlertWithInputUserIdAndPassWord:NSLocalizedString(@"InputLoginInfo", @"Input UserID and Password")];
-        return;
+      self.backupDataTmpIndex = indexPath.row;
+      // ユーザID、パスワードを入力用Alert表示
+      [self showAlertWithInputUserIdAndPassWord:NSLocalizedString(@"InputLoginInfo", @"Input UserID and Password")];
+      return;
     }
     
     if (indexPath.section == 1 && (indexPath.row == [self.dataTmp count]))
     {
-        [self showWithTitle:NSLocalizedString(@"InputWorkgroup", @"Input Workgroup") text:@"WORKGROUP"];
-        return;
+      [self showWithTitle:NSLocalizedString(@"InputWorkgroup", @"Input Workgroup") text:@"WORKGROUP"];
+      return;
     }
     
     if(indexPath.section == 0)
     {
-        // 共有フォルダ用View初期化
-        INQSharedFolderViewController *controller = [[INQSharedFolderViewController alloc]init];
-        controller.computerInfo = [self.data objectAtIndex:indexPath.row];
-        controller.isBookMark = self.isBookMark;
-        
-        // コンピュータ情報の更新(無効)
-        INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
-        app.isUpdateComputerInfo = FALSE;
-        
-        // ナビゲーションバーのタイトルにコンピュータの表示名を設定
-        controller.navigationItem.title = controller.computerInfo.displayName;
-        
-        [self.navigationController pushViewController:controller animated:NO];
-        [controller release];
-        return;
+      // 共有フォルダ用View初期化
+      INQSharedFolderViewController *controller = [[INQSharedFolderViewController alloc]init];
+      controller.computerInfo = [self.data objectAtIndex:indexPath.row];
+      controller.isBookMark = self.isBookMark;
+      
+      // コンピュータ情報の更新(無効)
+      INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
+      app.isUpdateComputerInfo = FALSE;
+      
+      // ナビゲーションバーのタイトルにコンピュータの表示名を設定
+      controller.navigationItem.title = controller.computerInfo.displayName;
+      
+      [self.navigationController pushViewController:controller animated:NO];
+      [controller release];
+      return;
     }
     if(indexPath.section == 1)
     {
-        self.backupDataTmpIndex = indexPath.row;
-        // ユーザID、パスワードを入力用Alert表示
-        [self showAlertWithInputUserIdAndPassWord:NSLocalizedString(@"InputLoginInfo", @"Input UserID and Password")];
-        return;
+      self.backupDataTmpIndex = indexPath.row;
+      // ユーザID、パスワードを入力用Alert表示
+      [self showAlertWithInputUserIdAndPassWord:NSLocalizedString(@"InputLoginInfo", @"Input UserID and Password")];
+      return;
     }
-    }
+  }
 #else
-    if (!pressedDomain)
-    {
-        INQDomain *domain;
-        domain = [self.domainList objectAtIndex:indexPath.row];
-        //[self startLoadingView:domain.domainName];
-        //DLog(" About to start computers loading view");
-        [self.addWorkgroupController startLoadingView:domain.domainName];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [dataSource getComputers:domain.domainName];
-            //[self stopLoadingView];
-            [self.addWorkgroupController stopLoadingView];
-        });
-        
-        pressedDomain = YES;
-        [self.tableView reloadData];
-    }
-    else
-    {
-        self.backupDataTmpIndex = indexPath.row;
-        [self showAlertWithInputUserIdAndPassWord:NSLocalizedString(@"InputLoginInfo", @"Input UserID and Password")];
-        
-        INQSharedFolderViewController *controller = [[INQSharedFolderViewController alloc]init];
-        DLog(" computer in row = %ld \n", (long)indexPath.row);
-        controller.computerInfo = [self.data objectAtIndex:indexPath.row];
-        //controller.isBookMark = self.isBookMark;
-        
-        // コンピュータ情報の更新(無効)
-        INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
-        app.isUpdateComputerInfo = FALSE;
-        
-        // ナビゲーションバーのタイトルにコンピュータの表示名を設定
-        controller.navigationItem.title = controller.computerInfo.displayName;
-        //[self.navigationController pushViewController:controller animated:NO];
-        
-        [controller release];
-        return;
-    }
+  if (!pressedDomain)
+  {
+    INQDomain *domain;
+    domain = [self.domainList objectAtIndex:indexPath.row];
+    //[self startLoadingView:domain.domainName];
+    //DLog(" About to start computers loading view");
+    [self.addWorkgroupController startLoadingView:domain.domainName];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [dataSource getComputers:domain.domainName];
+      //[self stopLoadingView];
+      [self.addWorkgroupController stopLoadingView];
+    });
     
+    pressedDomain = YES;
+    [self.tableView reloadData];
+  }
+  else
+  {
+    self.backupDataTmpIndex = indexPath.row;
+    [self showAlertWithInputUserIdAndPassWord:NSLocalizedString(@"InputLoginInfo", @"Input UserID and Password")];
+    
+    INQSharedFolderViewController *controller = [[INQSharedFolderViewController alloc]init];
+    DLog(" computer in row = %ld \n", (long)indexPath.row);
+    controller.computerInfo = [self.data objectAtIndex:indexPath.row];
+    //controller.isBookMark = self.isBookMark;
+    
+    // コンピュータ情報の更新(無効)
+    INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
+    app.isUpdateComputerInfo = FALSE;
+    
+    // ナビゲーションバーのタイトルにコンピュータの表示名を設定
+    controller.navigationItem.title = controller.computerInfo.displayName;
+    //[self.navigationController pushViewController:controller animated:NO];
+    
+    [controller release];
+    return;
+  }
+  
 #endif
 }
 
@@ -834,137 +837,137 @@
  */
 - (void)tableView:(UITableView *)tableView accessoryButtonTappedForRowWithIndexPath:(NSIndexPath *)indexPath
 {
-    INQAddWorkgroupViewController *controller = [[INQAddWorkgroupViewController alloc]init];
-
-    // ナビゲーションバーのタイトル識別子設定
-    INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
-    app.typeAddWorkGroupView = FALSE;
-
-    // ナビゲーションバーの戻るボタンのタイトルを設定
-    UIBarButtonItem *backButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Back",@"Back")
-                                                                  style:UIBarButtonItemStylePlain
-                                                                 target:nil
-                                                                 action:nil];
-    [self.navigationItem setBackBarButtonItem:backButton];
-    [backButton release];
-
-    [self.navigationController pushViewController:controller animated:YES];
-    
-    if([tableView numberOfSections] == 1)
+  INQAddWorkgroupViewController *controller = [[INQAddWorkgroupViewController alloc]init];
+  
+  // ナビゲーションバーのタイトル識別子設定
+  INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
+  app.typeAddWorkGroupView = FALSE;
+  
+  // ナビゲーションバーの戻るボタンのタイトルを設定
+  UIBarButtonItem *backButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Back",@"Back")
+                                                                style:UIBarButtonItemStylePlain
+                                                               target:nil
+                                                               action:nil];
+  [self.navigationItem setBackBarButtonItem:backButton];
+  [backButton release];
+  
+  [self.navigationController pushViewController:controller animated:YES];
+  
+  if([tableView numberOfSections] == 1)
+  {
+    // セクション数が 1 の場合は検索データ側を適応
+    if (self.dataTmp != nil)
     {
-        // セクション数が 1 の場合は検索データ側を適応
-        if (self.dataTmp != nil)
-        {
-            controller.data = [self.dataTmp objectAtIndex:indexPath.row];
-        }
+      controller.data = [self.dataTmp objectAtIndex:indexPath.row];
     }
-    else
+  }
+  else
+  {
+    // セクションに応じて保存データか検索データかを切り分ける処理を追加
+    // セクション0:保存データ
+    if( indexPath.section == 0 )
     {
-        // セクションに応じて保存データか検索データかを切り分ける処理を追加
-        // セクション0:保存データ
-        if( indexPath.section == 0 )
-        {
-            if (self.data != nil)
-            {
-                controller.data = [self.data objectAtIndex:indexPath.row];
-            }
-        }
-        // セクション1:検索データ
-        else if( indexPath.section == 1 )
-        {
-            if (self.dataTmp != nil)
-            {
-                controller.data = [self.dataTmp objectAtIndex:indexPath.row];
-            }
-        }
+      if (self.data != nil)
+      {
+        controller.data = [self.data objectAtIndex:indexPath.row];
+      }
     }
-    [controller release];
+    // セクション1:検索データ
+    else if( indexPath.section == 1 )
+    {
+      if (self.dataTmp != nil)
+      {
+        controller.data = [self.dataTmp objectAtIndex:indexPath.row];
+      }
+    }
+  }
+  [controller release];
 }
 
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
 {
-    UIView *sectionView;
-    UILabel *textLabel;
-    if ([[[[UIDevice currentDevice] systemVersion] componentsSeparatedByString:@"."][0] intValue] >= 7)
-    {
-        sectionView = [[[UIView alloc]initWithFrame:CGRectMake(0, 0, [UIScreen mainScreen].bounds.size.width, 50)]autorelease];
-        textLabel = [[[UILabel alloc]initWithFrame:CGRectMake(10, 20, [UIScreen mainScreen].bounds.size.width, 30)]autorelease];
-    }
-    else
-    {
-        sectionView = [[[UIView alloc]initWithFrame:CGRectMake(0, 0, [UIScreen mainScreen].bounds.size.width, 40)]autorelease];
-        textLabel = [[[UILabel alloc]initWithFrame:CGRectMake(10, 15, [UIScreen mainScreen].bounds.size.width, 20)]autorelease];
-    }
-    
-    sectionView.backgroundColor = [UIColor clearColor];
-    
-    textLabel.backgroundColor = [UIColor clearColor];
-    textLabel.textColor = [UIColor darkGrayColor];
-    textLabel.font = [UIFont boldSystemFontOfSize:16.0f];
-    textLabel.shadowColor = [UIColor whiteColor];
-    textLabel.shadowOffset = CGSizeMake(0, 1);
-    
-    // セクション数が 1 の場合は検索データ側が該当
-    if([tableView numberOfSections] == 1)
-    {
-        textLabel.text = NSLocalizedString(@"SearchWorkGroup",@"SearchWorkGroup");
-    }
-    else
-    {
-        if (section == 0) {
-            textLabel.text = NSLocalizedString(@"SavedWorkGroup",@"SavedWorkGroup");
-        }
-        
-        if (section == 1) {
-            textLabel.text = NSLocalizedString(@"SearchWorkGroup",@"SearchWorkGroup");
-        }
+  UIView *sectionView;
+  UILabel *textLabel;
+  if ([[[[UIDevice currentDevice] systemVersion] componentsSeparatedByString:@"."][0] intValue] >= 7)
+  {
+    sectionView = [[[UIView alloc]initWithFrame:CGRectMake(0, 0, [UIScreen mainScreen].bounds.size.width, 50)]autorelease];
+    textLabel = [[[UILabel alloc]initWithFrame:CGRectMake(10, 20, [UIScreen mainScreen].bounds.size.width, 30)]autorelease];
+  }
+  else
+  {
+    sectionView = [[[UIView alloc]initWithFrame:CGRectMake(0, 0, [UIScreen mainScreen].bounds.size.width, 40)]autorelease];
+    textLabel = [[[UILabel alloc]initWithFrame:CGRectMake(10, 15, [UIScreen mainScreen].bounds.size.width, 20)]autorelease];
+  }
+  
+  sectionView.backgroundColor = [UIColor clearColor];
+  
+  textLabel.backgroundColor = [UIColor clearColor];
+  textLabel.textColor = [UIColor darkGrayColor];
+  textLabel.font = [UIFont boldSystemFontOfSize:16.0f];
+  textLabel.shadowColor = [UIColor whiteColor];
+  textLabel.shadowOffset = CGSizeMake(0, 1);
+  
+  // セクション数が 1 の場合は検索データ側が該当
+  if([tableView numberOfSections] == 1)
+  {
+    textLabel.text = NSLocalizedString(@"SearchWorkGroup",@"SearchWorkGroup");
+  }
+  else
+  {
+    if (section == 0) {
+      textLabel.text = NSLocalizedString(@"SavedWorkGroup",@"SavedWorkGroup");
     }
     
-    [sectionView addSubview:textLabel];
-    
-    return sectionView;
+    if (section == 1) {
+      textLabel.text = NSLocalizedString(@"SearchWorkGroup",@"SearchWorkGroup");
+    }
+  }
+  
+  [sectionView addSubview:textLabel];
+  
+  return sectionView;
 }
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
 {
-    CGFloat heightSection;
-    if ([[[[UIDevice currentDevice] systemVersion] componentsSeparatedByString:@"."][0] intValue] >= 7)
-    {
-        heightSection = 50.0f;
-    }
-    else
-    {
-        heightSection = 40.0f;
-    }
-    
-    return heightSection;
+  CGFloat heightSection;
+  if ([[[[UIDevice currentDevice] systemVersion] componentsSeparatedByString:@"."][0] intValue] >= 7)
+  {
+    heightSection = 50.0f;
+  }
+  else
+  {
+    heightSection = 40.0f;
+  }
+  
+  return heightSection;
 }
 
 - (void)setEditing:(BOOL)editing animated:(BOOL)animated
 {
-    [super setEditing:editing animated:animated];
-    [self.tableView setEditing:editing animated:YES];
+  [super setEditing:editing animated:animated];
+  [self.tableView setEditing:editing animated:YES];
+  
+  if (editing)
+  {
+    UIBarButtonItem *doneButton =
+    [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
+                                                  target:self
+                                                  action:@selector(done:)];
     
-    if (editing)
-    {
-        UIBarButtonItem *doneButton =
-                    [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
-                                                                  target:self
-                                                                  action:@selector(done:)];
-
-        [self.navigationItem setRightBarButtonItem:doneButton animated:YES];
-        [doneButton release];
-    }
-    else
-    {
-        UIBarButtonItem *editButtonItem =
-                [[UIBarButtonItem alloc]initWithBarButtonSystemItem:UIBarButtonSystemItemEdit
-                                                             target:self
-                                                             action:@selector(editWorkgroup:)];
-
-        self.navigationItem.rightBarButtonItem = editButtonItem;
-        [editButtonItem release]; 
-    }
+    [self.navigationItem setRightBarButtonItem:doneButton animated:YES];
+    [doneButton release];
+  }
+  else
+  {
+    UIBarButtonItem *editButtonItem =
+    [[UIBarButtonItem alloc]initWithBarButtonSystemItem:UIBarButtonSystemItemEdit
+                                                 target:self
+                                                 action:@selector(editWorkgroup:)];
+    
+    self.navigationItem.rightBarButtonItem = editButtonItem;
+    [editButtonItem release]; 
+  }
 }
 
 /**
@@ -973,20 +976,20 @@
  */
 - (void)alertMessage:(NSString*)msg
 {
-
-    UIAlertView *alertView = [[UIAlertView alloc]initWithTitle:msg
-                                                       message:nil
-                                                      delegate:self
-                                             cancelButtonTitle:NSLocalizedString(@"AlertClose",@"alert window close button")
-                                             otherButtonTitles:nil, nil];
-    [alertView show];
-    [alertView release];
+  
+  UIAlertView *alertView = [[UIAlertView alloc]initWithTitle:msg
+                                                     message:nil
+                                                    delegate:self
+                                           cancelButtonTitle:NSLocalizedString(@"AlertClose",@"alert window close button")
+                                           otherButtonTitles:nil, nil];
+  [alertView show];
+  [alertView release];
 }
 
 #pragma mark - HOME Button.
 - (void)backToHome {
-    [self.navigationController popToViewController:[self.navigationController.viewControllers objectAtIndex:1] animated:YES];
-    
+  [self.navigationController popToViewController:[self.navigationController.viewControllers objectAtIndex:1] animated:YES];
+  
 }
 
 

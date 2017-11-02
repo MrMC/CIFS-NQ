@@ -217,8 +217,6 @@
 		220261C218D86671001EDD84 /* nsstream.c in Sources */ = {isa = PBXBuildFile; fileRef = 2202613518D86671001EDD84 /* nsstream.c */; };
 		220261D118DB3134001EDD84 /* INQRemoteTargetsViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 220261D018DB3134001EDD84 /* INQRemoteTargetsViewController.m */; };
 		220261D718E2B515001EDD84 /* INQDomain.m in Sources */ = {isa = PBXBuildFile; fileRef = 220261D618E2B515001EDD84 /* INQDomain.m */; };
-		224FFDEC18E7FBCD0005F92D /* cscontrl.h in Sources */ = {isa = PBXBuildFile; fileRef = 220260D818D86670001EDD84 /* cscontrl.h */; };
-		224FFDED18E8003B0005F92D /* INQServiceManager.h in Sources */ = {isa = PBXBuildFile; fileRef = 0474BE08156C6D710053C5CA /* INQServiceManager.h */; };
 		22CA7FB318D19BB3004CC46D /* Reachability.m in Sources */ = {isa = PBXBuildFile; fileRef = 22CA7FB218D19BB3004CC46D /* Reachability.m */; };
 		482810C7156D1FBF00C15F28 /* INQAddWorkgroupViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 482810C5156D1FBF00C15F28 /* INQAddWorkgroupViewController.m */; };
 		484898B5158A35EA00242147 /* on_off-1.png in Resources */ = {isa = PBXBuildFile; fileRef = 484898B3158A35EA00242147 /* on_off-1.png */; };
@@ -1645,7 +1643,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				224FFDED18E8003B0005F92D /* INQServiceManager.h in Sources */,
 				0474BE0A156C6D710053C5CA /* INQServiceManager.m in Sources */,
 				2202615D18D86671001EDD84 /* ccwrite.c in Sources */,
 				04BD60DD156CF9AF005ED792 /* INQComputer.m in Sources */,
@@ -1835,7 +1832,6 @@
 				044A18C015C79768006EE8AF /* INQSetWorkgroupViewController.m in Sources */,
 				2202617718D86671001EDD84 /* cmresolver.c in Sources */,
 				220261A918D86671001EDD84 /* cstrans2.c in Sources */,
-				224FFDEC18E7FBCD0005F92D /* cscontrl.h in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1929,7 +1925,7 @@
 				GCC_PREFIX_HEADER = "Other/iNQ-Prefix.pch";
 				GCC_WARN_ABOUT_MISSING_PROTOTYPES = YES;
 				INFOPLIST_FILE = "Other/iNQ-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 6.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 9.3;
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"$(SDKROOT)/usr/lib/system\"",
@@ -1956,7 +1952,7 @@
 				GCC_PREFIX_HEADER = "Other/iNQ-Prefix.pch";
 				GCC_WARN_ABOUT_MISSING_PROTOTYPES = YES;
 				INFOPLIST_FILE = "Other/iNQ-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 6.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 9.3;
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"$(SDKROOT)/usr/lib/system\"",
@@ -2013,7 +2009,7 @@
 				GCC_PREFIX_HEADER = "Other/iNQ-Prefix.pch";
 				GCC_WARN_ABOUT_MISSING_PROTOTYPES = YES;
 				INFOPLIST_FILE = "Other/iNQ-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 6.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 9.3;
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"$(SDKROOT)/usr/lib/system\"",

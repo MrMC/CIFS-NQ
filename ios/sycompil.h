@@ -178,7 +178,7 @@
 
  */
 
-#define SY_FORCEALLOCATION
+//#define SY_FORCEALLOCATION
 
 
 /*

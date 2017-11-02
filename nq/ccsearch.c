@@ -308,7 +308,7 @@ static CCSearch *getNewSearch(const NQ_WCHAR * srchPath, CCShare * pShare, NQ_WC
 /*
  * Check file name for . and ..
  */
-NQ_BOOL isRealFile(const NQ_WCHAR * name)
+static NQ_BOOL isRealFile(const NQ_WCHAR * name)
 {
     return !(
       (name[0] == cmWChar('.') && name[1] == 0) ||

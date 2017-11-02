@@ -63,7 +63,7 @@
 - (void)loadDataFromLocalPath:(NSString*)path {
     [self.data removeAllObjects];
     [self.data addObjectsFromArray:[INQFileDataSource fileNames:path]];
-    DLog(@"File count:%d",[self.data count]);
+    DLog(@"File count:%ld",[self.data count]);
 #if 1
     // loadedDataSourceCallBack関数の引数追加に伴う変更(optionは不使用)
     [delegate loadedDataSourceCallBack:self.data info:nil option:-1];
@@ -517,7 +517,7 @@
         return cell;
     }
     
-    NSString *error = [NSString stringWithFormat:@"index:%d > arry:%d",indexPath.row,[self.data count]];
+  NSString *error = [NSString stringWithFormat:@"index:%ld > arry:%ld",(long)indexPath.row,(unsigned long)[self.data count]];
     NSAssert(indexPath.row < [self.data count],error);
     
     INQFile *file = [self.data objectAtIndex:indexPath.row];
@@ -768,7 +768,7 @@
     NQ_HANDLE dir;
     NQ_TCHAR uSearchPath[1000]={0};
     FindFileDataW_t fData;
-    NSInteger subFileFolderCount = 0;
+    int subFileFolderCount = 0;
 
     cmWStrcpy( uSearchPath, (NQ_TCHAR *)[[NSString stringWithFormat:@"%@",remotoPath]
                                          cStringUsingEncoding:NSUTF16StringEncoding]);
@@ -793,11 +793,11 @@
 -(int)getCountFileAndSubFolderAtLocal:(NSString *)filePath
 {
     NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:filePath error:nil];
-    NSInteger subFileFolderCount = 0;
+    int subFileFolderCount = 0;
 
     if (files != nil)
     {
-        subFileFolderCount = [files count];
+        subFileFolderCount = (int)[files count];
     }
 
     return subFileFolderCount;

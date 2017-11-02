@@ -34,7 +34,7 @@
 #ifdef SY_TRC_DEBUG_LEVEL
 #define CM_TRC_DEBUG_LEVEL          SY_TRC_DEBUG_LEVEL   /* default traces level threshold */
 #else /* SY_TRC_DEBUG_LEVEL */
-#define CM_TRC_DEBUG_LEVEL          500   /* default traces level threshold */
+#define CM_TRC_DEBUG_LEVEL          1000 //500   /* default traces level threshold */
 #endif /* SY_TRC_DEBUG_LEVEL */
 
 #define CM_TRC_LEVEL_ASSERT         5     /* default level for LOGASSERT    */
@@ -66,6 +66,9 @@ void cmTraceFuncLeave(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line
 void cmTraceDump(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *str, const void *addr, NQ_UINT nBytes);
 void cmTraceInit(void);
 void cmTraceFinish(void);
+void cmTraceStart(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *name);
+void cmTraceStop(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *name);
+
 
 #ifdef UD_NQ_INCLUDETRACE
 

@@ -20,6 +20,7 @@
 #include "csdcerpc.h"
 #include "cs2disp.h"
 #include "cmsmb2.h"
+#include "cs2notify.h"
 
 #if defined(UD_NQ_INCLUDECIFSSERVER) && defined(UD_NQ_INCLUDESMB2)
 

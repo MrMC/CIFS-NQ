@@ -350,14 +350,14 @@
     if ((self.isSelectMode || self.isDownloadMode) && (inqFile != nil && !inqFile.isDir)) {
         UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:indexPath];        
     
-        if ([self.dataSource.selectedRow objectForKey:[NSString stringWithFormat:@"%d",indexPath.row]]) {
-            [self.dataSource.selectedRow removeObjectForKey:[NSString stringWithFormat:@"%d",indexPath.row]];
+        if ([self.dataSource.selectedRow objectForKey:[NSString stringWithFormat:@"%d",(int)indexPath.row]]) {
+            [self.dataSource.selectedRow removeObjectForKey:[NSString stringWithFormat:@"%d",(int)indexPath.row]];
 
             [cell setAccessoryType:UITableViewCellAccessoryNone];
         
             return;
         }
-        [self.dataSource.selectedRow setObject:@"YES" forKey:[NSString stringWithFormat:@"%d",indexPath.row]];
+        [self.dataSource.selectedRow setObject:@"YES" forKey:[NSString stringWithFormat:@"%d",(int)indexPath.row]];
 
         [cell setAccessoryType:UITableViewCellAccessoryCheckmark];
 
@@ -662,7 +662,7 @@
 - (void)fileAction:(id)sender {
     INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];    
     UIBarButtonItem *button = (UIBarButtonItem*)sender;
-    int tag = button.tag;
+    NSInteger tag = button.tag;
     switch (tag) {
         case 1: // download
         {

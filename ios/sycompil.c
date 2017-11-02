@@ -16,6 +16,7 @@
  * CREATED BY    : Mark Rabinovich
  * LAST AUTHOR   : $Author:$
  ********************************************************************/
+void syCompilerInit(void);
 
-void syCompilerInit() {} /* Placeholder: to elliminate warning on an empty
+void syCompilerInit(void) {} /* Placeholder: to elliminate warning on an empty
                             file issued by DIAB compiler */

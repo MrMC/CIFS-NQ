@@ -38,7 +38,7 @@ NQ_BYTE * amNtlmsspServerGetChallenge(NQ_BYTE* blob);
 
 /* NTLMSSP functions to be set into a client-side SPNEGO descriptor */ 
 NQ_BOOL amNtlmsspClientInit(void *p);
-NQ_BOOL amNtlmsspClientStop();
+NQ_BOOL amNtlmsspClientStop(void);
 NQ_BYTE* amNtlmsspClientContextCreate(const NQ_CHAR* name, NQ_BOOL restrictCrypt);
 NQ_BOOL amNtlmsspClientSetMechanism(NQ_BYTE* ctx, const NQ_CHAR* name);
 NQ_BOOL amNtlmsspClientGetSessionKey(NQ_BYTE* p, NQ_BYTE* buffer, NQ_COUNT* len);                      

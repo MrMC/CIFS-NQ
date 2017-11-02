@@ -1827,7 +1827,7 @@ static NQ_BYTE *dumpDomainSid(const CMSdDomainSid *sid)
 				syPrintf("%d", (NQ_INT)sid->idAuth[i]);
 
 		for (i = 0; i < (NQ_INT)sid->numAuths; i++)
-			syPrintf("-%lu", sid->subs[i]);
+			syPrintf("-%u", sid->subs[i]);
 
 		return (NQ_BYTE *)&sid->subs[i];
     }
@@ -1844,7 +1844,7 @@ static void dumpAcl(const NQ_CHAR *title, NQ_BYTE *buffer, NQ_INT length, NQ_INT
         CMSdAce *ace = (CMSdAce *)(acl + 1);
         NQ_UINT32 i;
 
-        syPrintf("offset=%d, ACL revision: %d, size: %d, aces: %ld\n",
+        syPrintf("offset=%d, ACL revision: %d, size: %d, aces: %d\n",
                 offset, acl->revision, acl->size, acl->numAces);
 
         for (i = 0; i < acl->numAces; i++)
@@ -1858,7 +1858,7 @@ static CMSdAce *dumpAce(const CMSdAce *ace)
 {
     NQ_BYTE *next;
 
-    syPrintf("    ACE type: %d, flags: 0x%02X, size: %d, access: 0x%08lX, trustee: ",
+    syPrintf("    ACE type: %d, flags: 0x%02X, size: %d, access: 0x%08X, trustee: ",
            (NQ_INT)ace->type, (NQ_INT)ace->flags, ace->size, ace->accessMask);
 
     next = dumpDomainSid(&ace->trustee);

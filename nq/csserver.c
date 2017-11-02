@@ -906,7 +906,7 @@ closeServerSockets(
 
 #if SY_DEBUGMODE
 
-void
+static void
 csDumpSockets(
     )
 {

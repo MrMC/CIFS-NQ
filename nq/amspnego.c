@@ -1416,7 +1416,7 @@ static CMBlob clientAcceptNextBlob(void * context, const CMBlob * inBlob)
    context :  Pointer to SPNEGO context.
    Returns
    One of the constants defined in this module.                */
-NQ_STATUS checkStatus(void * context)
+static NQ_STATUS checkStatus(void * context)
 {
 	Context * pContext = (Context*)context;	/* casted pointer */
 	

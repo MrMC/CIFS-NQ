@@ -223,7 +223,7 @@ static CCUser * createUser(CCServer * pServer, const AMCredentialsW * pCredentia
 	return pUser;
 }
 
-CCUser * findUser(CCServer * pServer, const AMCredentialsW * pCredentials)
+static CCUser * findUser(CCServer * pServer, const AMCredentialsW * pCredentials)
 {
     CMIterator iterator;    /* user iterator */
 
@@ -326,7 +326,7 @@ void ccUserSetAdministratorCredentials(const AMCredentialsW * credentials)
     staticData->useAdmin = NULL != credentials;
 }
 
-const AMCredentialsW * ccUserGetAdministratorCredentials()
+const AMCredentialsW * ccUserGetAdministratorCredentials(void)
 {
     return staticData->useAdmin ? &staticData->admin : NULL;
 }

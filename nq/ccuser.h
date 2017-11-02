@@ -198,6 +198,6 @@ void ccUserSetAdministratorCredentials(const AMCredentialsW * credentials);
    credentials. 
    Notes
    NQ assumes a critical section between */
-const AMCredentialsW * ccUserGetAdministratorCredentials();
+const AMCredentialsW * ccUserGetAdministratorCredentials(void);
 
 #endif /* _CCUSER_H_ */

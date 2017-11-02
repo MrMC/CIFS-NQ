@@ -117,7 +117,7 @@
         [tapGesuture release];
         [smsButton setHidden:NO];        
     }
-    DLog(@"Controller Count:[%d]",[self.navigationController.childViewControllers count]);    
+    DLog(@"Controller Count:[%d]",(int)[self.navigationController.childViewControllers count]);
 }
 
 #pragma mark -

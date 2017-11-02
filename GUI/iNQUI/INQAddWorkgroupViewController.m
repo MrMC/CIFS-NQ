@@ -223,14 +223,21 @@
  */
 - (void)stopLoadingView
 {
-    [indicator stopAnimating];
-    //[loadingView removeFromSuperview];
-    [loadingView performSelectorOnMainThread:@selector(removeFromSuperview) withObject:nil waitUntilDone:NO];
-    //[loadingMessageLabel removeFromSuperview];
-    [loadingMessageLabel performSelectorOnMainThread:@selector(removeFromSuperview) withObject:nil waitUntilDone:NO];
-    //[indicator release];
-    //[loadingView release];
-    //[loadingMessageLabel release];
+    dispatch_sync(dispatch_get_main_queue(),^{
+      [indicator stopAnimating];
+      [loadingView removeFromSuperview];
+      [loadingMessageLabel removeFromSuperview];
+      [indicator release];
+      [loadingView release];
+      [loadingMessageLabel release];
+    });
+    ////[loadingView removeFromSuperview];
+    //[loadingView performSelectorOnMainThread:@selector(removeFromSuperview) withObject:nil waitUntilDone:NO];
+    ////[loadingMessageLabel removeFromSuperview];
+    //[loadingMessageLabel performSelectorOnMainThread:@selector(removeFromSuperview) withObject:nil waitUntilDone:NO];
+    ////[indicator release];
+    ////[loadingView release];
+    ////[loadingMessageLabel release];
 }
 
 

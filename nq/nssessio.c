@@ -19,6 +19,7 @@
  ********************************************************************/
 
 #include "nsapi.h"
+#include "nssessio.h"
 
 #include "nsbuffer.h"
 #include "nssocket.h"

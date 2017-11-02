@@ -453,7 +453,7 @@
 
 #if 1
     // 言語設定に応じてフォルダ名の表示を変更する処理を無効化
-    [cell.textLabel setText:[NSString stringWithFormat:@"%@ (%d)", file.fileName,file.subFolderFileCount]];
+    [cell.textLabel setText:[NSString stringWithFormat:@"%@ (%d)", file.fileName,(int)file.subFolderFileCount]];
 #else
     [cell.textLabel setText:[NSString stringWithFormat:@"%@ (%d)", NSLocalizedString(file.fileName,@"folder name"),file.subFolderFileCount]];
 #endif

@@ -21,13 +21,14 @@
 #define _UDPARAMS_H_
 
 #define NQ_DEBUG
+#define UD_NQ_INCLUDETRACE
 /*  CIFS transport options
     ----------------------
    At least one transport should be defined
    Comment out lines with transports you don't want to be used */
 
 #define UD_NQ_USETRANSPORTNETBIOS    /* NetBIOS over TCP/IP */
-#define UD_NQ_USETRANSPORTIPV4       /* plain TCP/IP */
+//#define UD_NQ_USETRANSPORTIPV4       /* plain TCP/IP */
 /*#define UD_NQ_USETRANSPORTIPV6*/     /* plain TCP/IP version 6 */
 
 #define UD_NQ_HOSTNAMESIZE          256  /* maximum length of the host name for the case of DNS 

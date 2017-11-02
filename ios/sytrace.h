@@ -23,7 +23,7 @@
 #include <assert.h>
 
 /* define preferred log output */
-//#define SY_CONSOLE_LOG
+#define SY_CONSOLE_LOG
 /*#define SY_FILE_LOG*/
 #define SY_REMOTE_LOG
 #define SY_REMOTE_LOG_BROADCAST

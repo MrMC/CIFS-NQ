@@ -786,12 +786,24 @@ csGetHiddenShareByMap(
 
 NQ_BOOL
 csIsMessageSigningEnabled(
+    void
   );
 
 /* whether message signing is enabled and required */
 
 NQ_BOOL
 csIsMessageSigningRequired(
+    void
+  );
+
+void
+csSetMessageSigningRequired(
+    NQ_BOOL isTRUE
+    );
+
+void
+csSetMessageSigningEnabled(
+    NQ_BOOL isTRUE
   );
 
 void

@@ -16,6 +16,7 @@
  * CREATED BY    : Mark Rabinovich
  * LAST AUTHOR   : $Author:$
  ********************************************************************/
+void syPlatformInit(void);
 
-void syPlatformInit() {} /* Placeholder: to elliminate warning on an empty
+void syPlatformInit(void) {} /* Placeholder: to elliminate warning on an empty
                             file issued by DIAB compiler */

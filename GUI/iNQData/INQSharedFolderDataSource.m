@@ -155,7 +155,11 @@
         }
         
 #if 1
-        INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
+        __block INQAppDelegate *app;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+          app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
+        });
+        //INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
         if(app.isUpdateComputerInfo == TRUE)
         {
             // 共有フォルダへのアクセスに成功につき、共有先情報を保存する処理を追加
@@ -497,6 +501,7 @@
 
 #if 1
             // サーバー機能時の文字化け対策
+            // Measures against garbled characters in server function
             NQ_TCHAR uFolderName[256] = {0};
             NQ_TCHAR uFolderID[256] = {0};
             
@@ -505,6 +510,7 @@
             cmAnsiToUnicode(uFolderID, [folderObj.folderId UTF8String]);
             
             // (注意) 以下の関数を使用することで期待動作をするが、ヘッダーファイルに定義の無い関数につき対応を要確認.(関数名に文字"q"が付与されている)
+            // (Caution) Although expected behavior is done by using the following function, it is necessary to confirm correspondence for functions without definitions in the header file (the character name "q" is given to the function name)
             csCtrlAddShareW(uFolderName,uFolderID,false,uFolderName);
 
             DLog(@"share folder name:%@",folderObj.folderName);

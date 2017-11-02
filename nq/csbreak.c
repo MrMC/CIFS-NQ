@@ -23,6 +23,8 @@
 #include "cscreate.h"
 #include "cssignin.h"
 #include "csutils.h"
+#include "csbreak.h"
+#include "cs2disp.h"
 
 #ifdef UD_NQ_INCLUDECIFSSERVER
 

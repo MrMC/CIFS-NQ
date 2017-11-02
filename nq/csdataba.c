@@ -3204,17 +3204,17 @@ csDumpDatabase(
     syPrintf(" List of connected clients\n");
     for (i=0; i < UD_FS_NUMSERVERSESSIONS; i++)
     {
-        syPrintf("Key: %ld\n", staticData->sessions[i].key);
+        syPrintf("Key: %d\n", staticData->sessions[i].key);
     }
     syPrintf(" List of logged users\n");
     for (i=0; i < UD_FS_NUMSERVERUSERS; i++)
     {
-        syPrintf("Uid: %d, session: %ld\n", staticData->users[i].uid, staticData->users[i].session);
+        syPrintf("Uid: %d, session: %d\n", staticData->users[i].uid, staticData->users[i].session);
     }
     syPrintf(" List of tree connections\n");
     for (i=0; i < UD_FS_NUMSERVERTREES; i++)
     {
-        syPrintf("Tid: %d, session: %ld, uid: %d, share: %p\n", staticData->trees[i].tid, staticData->trees[i].session, staticData->trees[i].uid, (void *) staticData->trees[i].share);
+        syPrintf("Tid: %d, session: %d, uid: %d, share: %p\n", staticData->trees[i].tid, staticData->trees[i].session, staticData->trees[i].uid, (void *) staticData->trees[i].share);
     }
     syPrintf(" List of unique files\n");
     for (i=0; i < UD_FS_NUMSERVERFILENAMES; i++)
@@ -3224,12 +3224,12 @@ csDumpDatabase(
     syPrintf(" List of opened files\n");
     for (i=0; i < UD_FS_NUMSERVERFILEOPEN; i++)
     {
-        syPrintf("fid: %d, nid: %d, tid: %d nxt: %p, pr: %p, ntfy: %d, pid: %ld\n", staticData->files[i].fid, staticData->files[i].nid, staticData->files[i].tid, (void *) staticData->files[i].next, (void *) staticData->files[i].prev, staticData->files[i].notifyPending, staticData->files[i].pid);
+        syPrintf("fid: %d, nid: %d, tid: %d nxt: %p, pr: %p, ntfy: %d, pid: %d\n", staticData->files[i].fid, staticData->files[i].nid, staticData->files[i].tid, (void *) staticData->files[i].next, (void *) staticData->files[i].prev, staticData->files[i].notifyPending, staticData->files[i].pid);
     }
     syPrintf(" List of active search operations\n");
     for (i=0; i < UD_FS_NUMSERVERSEARCHES; i++)
     {
-        syPrintf("Sid: %d, session: %ld, tid: %d\n", staticData->searches[i].sid, staticData->searches[i].session, staticData->searches[i].tid);
+        syPrintf("Sid: %d, session: %d, tid: %d\n", staticData->searches[i].sid, staticData->searches[i].session, staticData->searches[i].tid);
     }
     syPrintf(" List of shares\n");
     for (i = 0; i < UD_FS_NUMSERVERSHARES; i++)
@@ -3304,7 +3304,7 @@ csIsMessageSigningEnabled(
 
 
 NQ_BOOL
-csIsMessageSigningRequired(
+csIsMessageSigningRequired(void
   )
 {
     return staticData->signingRequired;

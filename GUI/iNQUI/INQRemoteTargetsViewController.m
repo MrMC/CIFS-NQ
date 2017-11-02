@@ -217,7 +217,7 @@
         self.navigationController.navigationBar.tintColor = [app setBarColor];
         self.navigationController.toolbar.tintColor = [app setBarColor];
     }
-    DLog("number of sections in table %d " , [self.tableView numberOfSections]);
+    DLog("number of sections in table %ld " , (long)[self.tableView numberOfSections]);
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView

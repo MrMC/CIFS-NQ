@@ -40,7 +40,7 @@
     static char buffer[16000];
     int num = 0;
     
-    if (!nqGetWorkgroupsByWgA( "", buffer, sizeof(buffer), &num))
+    if (!nqGetWorkgroupsByWgA( "WORKGROUP", buffer, sizeof(buffer), &num))
     {
         DLog(@"Get Workgroups Failed");
         int status = (NQ_UINT32)syGetLastSmbError();
@@ -196,10 +196,10 @@
 
 - (NSString*)computerId {
     NSString *computerId;
-    int key = [[NSUserDefaults standardUserDefaults] integerForKey:@"KEY"];
+    NSInteger key = [[NSUserDefaults standardUserDefaults] integerForKey:@"KEY"];
     key++;
         
-    computerId = [NSString stringWithFormat:@"%d",key];
+    computerId = [NSString stringWithFormat:@"%d",(int)key];
     [[NSUserDefaults standardUserDefaults] setInteger:key forKey:@"KEY"];
     return computerId;
 
@@ -290,7 +290,7 @@
         //[self.data addObject:[savedData objectForKey:key]];
         
     }
-    DLog(@"count:%d",[self.data count]);
+    DLog(@"count:%lu",(unsigned long)[self.data count]);
 
     // コールバック関数の引数追加に伴う変更(保存済みデータか検索結果データかの判定)
     [delegate loadedDataSourceCallBack:self.data info:nil option:0];
@@ -543,8 +543,8 @@
 - (void)save
 {
     NSMutableDictionary *dic = [[NSMutableDictionary alloc]init];
-    int dataCount = [self.data count];
-    DLog(@"Save Computer Data:%d",dataCount);
+    NSInteger dataCount = [self.data count];
+    DLog(@"Save Computer Data:%ld",dataCount);
 
     for (int i = 0; i < dataCount; i++)
     {

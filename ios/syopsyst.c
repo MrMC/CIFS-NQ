@@ -705,9 +705,9 @@ syGetAdapter(
         temp_addr = interfaces;
         while(temp_addr != NULL) {
             if(temp_addr->ifa_addr->sa_family == AF_INET) {
-#ifdef DEBEG
+//#ifdef DEBEG
                 printf(" >>>>>> ifname:%s <<<<<<<<\n",temp_addr->ifa_name);
-#endif
+//#endif
                 // Check if interface is en0 which is the wifi connection on the iPhone
                 if(strcmp(temp_addr->ifa_name,"en0") == 0) {
                  
@@ -718,9 +718,9 @@ syGetAdapter(
                     *pIp = inet_ntoa(((struct sockaddr_in *)temp_addr->ifa_addr)->sin_addr);
                     *pSubnet = ((struct sockaddr_in*)temp_addr->ifa_broadaddr)->sin_addr.s_addr;
 #endif
-#ifdef DEBEG
-                    printf(" >>>>>>  en0 IP=0x%08lx subnetip=0x%08lx <<<<<<<<\n",pIp,pSubnet);
-#endif
+//#ifdef DEBEG
+                    printf(" >>>>>>  en0 IP=0x%p subnetip=0x%p <<<<<<<<\n", pIp, pSubnet);
+//#endif
                 }
             }
             temp_addr = temp_addr->ifa_next;

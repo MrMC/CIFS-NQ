@@ -627,15 +627,15 @@ csComReadAndX(
         else
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
         {
-            dataLength = (NQ_UINT32)syReadFile(pFile->file, dataPtr, (NQ_COUNT)dataLength);
-            if (dataLength < 0)
+            NQ_INT32 status = syReadFile(pFile->file, dataPtr, (NQ_COUNT)dataLength);
+            if (status < 0)
             {
                 error = csErrorGetLast();
                 TRCERR("READ failed");
                 TRCE();
                 return error;
             }
-            immediateDataCount = dataLength;
+            immediateDataCount = (NQ_UINT32)status;
         }
         
         /* update file offsets */
@@ -942,18 +942,20 @@ csComWrite(
                 else
 #else /* UD_CS_INCLUDEDIRECTTRANSFER */
                 {
-                    dataCount = (NQ_UINT32)syWriteFile(pFile->file, (NQ_BYTE*)(pDataBlock + 1), cmLtoh16(cmGetSUint16(pDataBlock->length)));
-                    if (dataCount != cmLtoh16(cmGetSUint16(pDataBlock->length)))
+                    NQ_INT32 status;
+                    status = syWriteFile(pFile->file, (NQ_BYTE*)(pDataBlock + 1), cmLtoh16(cmGetSUint16(pDataBlock->length)));
+                    if (status != cmLtoh16(cmGetSUint16(pDataBlock->length)))
                     {
                         error = csErrorGetLast();
                         TRCERR("WRITE failed");
-                        if (dataCount >= 0)
+                        if (status >= 0)
                         {
-                            TRC2P("Required: %d bytes, written: %d bytes", cmLtoh16(cmGetSUint16(pDataBlock->length)), dataCount);
+                            TRC2P("Required: %d bytes, written: %d bytes", cmLtoh16(cmGetSUint16(pDataBlock->length)), status);
                         }
                         TRCE();
                         return error;
                     }
+                    dataCount = (NQ_UINT32)status;
                 }
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
                 csGetNameByNid(pFile->nid)->isDirty = TRUE;

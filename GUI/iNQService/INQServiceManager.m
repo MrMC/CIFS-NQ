@@ -11,6 +11,10 @@
 #pragma mark -
 #pragma mark CIFS Service Implementation.
 
+#ifdef UD_CS_INCLUDEDOMAINMEMBERSHIP
+void joinDomain(void);
+#endif
+
 void udCifsServerStarted(void) {
 
     dispatch_sync(dispatch_get_main_queue(), ^{
@@ -206,7 +210,7 @@ void udBrowserDaemonClosed(void) {
 
 + (id)sharedManager {
     static dispatch_once_t once;
-    static INQServiceManager *singleton;
+    static INQServiceManager *singleton = nil;
     dispatch_once(&once, ^ { singleton = [[INQServiceManager alloc] init]; });
     return singleton;    
 }
@@ -225,13 +229,13 @@ void udBrowserDaemonClosed(void) {
 
 
 - (void)initClient {
-    [self performSelectorInBackground:@selector(client) withObject:nil];     
+    [self client];
+    //[self performSelectorInBackground:@selector(client) withObject:nil];
 }
 
 - (void)startNetBios {
     DLog(@"StartNetBios");
-    [self performSelectorInBackground:@selector(ndstart) withObject:nil]; 
-   
+    [self performSelectorInBackground:@selector(ndstart) withObject:nil];
 }
 
 - (void)stopNetBios {
@@ -241,8 +245,9 @@ void udBrowserDaemonClosed(void) {
 - (void)startCifsServer {
 
     DLog(@"StartCIFSServer");
-    [self performSelectorInBackground:@selector(csstart) withObject:nil]; 
-  
+    [self csstart];
+    [self performSelectorInBackground:@selector(csstart) withObject:nil];
+
 }
 
 - (void)stopCifsServer {
@@ -253,6 +258,7 @@ void udBrowserDaemonClosed(void) {
 
 - (void)startBrowser {
     DLog(@"Start Browser");
+    //[self brstart];
     //[self performSelectorInBackground:@selector(brstart) withObject:nil];
   
 }
@@ -435,7 +441,7 @@ udDefGetPassword(
         return NQ_CS_PWDNOAUTH;
     }
     
-    if (userNameA == NULL && inqUserName != NULL) {
+    if (inqUserName != NULL) {
         return NQ_CS_PWDNOUSER;                
     }
 
