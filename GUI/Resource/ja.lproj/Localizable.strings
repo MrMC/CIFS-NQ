@@ -1,0 +1,286 @@
+/* About */
+"About" = "ヘルプ";
+
+/* AccessIP */
+"AccessIP(WIFI ONLY)" = "サーバー IP(WiFi のみ)";
+
+/* Add New Computer */
+"AddNewComputer" = "新しいコンピューターを追加";
+
+/* Add New Folder */
+"AddNewFolder" = "新しいフォルダー";
+
+/* are you sure delete file ? */
+"AreYouSureDelete" = "本当に削除しますか？";
+
+/* Authorization title */
+"Authorization" = "認証";
+
+/* AutoStart */
+"AutoStart" = "サーバー情報";
+
+/* AutoStartNQServer */
+"AutoStart<iNQServer>" = "AutoStart<iNQServer>";
+
+/* AutoStartServer */
+"AutoStartServer" = "サーバーを自動起動";
+
+/* Book Folder */
+"Book" = "本";
+
+/* BookMark Folder */
+"BookMark" = "お気に入り";
+
+/* Cancel
+ Cancel Button
+ Cancel button */
+"Cancel" = "キャンセル";
+
+/* Computer Info */
+"ComputerInfo" = "コンピューター情報";
+
+/* ComputerName/IP */
+"ComputerNameOrIP" = "コンピューター名";
+
+/* Copy */
+"Copy" = "コピー";
+
+/* Copy file failed. */
+"CopyFailed" = "ファイルのコピーに\n失敗しました。";
+
+/* CreateFolderFailed */
+"CreateFolderFailed" = "フォルダーの新規作成に\n失敗しました。";
+
+/* Guest */
+"DefaultGuest" = "ゲストログイン";
+
+/* Delete */
+"Delete" = "削除";
+
+/* Delete file filed. */
+"DeleteFailed" = "削除失敗";
+
+/* DisplayName
+ please input computer name or ip */
+"DisplayName" = "表示名";
+
+/* Document folder */
+"Doc" = "ドキュメント";
+
+/* Download */
+"Download" = "ダウンロード";
+
+/* Download Selecte Files */
+"DownloadHear" = "ここにタウンロード";
+
+/* File list title */
+"FileList" = "ファイルリスト";
+
+/* FolderSahre */
+"FolderShare" = "共有フォルダー";
+
+/* Help */
+"Help" = "ヘルプ";
+
+/* Home */
+"Home" = "ホーム";
+
+/* Image Folder */
+"Image" = "イメージ";
+
+/* Info */
+"Info" = "情報";
+
+/* input computer name */
+"InputComputerName" = "コンピューター名を\n入力してください。";
+
+/* input display name */
+"InputDisplayName" = "表示名を\n入力してください。";
+
+/* Input Workgroup */
+"InputWorkgroup" = "ワークグループ名を\n入力してください。";
+
+/* Loading... */
+"Loading..." = "読み込み中...";
+
+/* LocalFile */
+"LocalFile" = "ローカルファイル";
+
+/* LocalFolder */
+"LocalFolder" = "ローカルフォルダー";
+
+/* Mounted */
+"Mounted" = "マウント";
+
+/* Move */
+"Move" = "移動";
+
+/* Move file failed */
+"MoveFileFailed" = "移動失敗";
+
+/* Music Folder */
+"Music" = "音楽";
+
+/* add workgroup title */
+"NewComputer" = "新しいコンピューター";
+
+/* Input Folder Name
+ New Folder
+ NewFolder */
+"NewFolder" = "新しいフォルダー";
+
+/* NO */
+"NO" = "NO";
+
+/* OK
+ OK Button */
+"OK" = "OK";
+
+/* Password
+ please input password */
+"Password" = "パスワード";
+
+/* Photo Album */
+"PhotoAlbum" = "アルバム";
+
+/* Pick Photos */
+"PickPhotos" = "写真";
+
+/* Public folder
+ Public folder. */
+"Public" = "共有";
+
+/* Pull down to refresh.. */
+"PullDownToRefresh" = "ドラッグして更新";
+
+/* Release to refresh... */
+"ReleaseToRefresh" = "リリースして更新";
+
+/* Save Button */
+"Save" = "保存";
+
+/* SavedWorkGroup */
+"SavedWorkGroup" = "コンピューター";
+
+/* Search */
+"Search" = "検索";
+
+/* SearchWorkGroup */
+"SearchWorkGroup" = "ワークグループ検索";
+
+/* Select an Album */
+"SelectAlbum" = "アルバム選択";
+
+/* select download file */
+"SelectFile" = "ファイルを選択\nしてください。";
+
+/* Server switch controller. */
+"ServerController" = "サーバー";
+
+/* server status */
+"ServerStatus:OFF" = "サーバーステータス:OFF";
+
+/* server status */
+"ServerStatus:ON" = "サーバーステータス:ON";
+
+/* Setting */
+"Setting" = "設定";
+
+/* Share */
+"Share" = "共有";
+
+/* Shared Folder */
+"SharedFolder" = "フォルダー共有";
+
+/* SET Shared Folder Password */
+"SharedFolderPassword" = "共有フォルダ 認証設定";
+
+/* server status */
+"Start Server..." = "サーバー起動中...";
+
+/* sub folder have file. */
+"SubFolderHaveFile" = "フォルダにファイル及び\nサブフォルダがあります。";
+
+/* ThumnailPreview */
+"ThumnailPreview" = "サムネイル";
+
+/* Unable To Mount */
+"UnableToMount" = "マウント失敗";
+
+/* Upload */
+"Upload" = "アップロード";
+
+/* Upload file failed. */
+"UploadFailed" = "アップロード失敗";
+
+/* Upload Selecte Files */
+"UploadSelectFiles" = "選択ファイルをアップロード";
+
+/* please input user ID
+ User ID
+ UserID */
+"UserID" = "ユーザID";
+
+/* User Info */
+"UserInfo" = "ユーザ情報";
+
+/* Version */
+"Version" = "バージョン";
+
+/* Warning */
+"Warning" = "警告";
+
+/* wifi is off */
+"WifiOnly" = "Wi-Fiが未接続です";
+
+/* workgroup title
+ WorkGroupName */
+"WorkGroup" = "ワークグループ";
+
+/* YES */
+"YES" = "YES";
+
+/* Input UserID and Password */
+"InputLoginInfo" = "ユーザID、パスワードを\n入力してください。";
+
+/* edit workgroup name */
+"EditWorkgroupName" = "ワークグループ名";
+
+/* Preview setting */
+"PreviewSettingTitle" = "サムネイル";
+
+/* Searching... */
+"Searching..." = "検索中...";
+
+/* Back */
+"Back" = "戻る";
+
+/* New addition */
+"NewAddition" = "新規追加";
+
+/* Edit */
+"Edit" = "編集";
+
+/* ComputerNameOrIPSub */
+"ComputerNameOrIPSub" = "(もしくはIPアドレス)";
+
+/* AlertClose */
+"AlertClose" = "閉じる";
+
+/* Err messgae not found workgroup */
+"ErrMsgNFWorkgroup" = "共有先が見つかりませんでした\n手動で追加してください";
+
+/* Err messgae connect failed */
+"ErrMsgConnectFaild" = "共有先への接続に失敗しました";
+
+/* Public setting */
+"PublicSetting" = "公開設定";
+
+/* Copy Select Files */
+"CopySelectFiles" = "選択ファイルをコピー";
+
+/* ServerName */
+"ServerName" = "サーバー名";
+
+/* DeleteFolderFailed */
+"DeleteFolderFailed" = "フォルダーの削除に\n失敗しました。";

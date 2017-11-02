@@ -1,0 +1,286 @@
+/* About */
+"About" = "About";
+
+/* AccessIP */
+"AccessIP(WIFI ONLY)" = "Server IP(WiFi ONLY)";
+
+/* Add New Computer */
+"AddNewComputer" = "Add New Computer";
+
+/* Add New Folder */
+"AddNewFolder" = "Add New Folder";
+
+/* are you sure delete file ? */
+"AreYouSureDelete" = "Are You Sure?";
+
+/* Authorization title */
+"Authorization" = "Authorization";
+
+/* AutoStart */
+"AutoStart" = "Server Info";
+
+/* AutoStartNQServer */
+"AutoStart<iNQServer>" = "Auto Start<iNQServer>";
+
+/* AutoStartServer */
+"AutoStartServer" = "Auto Start Server";
+
+/* Book Folder */
+"Book" = "Book";
+
+/* BookMark Folder */
+"BookMark" = "BookMark";
+
+/* Cancel
+ Cancel Button
+ Cancel button */
+"Cancel" = "Cancel";
+
+/* Computer Info */
+"ComputerInfo" = "ComputerInfo";
+
+/* ComputerName/IP */
+"ComputerNameOrIP" = "Computer Name";
+
+/* Copy */
+"Copy" = "Copy";
+
+/* Copy file failed. */
+"CopyFailed" = "Copy Failed";
+
+/* CreateFolderFailed */
+"CreateFolderFailed" = "Create Folder Failed";
+
+/* Guest */
+"DefaultGuest" = "Default Guest";
+
+/* Delete */
+"Delete" = "Delete";
+
+/* Delete file filed. */
+"DeleteFailed" = "Delete Failed";
+
+/* DisplayName
+ please input computer name or ip */
+"DisplayName" = "Display Name";
+
+/* Document folder */
+"Doc" = "Doc";
+
+/* Download */
+"Download" = "Download";
+
+/* Download Selecte Files */
+"DownloadHear" = "Download To Here";
+
+/* File list title */
+"FileList" = "FileList";
+
+/* FolderSahre */
+"FolderShare" = "Folder Share";
+
+/* Help */
+"Help" = "Help";
+
+/* Home */
+"Home" = "Home";
+
+/* Image Folder */
+"Image" = "Image";
+
+/* Info */
+"Info" = "Info";
+
+/* input computer name */
+"InputComputerName" = "Input Computer Name";
+
+/* input display name */
+"InputDisplayName" = "Input Display Name";
+
+/* Input Workgroup */
+"InputWorkgroup" = "Workgroup Name";
+
+/* Loading... */
+"Loading..." = "Loading...";
+
+/* LocalFile */
+"LocalFile" = "Local File";
+
+/* LocalFolder */
+"LocalFolder" = "Local Folder";
+
+/* Mounted */
+"Mounted" = "Mounted";
+
+/* Move */
+"Move" = "Move";
+
+/* Move file failed */
+"MoveFileFailed" = "Move File Failed";
+
+/* Music Folder */
+"Music" = "Music";
+
+/* add workgroup title */
+"NewComputer" = "New Computer";
+
+/* Input Folder Name
+ New Folder
+ NewFolder */
+"NewFolder" = "New Folder";
+
+/* NO */
+"NO" = "NO";
+
+/* OK
+ OK Button */
+"OK" = "OK";
+
+/* Password
+ please input password */
+"Password" = "Password";
+
+/* Photo Album */
+"PhotoAlbum" = "Photo Album";
+
+/* Pick Photos */
+"PickPhotos" = "Pick Photos";
+
+/* Public folder
+ Public folder. */
+"Public" = "Public";
+
+/* Pull down to refresh.. */
+"PullDownToRefresh" = "Pull Down to Refresh";
+
+/* Release to refresh... */
+"ReleaseToRefresh" = "Release to Refresh";
+
+/* Save Button */
+"Save" = "Save";
+
+/* SavedWorkGroup */
+"SavedWorkGroup" = "Computers";
+
+/* Search */
+"Search" = "Search";
+
+/* SearchWorkGroup */
+"SearchWorkGroup" = "Search Workgroup";
+
+/* Select an Album */
+"SelectAlbum" = "Select Album";
+
+/* select download file */
+"SelectFile" = "Select file";
+
+/* Server switch controller. */
+"ServerController" = "Enable Server";
+
+/* server status */
+"ServerStatus:OFF" = "Server Status:OFF";
+
+/* server status */
+"ServerStatus:ON" = "Server Status:ON";
+
+/* Setting */
+"Setting" = "Setting";
+
+/* Share */
+"Share" = "Share";
+
+/* Shared Folder */
+"SharedFolder" = "Share Folder";
+
+/* SET Shared Folder Password */
+"SharedFolderPassword" = "Share Folder Credential";
+
+/* server status */
+"Start Server..." = "Start Server...";
+
+/* sub folder have file. */
+"SubFolderHaveFile" = "Folder Have\nFile or Sub Folder.";
+
+/* ThumnailPreview */
+"ThumnailPreview" = "File Thumbnail";
+
+/* Unable To Mount */
+"UnableToMount" = "Unable to Mount";
+
+/* Upload */
+"Upload" = "Upload";
+
+/* Upload file failed. */
+"UploadFailed" = "Upload Failed";
+
+/* Upload Selecte Files */
+"UploadSelectFiles" = "Upload Selected Files";
+
+/* please input user ID
+ User ID
+ UserID */
+"UserID" = "User Name";
+
+/* User Info */
+"UserInfo" = "UserInfo";
+
+/* Version */
+"Version" = "Version";
+
+/* Warning */
+"Warning" = "Warning";
+
+/* wifi is off */
+"WifiOnly" = "Wi-Fi Has Not Been Connected.";
+
+/* workgroup title
+ WorkGroupName */
+"WorkGroup" = "Workgroup";
+
+/* YES */
+"YES" = "YES";
+
+/* Input UserID and Password */
+"InputLoginInfo" = "Input User Name and Password";
+
+/* edit workgroup name */
+"EditWorkgroupName" = "Workgroup Name";
+
+/* Preview setting */
+"PreviewSettingTitle" = "Thumbnail";
+
+/* Searching... */
+"Searching..." = "Searching";
+
+/* Back */
+"Back" = "Back";
+
+/* New addition */
+"NewAddition" = "New Computer";
+
+/* Edit */
+"Edit" = "Edit";
+
+/* ComputerNameOrIPSub */
+"ComputerNameOrIPSub" = "(or IP Address)";
+
+/* AlertClose */
+"AlertClose" = "Close";
+
+/* Err messgae not found workgroup */
+"ErrMsgNFWorkgroup" = "Search Workgroup Failed.\nPlease Add Host Manually.";
+
+/* Err messgae connect failed */
+"ErrMsgConnectFaild" = "Connection Failure to Computer.";
+
+/* Public setting */
+"PublicSetting" = "Public Setting";
+
+/* Copy Select Files */
+"CopySelectFiles" = "Copy Selected Files";
+
+/* ServerName */
+"ServerName" = "Server Name";
+
+/* DeleteFolderFailed */
+"DeleteFolderFailed" = "Delete Folder Failed";
