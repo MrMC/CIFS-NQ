@@ -84,21 +84,24 @@ ndDatagramInit(
     void
     )
 {
-    TRCB();
+	NQ_STATUS result = NQ_SUCCESS;
 
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
     if (NULL == staticData)
     {
-        TRCERR("Unable to allocate Datagram Service data");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate Datagram Service data");
+        result = NQ_FAIL;
+        goto Exit;
     }
 #endif /* SY_FORCEALLOCATION */
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:0x%x", result);
+    return result;
 }
 
 /*
@@ -118,16 +121,16 @@ ndDatagramStop(
     void
     )
 {
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     /* release memory */
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
-        syFree(staticData);
+        cmMemoryFree(staticData);
     staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 /*
@@ -155,8 +158,9 @@ ndDatagramProcessInternalMessage(
     CMNetBiosName name;                 /* source name after parsing */
     NQ_BYTE* pTemp;                     /* pointer to diffrent places in the packet */
     const CMNetBiosVIPCHeader* pIpc;    /* casted pointer to the internal (VIPC) data */
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "adapter:%p", adapter);
 
     pHdr = (CMNetBiosDatagramMessage*) adapter->inMsg;
 
@@ -172,10 +176,8 @@ ndDatagramProcessInternalMessage(
 
     if (pTemp == NULL)
     {
-        TRCERR("Error in parsing the source name");
-
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in parsing the source name");
+        goto Exit;
     }
 
     /* skip destination name (we do not use it) */
@@ -190,10 +192,8 @@ ndDatagramProcessInternalMessage(
 
     if (pTemp == NULL)
     {
-        TRCERR("Error in parsing the destination name");
-
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in parsing the destination name");
+        goto Exit;
     }
 
 
@@ -208,14 +208,9 @@ ndDatagramProcessInternalMessage(
         pIpc = (CMNetBiosVIPCHeader*)pTemp;
         if (cmGetSUint16(pIpc->protocolVersion) != CM_NB_VIPCVERSION)
         {
-            TRCERR("Illegal version of VIPC");
-            TRC2P(
-                " expected: %d, received: %d",
-                CM_NB_VIPCVERSION,
-                cmGetSUint16(pIpc->protocolVersion)
-                );
-            TRCE();
-            return NQ_FAIL;
+			LOGERR(CM_TRC_LEVEL_ERROR, "Illegal version of VIPC expected: %d, received : %d",
+				   CM_NB_VIPCVERSION, cmGetSUint16(pIpc->protocolVersion));
+            goto Exit;
         }
 
         /* dispatch by VIPC code */
@@ -229,10 +224,8 @@ ndDatagramProcessInternalMessage(
             processCancelRequest(name, (CMNetBiosVIPCCancel*)pIpc, adapter);
             break;
         default:
-            TRCERR("Unrecognized VIPC code");
-            TRC1P(" code: %02x", cmGetSUint16(pIpc->code));
-            TRCE();
-            return NQ_FAIL;
+			LOGERR(CM_TRC_LEVEL_ERROR, "Unrecognized VIPC code: %02x", cmGetSUint16(pIpc->code));
+            goto Exit;
         }
         break;
 
@@ -269,29 +262,27 @@ ndDatagramProcessInternalMessage(
                     );
                 if (retValue < 0)
                 {
-                    TRCERR("Unable to forward internal request");
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Unable to forward internal request");
                     error = TRUE;
                 }
             }
 
-            if(error == TRUE) 
+            if (error == TRUE) 
             {
-                TRCE();
-                return NQ_FAIL;
-            }    
- 
+                goto Exit;
+            }
+
         }
         break;
-
     default:
-
-        TRCERR("Internal datagram of unexpected type");
-        TRC1P(" type: %02x", pHdr->type);
-        return NQ_FAIL;
+		LOGERR(CM_TRC_LEVEL_ERROR, "Internal datagram of unexpected type: %02x", pHdr->type);
+        goto Exit;
     }
+    result = TRUE;
 
-    TRCE();
-    return TRUE;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:0x%x", result);
+    return result;
 }
 
 /*
@@ -313,11 +304,11 @@ ndDatagramProcessExternalMessage(
     )
 {
     CMNetBiosDatagramMessage* pHdr;         /* casted pointer to the incoming message */
-    NQ_STATUS status = NQ_SUCCESS;             /* return status */
+    NQ_STATUS status = NQ_FAIL;             /* return status */
     CMNetBiosName name;                     /* source name after parsing */
     NQ_BYTE* pTemp;                         /* pointer to diffrent places in the packet */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "result:%p",adapter);
 
     pHdr = (CMNetBiosDatagramMessage*) adapter->inMsg;
 
@@ -333,10 +324,8 @@ ndDatagramProcessExternalMessage(
 
     if (pTemp == NULL)
     {
-        TRCERR("Error in parsing the source name");
-
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in parsing the source name");
+        goto Exit;
     }
 
     /* decode destination name */
@@ -351,10 +340,8 @@ ndDatagramProcessExternalMessage(
 
     if (pTemp == NULL)
     {
-        TRCERR("Error in parsing the destination name");
-
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in parsing the destination name");
+        goto Exit;
     }
 
     /* dispatch by the datagram type */
@@ -364,11 +351,11 @@ ndDatagramProcessExternalMessage(
     case CM_NB_DATAGRAM_DIRECTUNIQUE:
     case CM_NB_DATAGRAM_DIRECTGROUP:
         {
-            NQ_INT16 port = ndInternalNameGetPort(name);  /* port to forward the datagram */
+			CMList *pPorts = ndInternalNameGetPort(name);
             NQ_IPADDRESS inIp;
 
             /* check the destination port */
-            if (port == 0 || port == ND_NOINTERNALNAME)
+			if (pPorts == NULL /*port == 0 || port == ND_NOINTERNALNAME*/)
             {
                 /* compose and send the error response in only case the message type is DIRECTUNIQUE*/
 
@@ -390,41 +377,46 @@ ndDatagramProcessExternalMessage(
                             ) < 0
                        )
                     {
-                        TRCERR("Unable to return error response");
-                        TRCE();
-                        return NQ_FAIL;
+                        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to return error response");
+                        goto Exit;
                     }
                  }
             }
             else
             {
+				CMIterator itr;
                 NQ_IPADDRESS localhost = CM_IPADDR_LOCAL;
 
-                /* forward the datagram */
-                if (sySendToSocket(
-                        adapter->dsSocket,
-                        (NQ_BYTE*)adapter->inMsg,
-                        adapter->inLen,
-                        &localhost,
-                        (NQ_PORT)port
-                        ) < 0
-                   )
-                {
-                    TRCERR("Unable to forward the datagram");
-                    TRCE();
-                    return NQ_FAIL;
-                }
+				cmListIteratorStart(pPorts, &itr);
+				while (cmListIteratorHasNext(&itr))
+				{
+					CMItem *pItem = cmListIteratorNext(&itr);
+
+					/* forward the datagram to all ports in the list */
+					if (sySendToSocket(
+							adapter->dsSocket,
+							(NQ_BYTE*)adapter->inMsg,
+							adapter->inLen,
+							&localhost,
+							((BindPort *)pItem)->port
+							) < 0
+					   )
+					{
+						LOGERR(CM_TRC_LEVEL_ERROR, "Unable to forward the datagram to port:0x%x", ((BindPort *)pItem)->port);
+					}
+				}
+				cmListIteratorTerminate(&itr); 
             }
         }
-
         break;
     default:
-        TRCERR("External datagram of unexpected type");
-        TRC1P(" type: %02x", pHdr->type);
-        return NQ_FAIL;
+		LOGERR(CM_TRC_LEVEL_ERROR, "External datagram of unexpected type: %02x", pHdr->type);
+        goto Exit;
     }
+    status = NQ_SUCCESS;
 
-    TRCE();
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:0x%x", status);
     return status;
 }
 
@@ -457,8 +449,9 @@ processListenRequest(
     NQ_UINT16 status;                   /* response status */
     NQ_IPADDRESS inIp;
     NQ_INT res;
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "name:%s pIpc:%p adapter:%p", name ? name : "", pIpc, adapter);
 
     /* set the retarget port */
 
@@ -468,8 +461,7 @@ processListenRequest(
     }
     else
     {
-        TRCERR("Internal name not registered yet");
-        TRC1P(" name: %s", name);
+		LOGERR(CM_TRC_LEVEL_ERROR, "Internal name not registered yet: %s", name);
         status = CM_NB_VIPCUNSPECIFIED;
     }
 
@@ -483,19 +475,15 @@ processListenRequest(
 
     if ((retValue = cmNetBiosEncodeName(staticData->tempName, (NQ_BYTE*)(pHdr + 1))) <= 0)
     {
-        TRCERR("Unable to compose the source name");
-
-        TRCE();
-        return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to compose the source name");
+        goto Exit;
     }
     length = retValue;
 
     if ((retValue = cmNetBiosEncodeName(name, (NQ_BYTE*)(pHdr + 1) + retValue)) <= 0)
     {
-        TRCERR("Unable to compose the destination name");
-
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to compose the destination name");
+        goto Exit;
     }
     length += retValue;
 
@@ -519,13 +507,14 @@ processListenRequest(
         );
     if (res < 0)
     {
-        TRCERR("Unable to send internal response");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to send internal response");
+        goto Exit;
     }
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:0x%x", result);
+    return result;
 }
 
 /*
@@ -551,21 +540,22 @@ processCancelRequest(
     const NDAdapterInfo* adapter        /* source adapter (dummy) */
     )
 {
-    TRCB();
+    NQ_STATUS result = NQ_FAIL;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "name:%s pIpc:%p adapter:%p", name ? name : "", pIpc, adapter);
 
     /* set no port */
 
     if (ndInternalNameSetPort(name, 0) != NQ_SUCCESS)
     {
-        TRCERR("Internal name not registered yet");
-        TRC1P(" name: %s", name);
-
-        TRCE();
-        return NQ_FAIL;
+		LOGERR(CM_TRC_LEVEL_ERROR, "Internal name not registered yet: %s", name);
+        goto Exit;
     }
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:0x%x", result);
+    return result;
 }
 
 #endif /* UD_ND_INCLUDENBDAEMON */

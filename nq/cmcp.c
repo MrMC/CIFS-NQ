@@ -75,6 +75,12 @@ cmCpInit950(
     void
     );
 #endif
+#ifdef UD_NQ_CODEPAGEUTF8
+CMCodepage*
+cmCpInitUtf8(
+    void
+    );
+#endif
 
 const CMCodepage* encodings[30];
 
@@ -106,17 +112,18 @@ cmCodepageAdd(
     )
 {
     NQ_INT index;
+    NQ_BOOL result = TRUE;
 
     cmCpInitEncodings();
 
     for (index = 0; index < sizeof(encodings)/sizeof(CMCodepage * ); index++)
     {
-        if ( encodings[index] != NULL)
+        if (encodings[index] != NULL)
         {
             if (encodings[index]->id == codePage->id)
             {
                 encodings[index] = codePage;
-                return TRUE;
+                goto Exit;
             }
         }
     }
@@ -125,10 +132,13 @@ cmCodepageAdd(
         if (encodings[index] == NULL)
         {
             encodings[index] = codePage;
-            return TRUE;
+            goto Exit;
         }
     }
-    return FALSE;
+    result = FALSE;
+
+Exit:
+    return result;
 }
  
 /*
@@ -143,7 +153,7 @@ cmCodepageRemove(
     )
 {
     NQ_INT index;
-    
+    NQ_BOOL result = TRUE;
     for (index = 0; index < sizeof(encodings)/sizeof(CMCodepage *); index++)
     {
         
@@ -152,14 +162,17 @@ cmCodepageRemove(
             if (encodings[index]->id == codePage->id)
             {
                 encodings[index] = NULL;
-                return TRUE;
+                goto Exit;
             }
         }
     }
     sySetLastError(NQ_ERR_NOTFOUND);
-    return FALSE;
+    result = FALSE;
+
+Exit:
+    return result;
 }
-        
+
 
 /*
  *====================================================================
@@ -186,14 +199,21 @@ cmCpAnsiToUnicode(
     )
 {
     NQ_INT codePageIdx = cmCpGetCodePage();
+    NQ_INT result;
 
     if (encodings[codePageIdx] != NULL && encodings[codePageIdx]->a2uTab)
-        return cmCpSingleByteAnsiToUnicode(wStr, aStr, inLength, outLength, encodings[codePageIdx]->a2uTab);
-    
+    {
+        result = cmCpSingleByteAnsiToUnicode(wStr, aStr, inLength, outLength, encodings[codePageIdx]->a2uTab);
+        goto Exit;
+    }
+
     if (encodings[codePageIdx] != NULL)
-        return encodings[codePageIdx]->toUnicode(wStr, aStr, inLength, outLength);
+        result = encodings[codePageIdx]->toUnicode(wStr, aStr, inLength, outLength);
     else
-        return 0;
+        result = 0;
+
+Exit:
+    return result;
 }
 
 /*
@@ -221,11 +241,14 @@ cmCpUnicodeToAnsi(
     )
 {
     NQ_INT codePageIdx = cmCpGetCodePage();
+    NQ_INT result;
 
     if (encodings[codePageIdx] != NULL)
-        return encodings[codePageIdx]->toAnsi(aStr, wStr, inLength, outLength);
+        result = encodings[codePageIdx]->toAnsi(aStr, wStr, inLength, outLength);
     else
-        return 0;
+        result = 0;
+
+    return result;
 }
 
 /*
@@ -248,11 +271,14 @@ cmCpAToUpper(
     )
 {
     NQ_INT codePageIdx = cmCpGetCodePage();
+    NQ_INT result;
 
     if (encodings[codePageIdx] != NULL)
-        return encodings[codePageIdx]->toUpper(dest, src);
+        result = encodings[codePageIdx]->toUpper(dest, src);
     else
-        return 0;
+        result = 0;
+
+    return result;
 }
 
 /*
@@ -330,6 +356,7 @@ cmCpSingleByteAnsiToUnicode(
     NQ_INT length = 0;
     NQ_BOOL ignoreInLength = (inLength == -1);
     NQ_BOOL ignoreOutLength = (outLength == -1);
+    NQ_INT result = 0;
 
     if (wStr && aStr)
     {
@@ -350,13 +377,16 @@ cmCpSingleByteAnsiToUnicode(
     else
     {
         if (!wStr)
-            return 0;
+            goto Exit;
     }
 
     if (ignoreOutLength || (length < outLength))
         *pW = 0;
 
-    return length*2;
+    result = length * 2;
+
+Exit:
+    return result;
 }
 
 static
@@ -367,25 +397,33 @@ cmCpGetCodePage(
 {
     NQ_INT i = 0;
     NQ_INT codePage = udGetCodePage();
+    NQ_INT result;
 
     cmCpInitEncodings();
-  
+
     for (i = 0; i < sizeof(encodings)/sizeof(CMCodepage *); i++)
     {
         if (encodings[i] != NULL)
         {
             if (encodings[i]->id == codePage)
-                return i;
+            {
+                result = i;
+                goto Exit;
+            }
         }
     }
     for (i = 0; i < sizeof(encodings)/sizeof(CMCodepage *); i++)
     {
         if (encodings[i] != NULL)
         {
-            return i;  /* return first existing codepage*/
+            result = i;  /* return first existing codepage*/
+            goto Exit;
         }
     }
-    return 0;
+    result = 0;
+
+Exit:
+    return result;
 }
 
 static
@@ -424,6 +462,9 @@ cmCpInitEncodings(
 
 #ifdef UD_NQ_CODEPAGE858
         cmCodepageAdd(cmCpInit858());
+#endif
+#ifdef UD_NQ_CODEPAGEUTF8
+			cmCodepageAdd(cmCpInitUtf8());
 #endif
 
     }

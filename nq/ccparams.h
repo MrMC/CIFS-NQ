@@ -39,11 +39,15 @@
 #ifdef UD_CC_BROWSERETRYCOUNT
 #define CC_BROWSE_RETRYCOUNT UD_CC_BROWSERETRYCOUNT
 #else
-#define CC_BROWSE_RETRYCOUNT 3
+#define CC_BROWSE_RETRYCOUNT 1
 #endif
 
+/* max number of credits for client to request */
+#define SMB2_CLIENT_MAX_CREDITS_TO_REQUEST 128
 
-/* -- API fuctions -- */
+/* extends the timeout period when STATUS PENDING is sent (multiplies the timeout time by this define) */
+#define PENDING_TIMEOUT_EXTENTION 2
+/* -- API functions -- */
 
 /* Description
    Initialize this module.

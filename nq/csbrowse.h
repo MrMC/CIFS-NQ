@@ -40,7 +40,7 @@ csStopBrowse(
 
 /* perform Host Announcement for our server */
 
-NQ_TIME                   /* next announcement interval in seconds */
+NQ_UINT32                   /* next announcement interval in seconds */
 csAnnounceServer(
     void
     );

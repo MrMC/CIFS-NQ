@@ -19,7 +19,7 @@
 #include "amapi.h"
 
 /* Description
-   Convert ASCII cedentaisl to Unicode
+   Convert ASCII credentials to Unicode
    Parameters
    to : Unicode destination.
    from : ASCII source.
@@ -28,14 +28,5 @@
  */
 void amCredentialsAsciiiToW(AMCredentialsW * to, const AMCredentialsA *from);
 
-/* Description
-   Convert TCHAR cedentaisl to Unicode
-   Parameters
-   to : Unicode destination.
-   from : TCHAR source.
-   Returns
-   None.
- */
-void amCredentialsTcharToW(AMCredentialsW * to, const AMCredentials *from);
 
 #endif /* _AMCREDENTIALS_H_ */

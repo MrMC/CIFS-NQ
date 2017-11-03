@@ -29,10 +29,10 @@
  *
  ********************************************************************/
 
-typedef NQ_HANDLE NSSocketHandle;       /* socket ID (descriptior) */
+typedef NQ_HANDLE NSSocketHandle;       /* socket ID (descriptor) */
 typedef SYSocketSet NSSocketSet;        /* set of sockets for select */
 
-typedef struct      /* internet address (name) structure is used in
+typedef struct      /* Internet address (name) structure is used in
                        nsSendTo when the socket is an Internet socket */
 {
     NQ_IPADDRESS   ip;     /* IP address */
@@ -51,17 +51,22 @@ void                        /* pointer to callback function for asynchronous buf
 #define NS_TRANSPORT_NETBIOS 1
 #define NS_TRANSPORT_IPV4    2
 #define NS_TRANSPORT_IPV6    3
+#define NS_TRANSPORT_RPC     4
 
 /* Available types for socket creation */
 
 #define NS_SOCKET_STREAM 1      /* TCP socket                               */
 #define NS_SOCKET_DATAGRAM 2    /* UDP socket                               */
 
+/* Available types for binding (deamon is local host / server is anyIP)*/
+
+#define NS_BIND_DEAMON 1
+#define NS_BIND_SERVER 2
 /********************************************************************
  *      Function prototypes
  ********************************************************************
  *
- * The functions below suport BSD socket functionality
+ * The functions below support BSD socket functionality
  *
  ********************************************************************/
 
@@ -84,7 +89,8 @@ nsReleaseName(
 NQ_STATUS
 nsBindNetBios(
     NSSocketHandle socket,          /* socket descriptor */
-    const CMNetBiosNameInfo* name   /* pointer to NetBIOS name */
+    const CMNetBiosNameInfo* name,   /* pointer to NetBIOS name */
+    NQ_UINT16 type					/* type for binding*/
     );
 
 NQ_STATUS
@@ -115,7 +121,7 @@ nsListen(
 NSSocketHandle
 nsAccept(
     NSSocketHandle socket,      /* socket to accept calls on */
-    NQ_IPADDRESS *ip            /* ip of the peer */
+    NQ_IPADDRESS *ip            /* IP of the peer */
     );
 
 #ifdef UD_NQ_USETRANSPORTNETBIOS
@@ -130,7 +136,7 @@ nsPostAccept(
 NQ_INT
 nsSelect(
     NSSocketSet* set,           /* read set */
-    NQ_TIME timeout             /* timeout in sec */
+	NQ_UINT32 timeout             /* timeout in sec */
     );
 
 NQ_INT
@@ -184,6 +190,13 @@ nsSendToName(
 
 #endif /* UD_NQ_USETRANSPORTNETBIOS */
 
+NQ_COUNT
+nsPrepareNBBuffer(
+    NQ_BYTE *buf,	            /* buffer to use */
+    NQ_UINT packetLen,          /* packet length */
+    NQ_UINT dataCount           /* data length (may the entire packet data or just headers with no payload) */
+    );
+
 NQ_INT
 nsSendFromBuffer(
     NSSocketHandle socket,      /* socket to write on */
@@ -196,14 +209,21 @@ nsSendFromBuffer(
 typedef struct 
 {
     NSSocketHandle socket;  /* socket to read from */
-    NQ_COUNT remaining;		/* remaing bytes in the NBT packet */
+    NQ_COUNT remaining;		/* Remaining bytes in the NBT packet */
 }
 NSRecvDescr;
 
-NQ_INT						/* Number of bytes remaining or NQ_FAIL on error. A zero value mmeans a control message. */
+NQ_INT						/* Number of bytes remaining or NQ_FAIL on error. A zero value means a control message. */
 nsStartRecvIntoBuffer(
     NSSocketHandle socket,  /* socket to read from */
     NSRecvDescr * descr		/* receive descriptor */ 
+    );
+
+NQ_INT						/* Number of bytes remaining or NQ_FAIL on error. A zero value means a control message. */
+nsStartRecvIntoRpcBuffer(
+    NSSocketHandle socket,  /* socket to read from */
+    NSRecvDescr * descr,	/* receive descriptor */
+	NQ_BYTE * pBuf
     );
 
 NQ_STATUS					/* NQ_SUCCESS or NQ_FAIL on error */
@@ -230,8 +250,8 @@ nsSkipHeader(
 
 NQ_BOOL
 nsAddSocketToSet(
-    NSSocketSet* set,       /* set to add socket for */
-    NSSocketHandle socket   /* socket to add */
+	NSSocketSet * set,			/* set to add socket for */
+    NSSocketHandle socket   	/* socket to add */
     );
 
 NQ_BOOL
@@ -242,24 +262,30 @@ nsSocketInSet(
 
 void
 nsClearSocketSet(
-    NSSocketSet* set        /* set to clear */
+	NSSocketSet * set 		/* set to clear */
+    );
+
+void
+nsClearSocketFromSet(
+    NSSocketSet* set,       /* set to clear */
+    NSSocketHandle socket   /* socket to remove */
     );
 
 /********************************************************************
  *      Additional functionality
  ********************************************************************/
 
-NQ_STATUS                         /* get host IP by its name */
+NQ_STATUS                         		/* get host IP by its name */
 nsGetHostByName(
-    NQ_IPADDRESS *hostIp,         /* OUT: ip adresss */
-    CMNetBiosNameInfo *nameInfo   /* IN: name to resolve,
-                                         the group flag of this name will be revealed */
+	    NQ_IPADDRESS *hostIp,     		/* OUT: IP addresses */
+    CMNetBiosNameInfo *nameInfo   		/* IN: name to resolve,
+                                         	   the group flag of this name will be revealed */
     );
 
-NQ_STATUS                         /* PURPOSE: Get host name by its IP */
+NQ_STATUS                         	  	/* PURPOSE: Get host name by its IP */
 nsGetHostName(
-    NQ_IPADDRESS *hostIp,         /* IN: ip adresss */
-    CMNetBiosNameInfo* hostName   /* OUT: name to return on sucess */
+	    NQ_IPADDRESS *hostIp,         	/* IN: IP addresses */
+	    CMNetBiosNameInfo* hostName   	/* OUT: name to return on success */
     );
 
 NQ_BOOL                     /* check socket availability */
@@ -317,15 +343,21 @@ nsDnsClearTargetAddress(
  *  Subsequent calls to nsInit are allowed yet have no effect
  ********************************************************************/
 
-void                /* prepare for nsInit() */
-nsInitGuard(
-    void
-    );
+/*@@
+   Description
+   Start TCP/NetBIOS transport layer.
+   Returns
+   <i>NQ_SUCCESS</i> when server has started and <i>NQ_FAIL</i>
+   when it failed to start.                                     */
+void nsInitGuard(void);
 
-void                /* dispose guard */
-nsExitGuard(
-    void
-    );
+/*@@
+   Description
+   Shutdown TCP/NetBIOS transport layer.
+   Returns
+   None
+   */
+void nsExitGuard(void);
 
 NQ_STATUS           /* initialize NS for the current task */
 nsInit(
@@ -346,21 +378,6 @@ void                /* release NSMessage (should not be called from other then N
 nsExitMessage(
     void
     );
-
-NQ_BYTE*
-nsGetBuffer(
-    void
-    );                      /* take a buffer from the pool */
-
-void
-nsPutBuffer(
-    NQ_BYTE *buffer
-    );                      /* return a buffer to the pool */
-
-void
-nsResetBufferPool(
-    void
-    );                      /* reset buffer pool to ist initial state */ 
 
 /* get send datagram buffer */
 
@@ -416,7 +433,23 @@ NQ_STATUS nsRequestByNameBcast(
     const NQ_WCHAR * name, 
     void * context, 
     const NQ_IPADDRESS * serverIp
-    );         
+    );
+
+NQ_STATUS nsRequestByNameWinsDC(
+    SYSocketHandle socket, 
+    const NQ_WCHAR * name, 
+    void * context, 
+    const NQ_IPADDRESS * serverIp
+    );
+
+#ifndef UD_NQ_AVOIDDCRESOLUTIONNETBIOS
+NQ_STATUS nsRequestByNameBcastDC(
+    SYSocketHandle socket, 
+    const NQ_WCHAR * name, 
+    void * context, 
+    const NQ_IPADDRESS * serverIp
+    );
+#endif
 
 NQ_STATUS nsResponseByName(
     SYSocketHandle socket, 
@@ -444,5 +477,24 @@ NQ_STATUS nsResponseByIp(
     const NQ_WCHAR ** pName, 
     void ** pContext
     );
+
+#ifndef IS_NQ_STORAGE
+
+NQ_BYTE*
+nsGetBuffer(
+    void
+    );                      /* take a buffer from the pool */
+
+void
+nsPutBuffer(
+    NQ_BYTE *buffer
+    );                      /* return a buffer to the pool */
+
+void
+nsResetBufferPool(
+    void
+    );                      /* reset buffer pool to its initial state */
+
+#endif
 
 #endif  /* _NSAPI_H_ */

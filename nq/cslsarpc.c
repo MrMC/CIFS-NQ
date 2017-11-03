@@ -71,9 +71,9 @@ typedef struct
 {
     NQ_UINT32 fakePolicyHandle;  /* to have different handles for subseq. openings */
     NQ_WCHAR nameW[CM_BUFFERLENGTH(NQ_WCHAR, CM_USERNAMELENGTH)];
-    NQ_TCHAR txtBufferT[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
+    NQ_WCHAR txtBufferT[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
 #ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
-    NQ_TCHAR fullNameT[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
+    NQ_WCHAR fullNameT[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
     TranslatedName translatedNames[MAX_NAMESTRANSLATED];    /* requested/returned RIDS */
     CMSdDomainSid lookupSids[MAX_SIDSTRANSLATED];        /* requested SIDS */
 #endif /* UD_CS_INCLUDESECURITYDESCRIPTORS */
@@ -340,7 +340,7 @@ lookupSids2RequestCallback(
 
 static NQ_BOOL
 lookupSids2DomainsCallback(
-    const NQ_TCHAR* name,       /* next domain name */
+    const NQ_WCHAR* name,       /* next domain name */
     const CMSdDomainSid* sid,   /* trusted domain SID */
     NQ_UINT32 count,            /* total number of names */
     NQ_UINT32 maxCount,         /* total number of names */
@@ -351,7 +351,7 @@ lookupSids2DomainsCallback(
 
 static NQ_BOOL
 lookupSids2NamesCallback(
-    const NQ_TCHAR* name,       /* next resolved name */
+    const NQ_WCHAR* name,       /* next resolved name */
     NQ_UINT16 type,             /* name type */
     NQ_UINT32 index,            /* name index */
     NQ_UINT32 reserved,         /* unknown value */
@@ -453,9 +453,9 @@ lsaOpenPolicy2(
 
     TRCB();
 
-    /* read server name (referent id and unicode string) */
+    /* read server name (referent id and unicode null terminated string) */
     cmRpcParseSkip(in, 4);
-    cmRpcParseUnicode(in, &server, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &server, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     /* read object attributes */
     cmRpcParseUint32(in, &length);
     cmRpcParseSkip(in, length);
@@ -570,13 +570,14 @@ lsaLookupSids2(
 {
     NQ_UINT32 refId = 20;               /* running ref id */
     CMRpcPacketDescriptor outTemp;      /* temporary descriptor */
-    NQ_UINT i;                          /* just a counter */
-    NQ_UINT16 infoLevel;                /* info level */
-    NQ_UINT32 mappedCount;              /* number of mapped SIDs */
-    NQ_UINT32 originalCount;            /* number of required SIDs */
-    NQ_UINT16 nameLen;                  /* LSA name length/size */
-    NQ_UINT16 type;                     /* sid type */
-    NQ_UINT32 domainIndex;              /* trusted domain index */
+    NQ_UINT i = 0;                          /* just a counter */
+    NQ_UINT16 infoLevel = 0;                /* info level */
+    NQ_UINT32 mappedCount = 0;              /* number of mapped SIDs */
+    NQ_UINT32 originalCount = 0;            /* number of required SIDs */
+    NQ_UINT16 nameLen = 0;                  /* LSA name length/size */
+    NQ_UINT16 type = 0;                     /* sid type */
+    NQ_UINT32 domainIndex = 0;              /* trusted domain index */
+    CMSdDomainSid * lookupSids = NULL;
 
     TRCB();
 
@@ -588,12 +589,24 @@ lsaLookupSids2(
     cmRpcParseSkip(in, 4 * 2); /* array ref id + max count */
     cmRpcParseSkip(in, 4 * originalCount); /* skip all SIDs ref ids */
 
+    if (originalCount > MAX_SIDSTRANSLATED)
+    {
+    	lookupSids = (CMSdDomainSid *)cmMemoryAllocate((NQ_UINT)(originalCount * sizeof(CMSdDomainSid)));
+    	if (lookupSids == NULL)
+    	{
+    		sySetLastError(NQ_ERR_NOMEM);
+			LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory, trying to allocate %s sids" , originalCount);
+			goto Exit;
+    	}
+    }
+    else
+    	lookupSids = staticData->lookupSids;
     /* cycle by SIDs and save SIDs */
     mappedCount = 0;
     for (i = 0; i < originalCount; i++)
     {
         cmRpcParseSkip(in, 4); /* count */
-        cmSdParseSid(in, &staticData->lookupSids[i]);
+        cmSdParseSid(in, &lookupSids[i]);
     }
     cmRpcParseSkip(in, 4 * 2);  /* name array */
     cmRpcParseUint16(in, &infoLevel);           /* info level */
@@ -612,11 +625,11 @@ lsaLookupSids2(
         /* place ref ids for domains */
         for (i = 0; i < originalCount; i++)
         {
-            type = resolveSid(&staticData->lookupSids[i]);
+            type = resolveSid(&lookupSids[i]);
             if (CM_SD_RIDTYPE_UNKNOWN != type)
             {
                 mappedCount++;
-                nameLen = (NQ_UINT16)cmTStrlen(staticData->txtBufferT);
+                nameLen = (NQ_UINT16)syWStrlen(staticData->txtBufferT);
                 cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* length */
                 cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* size */
                 cmRpcPackUint32(out, refId++);                      /* name ref id */
@@ -627,14 +640,14 @@ lsaLookupSids2(
         /* place names and SIDs for domains */
         for (i = 0; i < originalCount; i++)
         {
-            type = resolveSid(&staticData->lookupSids[i]);
+            type = resolveSid(&lookupSids[i]);
             if (CM_SD_RIDTYPE_UNKNOWN != type)
             {
-                cmRpcPackTcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
-                staticData->lookupSids[i].numAuths--;
-                cmRpcPackUint32(out, staticData->lookupSids[i].numAuths);   /* sid count */
-                cmSdPackSid(out, &staticData->lookupSids[i]);               /* domain sid */
-                staticData->lookupSids[i].numAuths++;
+                cmRpcPackWcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+                lookupSids[i].numAuths--;
+                cmRpcPackUint32(out, lookupSids[i].numAuths);   /* sid count */
+                cmSdPackSid(out, &lookupSids[i]);               /* domain sid */
+                lookupSids[i].numAuths++;
             }
         }
 
@@ -653,7 +666,7 @@ lsaLookupSids2(
         domainIndex = 0;
         for (i = 0; i < originalCount; i++)
         {
-            type = resolveSid(&staticData->lookupSids[i]);
+            type = resolveSid(&lookupSids[i]);
             cmRpcPackUint16(out, type);
             cmRpcAllign(out, 4);
             if (type == CM_SD_RIDTYPE_UNKNOWN || type == CM_SD_RIDTYPE_DOMAIN)
@@ -680,7 +693,7 @@ lsaLookupSids2(
         /* place names */
         for (i = 0; i < originalCount; i++)
         {
-            type = resolveSid(&staticData->lookupSids[i]);
+            type = resolveSid(&lookupSids[i]);
             if (CM_SD_RIDTYPE_UNKNOWN != type && CM_SD_RIDTYPE_DOMAIN != type)
             {
                 cmRpcPackUnicode(out, staticData->nameW, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
@@ -698,7 +711,9 @@ lsaLookupSids2(
 
     /* the rest */
     cmRpcPackUint32(out, mappedCount);
-
+    if (originalCount > MAX_SIDSTRANSLATED)
+    	cmMemoryFree(lookupSids);
+Exit:
     TRCE();
     return mappedCount == originalCount ? 0 : (mappedCount == 0 ? CM_RP_FAULTNONEMAPPED : CM_RP_FAULTSOMENOTMAPPED);
 }
@@ -742,12 +757,13 @@ lsaLookupNames2(
     numMapped = 0;
     for (i = 0; i < numNames; i++)
     {
-        NQ_TCHAR* pName;    /* pointer to requested name */
+        NQ_WCHAR* pName;    /* pointer to requested name */
 
-        cmRpcParseUnicode(in, &nameDesc, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-        cmUnicodeToTchar(staticData->txtBufferT, nameDesc.text);
-        staticData->txtBufferT[nameDesc.length] = 0;
-        pName = cmTStrchr(staticData->txtBufferT, cmTChar('\\'));
+        cmRpcParseUnicode(in, &nameDesc, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+        syWStrncpy(staticData->txtBufferT, nameDesc.text, nameDesc.length);
+        staticData->txtBufferT[nameDesc.length] = cmWChar(0);
+
+        pName = syWStrchr(staticData->txtBufferT, cmWChar('\\'));
         if (pName == NULL)
         {
             isNoDomain = TRUE;
@@ -759,12 +775,12 @@ lsaLookupNames2(
 
             isNoDomain = FALSE;
             nameLen = (NQ_UINT16)(pName - staticData->txtBufferT);
-            cmAnsiToTchar(staticData->fullNameT, cmNetBiosGetHostNameZeroed());
-            if (0 != cmTStrncmp(staticData->fullNameT, staticData->txtBufferT, nameLen))
+            syAnsiToUnicode(staticData->fullNameT, cmNetBiosGetHostNameZeroed());
+            if (0 != syWStrncmp(staticData->fullNameT, staticData->txtBufferT, nameLen))
             {
-                cmAnsiToTchar(staticData->fullNameT, cmGetFullHostName());
+                syAnsiToUnicode(staticData->fullNameT, cmGetFullHostName());
 
-                if (0 != cmTStrncmp(staticData->fullNameT, staticData->txtBufferT, nameLen))
+                if (0 != syWStrncmp(staticData->fullNameT, staticData->txtBufferT, nameLen))
                 {
                     continue;        /* domain not matched */
                 }
@@ -879,12 +895,13 @@ lsaLookupNames3(
     numMapped = 0;
     for (i = 0; i < numNames; i++)
     {
-        NQ_TCHAR* pName;    /* pointer to requested name */
+        NQ_WCHAR* pName;    /* pointer to requested name */
 
         cmRpcParseUnicode(in, &nameDesc, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
-        cmUnicodeToTcharN(staticData->txtBufferT, nameDesc.text, nameDesc.length);
-        staticData->txtBufferT[nameDesc.length] = 0;
-        pName = cmTStrchr(staticData->txtBufferT, cmTChar('\\'));
+        syWStrncpy(staticData->txtBufferT, nameDesc.text, (NQ_UINT)nameDesc.length);
+        staticData->txtBufferT[nameDesc.length] = cmWChar(0);
+
+        pName = syWStrchr(staticData->txtBufferT, cmWChar('\\'));
         if (pName == NULL)
         {
             isNoDomain = TRUE;
@@ -896,12 +913,12 @@ lsaLookupNames3(
 
             isNoDomain = FALSE;
             nameLen = (NQ_UINT16)(pName - staticData->txtBufferT);
-            cmAnsiToTchar(staticData->fullNameT, cmNetBiosGetHostNameZeroed());
-            if (0 != cmTStrncmp(staticData->fullNameT, staticData->txtBufferT, nameLen))
+            syAnsiToUnicode(staticData->fullNameT, cmNetBiosGetHostNameZeroed());
+            if (0 != syWStrncmp(staticData->fullNameT, staticData->txtBufferT, nameLen))
             {
-                cmAnsiToTchar(staticData->fullNameT, cmGetFullHostName());
+                syAnsiToUnicode(staticData->fullNameT, cmGetFullHostName());
 
-                if (0 != cmTStrncmp(staticData->fullNameT, staticData->txtBufferT, nameLen))
+                if (0 != syWStrncmp(staticData->fullNameT, staticData->txtBufferT, nameLen))
                 {
                     continue;        /* domain not matched */
                 }
@@ -1116,14 +1133,14 @@ static NQ_BOOL
 
 static NQ_BOOL
 lookupSids2DomainsCallback(
-    const NQ_TCHAR* name,
+    const NQ_WCHAR* name,
     const CMSdDomainSid* sid,
     NQ_UINT32 count,
     NQ_UINT32 maxCount,
     NQ_BYTE* abstractParams
     )
 {
-    cmTStrcpy(staticData->txtBufferT, name);
+    syWStrcpy(staticData->txtBufferT, name);
     return TRUE;
 }
 
@@ -1145,7 +1162,7 @@ lookupSids2DomainsCallback(
 
 static NQ_BOOL
 lookupSids2NamesCallback(
-    const NQ_TCHAR* name,
+    const NQ_WCHAR* name,
     NQ_UINT16 type,
     NQ_UINT32 index,
     NQ_UINT32 reserved,
@@ -1156,7 +1173,7 @@ lookupSids2NamesCallback(
     LookupSids2Params *params = (LookupSids2Params *)abstractParams;
 
     if (type != CM_SD_RIDTYPE_UNKNOWN && type != CM_SD_RIDTYPE_DOMAIN)
-        cmTcharToUnicode(staticData->nameW, name);
+        syWStrcpy(staticData->nameW, name);
     params->type = type;
     params->requestCount++;
     return TRUE;
@@ -1205,7 +1222,7 @@ initData(
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(*staticData));
     if (NULL == staticData)
     {
         TRCERR("Unable to allocate SPOOLSS table");
@@ -1340,8 +1357,8 @@ resolveSid(
         type = (NQ_UINT16)cmSdGetRidType(rid);
         if (!cmSdLookupRid(rid, staticData->txtBufferT, staticData->fullNameT))
             return CM_SD_RIDTYPE_UNKNOWN;
-        cmTcharToUnicode(staticData->nameW, staticData->txtBufferT);
-        cmAnsiToTchar(staticData->txtBufferT, domainName);
+        syWStrcpy(staticData->nameW, staticData->txtBufferT);
+        syAnsiToUnicode(staticData->txtBufferT, domainName);
     }
     else
     {
@@ -1367,15 +1384,15 @@ resolveSid(
                 TRCE();
                 return FALSE;
             }
-            cmAnsiToTchar(staticData->txtBufferT, dc);
-            dcW = cmMemoryAllocate(sizeof(NQ_WCHAR) * (cmTStrlen(staticData->txtBufferT) + 1));
+            syAnsiToUnicode(staticData->txtBufferT, dc);
+            dcW = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)(sizeof(NQ_WCHAR) * (syWStrlen(staticData->txtBufferT) + 1)));
             if (NULL == dcW)
             {
                 TRCERR("Out of memory");
                 TRCE();
                 return 1;
             }
-            cmTcharToUnicode(dcW, staticData->txtBufferT);
+            syWStrcpy(dcW, staticData->txtBufferT);
 
             lsa = ccDcerpcConnect(dcW, NULL, ccLsaGetPipe(), FALSE);
             cmMemoryFree(dcW);
@@ -1390,9 +1407,9 @@ resolveSid(
 			params.requestCount = 1;
             ccLsaLookupSids(
                 lsa,
-                lookupSids2RequestCallback,
-                lookupSids2DomainsCallback,
-                lookupSids2NamesCallback,
+                (CCLsaLookupSidsRequestCallback)lookupSids2RequestCallback,
+                (CCLsaLookupSidsDomainsCallback)lookupSids2DomainsCallback,
+                (CCLsaLookupSidsNamesCallback)lookupSids2NamesCallback,
                 1,
                 (NQ_BYTE *)&params
                 );

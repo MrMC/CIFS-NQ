@@ -62,7 +62,7 @@ NQ_UINT32 csSmb2OnQueryInfo(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader 
     NQ_UINT32 additionalInformation;        /* relevant for SMB2_INFO_SECURITY and SMB2_INFO_FILE:FileFullEaInformation only */
     CSFid fid;                              /* file ID */
     CSFile* pFile;                          /* pointer to file descriptor */
-    const NQ_TCHAR* pFileName;              /* file name pointer */
+    const NQ_WCHAR* pFileName;              /* file name pointer */
     CMBufferWriter outBuffWriter;           /* writer for response info buffer */  
     CSTransaction2Descriptor descriptor;    /* descriptor */
     NQ_UINT32 result = NQ_SUCCESS;          /* for result of query operation */   
@@ -110,6 +110,13 @@ NQ_UINT32 csSmb2OnQueryInfo(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader 
     switch (infoType)
     {
         case SMB2_INFO_FILE:
+            if (0 == outputBufferLength)
+            {
+                LOGERR(CM_TRC_LEVEL_ERROR, "Requested output buffer size is 0");
+                LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+                return SMB_STATUS_INFO_LENGTH_MISMATCH;
+            }
+
             /* find file descriptor(s) */
             pFile = csGetFileByFid(fid, tree->tid, session->uid);
             if (pFile == NULL)
@@ -136,14 +143,22 @@ NQ_UINT32 csSmb2OnQueryInfo(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader 
                 LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
                 return SMB_STATUS_UNSUCCESSFUL;
             }
-            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "File name: %s", cmTDump(pFileName));
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "File name: %s", cmWDump(pFileName));
 
             /* get file information */
             descriptor.pParams = cmBufferWriterGetPosition(&outBuffWriter) - 4; /* extra 4 bytes required by csQueryFileInformationByName() */
-            result = csQueryFileInformationByName(pFile, pFileName, (NQ_COUNT)cmTStrlen(pShare->map), (NQ_UINT)(infoClass + 1000), TRUE, CS_MAXBUFFERSIZE - SMB2_HEADERSIZE - 8, &descriptor);
+            descriptor.pHeaderOut = (const CMCifsHeader *)(cmBufferWriterGetStart(writer) - SMB2_HEADERSIZE);
+            result = csQueryFileInformationByName(pFile, pFileName, (NQ_COUNT)syWStrlen(pShare->map), (NQ_UINT)(infoClass + 1000), TRUE, CS_MAXBUFFERSIZE - SMB2_HEADERSIZE - 8, &descriptor);
             break;
         case SMB2_INFO_FILESYSTEM:
         {
+            if (0 == outputBufferLength)
+            {
+                LOGERR(CM_TRC_LEVEL_ERROR, "Requested output buffer size is 0");
+                LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+                return SMB_STATUS_INFO_LENGTH_MISMATCH;
+            }
+
             /* get file system information */
             descriptor.pParams = cmBufferWriterGetPosition(&outBuffWriter);
 			descriptor.pHeaderOut = (const CMCifsHeader *)(cmBufferWriterGetStart(writer) - SMB2_HEADERSIZE);
@@ -170,7 +185,7 @@ NQ_UINT32 csSmb2OnQueryInfo(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader 
 
                 /* get security descriptor */
                 sdLength = (NQ_UINT32)syGetSecurityDescriptor(pFile->file, additionalInformation, cmBufferWriterGetPosition(&outBuffWriter));
-                if (NQ_FAIL == sdLength)
+                if ((NQ_UINT32) NQ_FAIL == sdLength)
                 {
     /*                LOGERR(CM_TRC_LEVEL_ERROR, "SD not supported");
                     LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
@@ -181,7 +196,7 @@ NQ_UINT32 csSmb2OnQueryInfo(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader 
 
                 	cmSdGetNoneSecurityDescriptor(&sd);
                     cmRpcSetDescriptor(&temp, cmBufferWriterGetPosition(&outBuffWriter), FALSE);
-                	cmSdPackSecurityDescriptor(&temp, &sd);
+                	cmSdPackSecurityDescriptor(&temp, &sd, 0x0f);
                     cmBufferWriterSetPosition(&outBuffWriter, temp.current);
                     sdLength = sd.length;
                 }
@@ -191,7 +206,12 @@ NQ_UINT32 csSmb2OnQueryInfo(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader 
                 }
 
                 /* compose error response specifying required buffer size */
-                if (outputBufferLength < sdLength)
+                if (0 == outputBufferLength)
+                {
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Requested output buffer size is 0, required: %d", sdLength);
+                    return SMB_STATUS_INFO_LENGTH_MISMATCH;
+                }
+                else if (outputBufferLength < sdLength)
                 {
                     LOGERR(CM_TRC_LEVEL_ERROR, "Requested output buffer size is too small, requested: %d, required: %d", outputBufferLength, sdLength);
                     out->status = SMB_STATUS_BUFFER_TOO_SMALL;
@@ -299,7 +319,7 @@ NQ_UINT32 csSmb2OnSetInfo(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *r
         LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
         return SMB_STATUS_UNSUCCESSFUL;
     }
-    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "File name: %s", cmTDump(ctx.pFileName));
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "File name: %s", cmWDump(ctx.pFileName));
             
     /* process by info type code */
     switch (infoType)
@@ -324,6 +344,7 @@ NQ_UINT32 csSmb2OnSetInfo(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *r
                 out->flags |= SMB2_FLAG_ASYNC_COMMAND;
                 out->aid.low = asyncId;
                 out->aid.high = 0;
+                out->credits = 0;
             }
 #endif /* UD_CS_FORCEINTERIMRESPONSES */
 
@@ -392,7 +413,7 @@ NQ_UINT32 csSmb2OnQueryDirectory(CMSmb2Header *in, CMSmb2Header *out, CMBufferRe
     NQ_UINT32 result = NQ_SUCCESS;          /* for result of query operation */   
     const CSShare* pShare;                  /* pointer to the share */
     CSFile* pFile;                          /* pointer to file descriptor */
-    NQ_TCHAR* pFileName;                    /* filename to search */
+    NQ_WCHAR* pFileName;                    /* filename to search */
     CSSearch* pSearch;                      /* search operation descriptor */
     NQ_BYTE* pEntry;                        /* file record pointer */
     NQ_BYTE* pLastEntry = NULL;             /* pointer to the last record */
@@ -402,9 +423,14 @@ NQ_UINT32 csSmb2OnQueryDirectory(CMSmb2Header *in, CMSmb2Header *out, CMBufferRe
     NQ_UINT maxLength;                      /* max response length */
     NQ_BYTE* pBuffer;                       /* pointer to the start of the entries */
     NQ_BOOL isFindFirst = FALSE;            /* whether it's 'find first' request */
+    NQ_UINT32 bufferLength;                 /* output buffer length */
+    NQ_UINT length;
+    NQ_BOOL	useOldLength = FALSE;
+    NQ_UINT	oldLen = 0;
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDFileAccessEvent	eventInfo;
 #endif
+    static NQ_WCHAR fileNameBuff[CM_MAXFILENAMELEN];
 
     LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
 
@@ -470,7 +496,7 @@ NQ_UINT32 csSmb2OnQueryDirectory(CMSmb2Header *in, CMSmb2Header *out, CMBufferRe
     }
  
     /* convert filename to host filename */
-    if ((pFileName = cmCifsNtohFilename(csGetNameByNid(pFile->nid)->name, (NQ_TCHAR*)searchPattern, TRUE)) == NULL)
+    if ((pFileName = cmCifsNtohFilename(fileNameBuff, csGetNameByNid(pFile->nid)->name, (NQ_WCHAR*)searchPattern, TRUE, TRUE)) == NULL)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Illegal filename");
         LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
@@ -496,7 +522,7 @@ NQ_UINT32 csSmb2OnQueryDirectory(CMSmb2Header *in, CMSmb2Header *out, CMBufferRe
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     /* check path */
-    if (!csCheckPath(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), session->preservesCase))
+    if (!csCheckPath(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), session->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEVENTLOG
 		udEventLog(
@@ -509,7 +535,7 @@ NQ_UINT32 csSmb2OnQueryDirectory(CMSmb2Header *in, CMSmb2Header *out, CMBufferRe
 			(const NQ_BYTE *)&eventInfo
 			);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-        LOGERR(CM_TRC_LEVEL_ERROR, "Path does not exist: %s", cmTDump(pFileName));
+        LOGERR(CM_TRC_LEVEL_ERROR, "Path does not exist: %s", cmWDump(pFileName));
         LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
         return SMB_STATUS_OBJECT_PATH_NOT_FOUND;
     }
@@ -557,11 +583,11 @@ NQ_UINT32 csSmb2OnQueryDirectory(CMSmb2Header *in, CMSmb2Header *out, CMBufferRe
     if (isFindFirst)
     {
          csEnumerateSourceName(&pSearch->enumeration, pFileName, session->preservesCase);
-         LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Starting search on %s", cmTDump(pFileName));
+         LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Starting search on %s", cmWDump(pFileName));
     }
     else
     {
-         LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Continuing search on %s", cmTDump(pFileName));
+         LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Continuing search on %s", cmWDump(pFileName));
     }
 
 #ifdef UD_NQ_INCLUDEEVENTLOG
@@ -595,9 +621,9 @@ NQ_UINT32 csSmb2OnQueryDirectory(CMSmb2Header *in, CMSmb2Header *out, CMBufferRe
 #endif
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
         {
-        	NQ_TCHAR * oldName;
+        	NQ_WCHAR * oldName;
 
-        	oldName = (NQ_TCHAR *)eventInfo.fileName;
+        	oldName = (NQ_WCHAR *)eventInfo.fileName;
 			eventInfo.before = TRUE;
 			eventInfo.fileName = pFileName;
 			udEventLog(
@@ -620,9 +646,9 @@ NQ_UINT32 csSmb2OnQueryDirectory(CMSmb2Header *in, CMSmb2Header *out, CMBufferRe
         }
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
         {
-        	NQ_TCHAR * oldName;
+        	NQ_WCHAR * oldName;
 
-        	oldName = (NQ_TCHAR *)eventInfo.fileName;
+        	oldName = (NQ_WCHAR *)eventInfo.fileName;
 			eventInfo.fileName = pFileName;
 			udEventLog(
 				UD_LOG_MODULE_CS,
@@ -639,6 +665,7 @@ NQ_UINT32 csSmb2OnQueryDirectory(CMSmb2Header *in, CMSmb2Header *out, CMBufferRe
     
         /* fill file information */
         pLastEntryCandidate = pEntry;
+        length = maxLength;
 
         error = csFillFindEntry(
                             pFileName,
@@ -648,7 +675,7 @@ NQ_UINT32 csSmb2OnQueryDirectory(CMSmb2Header *in, CMSmb2Header *out, CMBufferRe
                             entryCount,
                             TRUE,
                             pBuffer,
-                            maxLength,
+                            &length,
                             FALSE,
                             &pNextEntryOffset
                             );
@@ -687,7 +714,7 @@ NQ_UINT32 csSmb2OnQueryDirectory(CMSmb2Header *in, CMSmb2Header *out, CMBufferRe
                 pFile->sid = (CSSid)CS_ILLEGALID;
                 return SMB_STATUS_BUFFER_TOO_SMALL;
             }
-
+            useOldLength = TRUE;
             LOGERR(CM_TRC_LEVEL_ERROR, "Max buffer length reached");
             csRollbackEnumeration(pSearch->enumeration);
             break;
@@ -729,7 +756,7 @@ NQ_UINT32 csSmb2OnQueryDirectory(CMSmb2Header *in, CMSmb2Header *out, CMBufferRe
 
         if ((flags & SMB2_RETURN_SINGLE_ENTRY) != 0)
             break;
-
+        oldLen = length;
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
         eventInfo.before = TRUE;
 		udEventLog(
@@ -791,22 +818,36 @@ NQ_UINT32 csSmb2OnQueryDirectory(CMSmb2Header *in, CMSmb2Header *out, CMBufferRe
         return isFindFirst ? SMB_STATUS_NO_SUCH_FILE : SMB_STATUS_NO_MORE_FILES;
     }
     
+    bufferLength = (NQ_UINT32)(pEntry - pBuffer);
+    length = useOldLength ? oldLen : length;
+
     /* set zero for nextEntryOffset of last entry */
     if (pNextEntryOffset != NULL)
     {
-        NQ_BYTE* position = cmBufferWriterGetPosition(writer);
+    	NQ_UINT32 entryLength; /*  entry length with padding */
+        NQ_BYTE* positionW = cmBufferWriterGetPosition(writer);
+        NQ_BYTE* positionR = cmBufferReaderGetPosition(reader);
         
+        cmBufferReaderSetPosition(reader, pLastEntry);
+        cmBufferReadUint32(reader, &entryLength);
+        cmBufferReaderSetPosition(reader, positionR);
+
+        /* on last entry no padding is required */
+        bufferLength -= entryLength - length;
+        pEntry -= entryLength - length;
+        
+
         cmBufferWriterSetPosition(writer, pLastEntry);
         cmBufferWriteUint32(writer, 0);
-        cmBufferWriterSetPosition(writer, position);
+        cmBufferWriterSetPosition(writer, positionW);
     }
     
     /* write the response */
     cmBufferWriteUint16(writer, SMB2_QUERY_INFO_RESPONSE_DATASIZE);                       /* constant response size */  
     cmBufferWriteUint16(writer, SMB2_HEADERSIZE + SMB2_QUERY_INFO_RESPONSE_DATASIZE - 1); /* output buffer offset   */
-    cmBufferWriteUint32(writer, (NQ_UINT32)(pEntry - pBuffer));                           /* output buffer length   */
+    cmBufferWriteUint32(writer, bufferLength);                           				  /* output buffer length   */
     cmBufferWriterSetPosition(writer, pEntry);
- 
+
     LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
     return 0;
 }

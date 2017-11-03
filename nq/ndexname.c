@@ -26,9 +26,9 @@
 
 typedef struct                              /* name query request */
 {
-    NQ_UINT16 port;                         /* requestor port (internal) */
-    NQ_UINT16 tranId;                       /* requestor tranId */
-    NDAdapterInfo* adapter;                 /* requestor adapter (dummy) */
+    NQ_UINT16 port;                         /* Requester port (internal) */
+    NQ_UINT16 tranId;                       /* Requester tranId */
+    NDAdapterInfo* adapter;                 /* Requester adapter (dummy) */
 } Request;
 
 typedef struct                              /* name entry structure */
@@ -44,7 +44,7 @@ typedef struct                              /* name entry structure */
     NQ_UINT count;                              /* repeat count for timeout */
     NQ_UINT ttl;                                /* timeout value for queried name
                                                    or TTL for known name */
-    NQ_UINT timeout;                            /* countdown number of daemon ticks */
+    NQ_UINT timeout;                            /* count down number of daemon ticks */
     NQ_UINT16 tranId;                           /* query tran ID */
 }
 NameEntry;
@@ -53,9 +53,9 @@ NameEntry;
 
 #define NAME_EMPTY             -1   /* an empty slot */
 #define NAME_NEW                0   /* nothing done yet */
-#define NAME_INQUERY            1   /* name is being quered */
-#define NAME_KNOWN              2   /* name was discovered and TTL didn't expired yet */
-#define NAME_NOT_KNOWN          3   /* name was not discovered (doesn't exist) and TTL didn't expired yet */
+#define NAME_INQUERY            1   /* name is being queried */
+#define NAME_KNOWN              2   /* name was discovered and TTL didn't expire yet */
+#define NAME_NOT_KNOWN          3   /* name was not discovered (doesn't exist) and TTL didn't expire yet */
 
 typedef struct
 {
@@ -87,7 +87,7 @@ findNoName(
 /* Send different packets:
     Functions whose name starts with "send" are sending packets outside
     Functions whose name starts with "return" are sending packets back to an internal
-    apprlication */
+    Application */
 
 static NQ_STATUS
 sendQueryRequest(                   /* NQ_SUCCESS or NQ_FAIL */
@@ -109,10 +109,13 @@ returnNegativeQueryResponse(
     NQ_UINT error                          /* error code */
     );
 
-/* query operation timeout mesured in daemon cycles */
+/* query operation timeout measured in daemon cycles */
 
 #define QUERY_TIMEOUT \
         (CM_NB_UNICASTREQRETRYTIMEOUT + UD_ND_DAEMONTIMEOUT - 1) / UD_ND_DAEMONTIMEOUT
+
+#define NAME_ENTRY_MAX_TTL      5       /* max TTL for entry */
+
 
 /*
  *====================================================================
@@ -132,17 +135,17 @@ ndExternalNameInit(
     )
 {
     NQ_UINT idx;       /* index in the names */
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
     if (NULL == staticData)
     {
-        TRCERR("Unable to allocate External Names data");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate External Names data");
+        goto Exit;
     }
 #endif /* SY_FORCEALLOCATION */
 
@@ -151,9 +154,11 @@ ndExternalNameInit(
         staticData->names[idx].status = NAME_EMPTY;
         staticData->names[idx].numRequests = 0;
     }
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -173,16 +178,16 @@ ndExternalNameStop(
     void
     )
 {
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     /* release memory */
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
-        syFree(staticData);
+        cmMemoryFree(staticData);
     staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 /*
@@ -204,22 +209,22 @@ ndExternalNameQuery(
     const CMNetBiosName name
     )
 {
-    NQ_INT idx;                      /* index in names */
-    NQ_STATUS opStatus;              /* operation status */
+    NQ_INT idx;                         /* index in names */
+    NQ_STATUS opStatus;                 /* operation status */
     NQ_STATUS retValue = NQ_SUCCESS;    /* value to return */
     NQ_CHAR * oneB;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "response:%p name:%s",  response, name ? name : "");
 
     /* find name in the list */
-    TRC("name: %s", name);
+    /*LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "name: %s", name);*/
 
     idx = findName(name);
 
     if (idx == NAME_EMPTY)
     {
 
-        TRC("New name");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "New name");
 
         /* create name */
 
@@ -227,16 +232,13 @@ ndExternalNameQuery(
 
         if (idx == NAME_EMPTY)
         {
-            TRCE();
-
-            return NQ_FAIL;
+            retValue = NQ_FAIL;
+            goto Exit;
         }
-
         syMemcpy(staticData->names[idx].nameInfo.name, name, sizeof(CMNetBiosName));
-
     }
     
-    oneB = syStrchr(name, 0x1b);
+    oneB = (NQ_CHAR *)syStrchr(name, 0x1b);
 
     /* validate operation status */
 
@@ -245,18 +247,18 @@ ndExternalNameQuery(
     switch (opStatus)
     {
     case NAME_KNOWN:
-        TRC("NAME_KNOWN");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NAME_KNOWN");
         response->inTranId = cmGetSUint16(((CMNetBiosHeader*)response->inMsg)->tranID);
         returnPositiveQueryResponse(&staticData->names[idx], response, &staticData->names[idx].addrEntry);
         break;
     case NAME_NOT_KNOWN:
-        TRC("NAME_NOT_KNOWN");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NAME_NOT_KNOWN");
         response->inTranId = cmGetSUint16(((CMNetBiosHeader*)response->inMsg)->tranID);
         returnNegativeQueryResponse(&staticData->names[idx], response, CM_NB_RCODE_NAMERR);
         break;
     case NAME_NEW:
     case NAME_EMPTY:
-        TRC("NAME_NEW or NAME_EMPTY");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NAME_NEW or NAME_EMPTY");
         sendQueryRequest(&staticData->names[idx], response);
 
         /* calculate timeout */
@@ -296,7 +298,8 @@ ndExternalNameQuery(
         break;
     }
 
-    TRCE();
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", retValue);
     return retValue;
 }
 
@@ -322,11 +325,11 @@ ndExternalNamePositiveQuery(
     const NQ_BYTE* addData
     )
 {
-    NQ_INT idx;                      /* index in names */
-    NQ_STATUS opStatus;              /* operation status */
+    NQ_INT idx;                         /* index in names */
+    NQ_STATUS opStatus;                 /* operation status */
     NQ_STATUS retValue = NQ_SUCCESS;    /* value to return */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "adapter:%p name:%s addData:%p", adapter, name ? name : "", addData);
 
     /* find name in the list */
 
@@ -334,11 +337,9 @@ ndExternalNamePositiveQuery(
 
     if (idx == NAME_EMPTY)
     {
-        TRCERR("Positive Name Query Response for unknown name");
-        TRC1P("name: %s", name);
-
-        TRCE();
-        return NQ_SUCCESS;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Positive Name Query Response for unknown name");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "name: %s", name);
+        goto Exit;
     }
 
     /* validate operation status */
@@ -360,15 +361,13 @@ ndExternalNamePositiveQuery(
 
             if (!(staticData->names[idx].tranId == cmGetSUint16(((CMNetBiosHeader*)adapter->inMsg)->tranID)))
             {
-                TRCERR("Positive Query Response with unexpected Tran ID");
-                TRC2P(
+                LOGERR(CM_TRC_LEVEL_ERROR, "Positive Query Response with unexpected Tran ID");
+                LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, 
                     "Expected - %d, accepted - %d",
                     syNtoh16(staticData->names[idx].tranId),
                     syNtoh16(cmGetSUint16(((CMNetBiosHeader*)adapter->inMsg)->tranID))
                     );
-
-                TRCE();
-                return NQ_SUCCESS;
+                goto Exit;
             }
 
             /* validate the rest of the packet */
@@ -376,20 +375,18 @@ ndExternalNamePositiveQuery(
             resRecord = (CMNetBiosResourceRecord*) addData;
             if (CM_NB_RTYPE_NB != syNtoh16(cmGetSUint16(resRecord->rrType)))
             {
-                TRCERR("Positive Query Response with unexpected Addr Rec type");
-                TRC1P("Addr Rec type = %d", syNtoh16(cmGetSUint16(resRecord->rrType)));
-                TRCE();
-                return NQ_SUCCESS;
+                LOGERR(CM_TRC_LEVEL_ERROR, "Positive Query Response with unexpected Addr Rec type");
+                LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Addr Rec type = %d", syNtoh16(cmGetSUint16(resRecord->rrType)));
+                goto Exit;
             }
 
             length = syNtoh16(cmGetSUint16(resRecord->rdLength));
 
             if ( length < (NQ_INT)sizeof(CMNetBiosAddrEntry))
             {
-                TRCERR("Illegal resource record");
-
-                TRCE();
-                return NQ_FAIL;
+                LOGERR(CM_TRC_LEVEL_ERROR, "Illegal resource record");
+                retValue = NQ_FAIL;
+                goto Exit;
             }
 
             /* find the proper ADDR ENTRY:
@@ -401,8 +398,8 @@ ndExternalNamePositiveQuery(
 
             if (length != sizeof(CMNetBiosAddrEntry))
             {
-                NQ_COUNT i;         /* addr entry index */
-                NQ_UINT num;        /* num of addr entry records */
+                NQ_COUNT i;         /* address entry index */
+                NQ_UINT num;        /* number of address entry records */
                 NQ_IPADDRESS4 ip;   /* server IP in NBO */
                 NQ_BOOL found = FALSE;  /* whether a match was found */
 
@@ -427,10 +424,8 @@ ndExternalNamePositiveQuery(
 
                     if (!syIsValidSocket(sock))
                     {
-                        TRCERR("Unable to create socket");
-
-                        TRCE();
-                        return NQ_FAIL;
+                        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to create socket");
+                        goto Exit;
                     }
 
                     for (i = 0; i < num; i++)
@@ -451,10 +446,8 @@ ndExternalNamePositiveQuery(
 
                 if (!found)
                 {
-                    TRCERR("No IP selected");
-
-                    TRCE();
-                    return NQ_SUCCESS;         /* no IP selected */
+                    LOGERR(CM_TRC_LEVEL_ERROR, "No IP selected");
+                    goto Exit;
                 }
             }
 
@@ -467,7 +460,8 @@ ndExternalNamePositiveQuery(
             /* set up TTL */
 
             ttl = syNtoh32(cmGetSUint32(resRecord->ttl));
-            staticData->names[idx].ttl = (ttl + UD_ND_DAEMONTIMEOUT - 1) / UD_ND_DAEMONTIMEOUT;
+            ttl = ttl > NAME_ENTRY_MAX_TTL ? NAME_ENTRY_MAX_TTL : ttl;
+            staticData->names[idx].ttl = (NQ_UINT)((ttl + UD_ND_DAEMONTIMEOUT - 1) / UD_ND_DAEMONTIMEOUT);
             staticData->names[idx].timeout = staticData->names[idx].ttl;
 
             /* send responses over the internal connection */
@@ -487,7 +481,8 @@ ndExternalNamePositiveQuery(
         break;
     }
 
-    TRCE();
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", retValue);
     return retValue;
 }
 
@@ -514,7 +509,7 @@ ndExternalNameNegativeQuery(
     NQ_STATUS opStatus;              /* operation status */
     NQ_STATUS retValue = NQ_SUCCESS;    /* value to return */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "adapter:%p name:%s", adapter, name ? name : "");
 
     /* find name in the list */
 
@@ -522,11 +517,9 @@ ndExternalNameNegativeQuery(
 
     if (idx == NAME_EMPTY)
     {
-        TRCERR("Negative Name Query Response for unknown name");
-        TRC1P("name: %s", name);
-
-        TRCE();
-        return NQ_SUCCESS;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Negative Name Query Response for unknown name");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "name: %s", name);
+        goto Exit;
     }
 
     /* validate operation status */
@@ -544,15 +537,13 @@ ndExternalNameNegativeQuery(
 
             if (!(staticData->names[idx].tranId == cmGetSUint16(((CMNetBiosHeader*)adapter->inMsg)->tranID)))
             {
-                TRCERR("Negative Query Response with unexpected Tran ID");
-                TRC2P(
+                LOGERR(CM_TRC_LEVEL_ERROR, "Negative Query Response with unexpected Tran ID");
+                LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, 
                     "Expected - %d, accepted - %d",
                     syNtoh16(staticData->names[idx].tranId),
                     syNtoh16(cmGetSUint16(((CMNetBiosHeader*)adapter->inMsg)->tranID))
                     );
-
-                TRCE();
-                return NQ_SUCCESS;
+                goto Exit;
             }
             {
                 /* send responses */
@@ -574,7 +565,8 @@ ndExternalNameNegativeQuery(
         break;
     }
 
-    TRCE();
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", retValue);
     return retValue;
 }
 
@@ -604,7 +596,7 @@ ndExternalNameWack(
     NQ_STATUS opStatus;              /* operation status */
     NQ_STATUS retValue = NQ_SUCCESS;    /* value to return */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "response:%p name:%s addData:%p", response, name ? name : "", addData);
 
     /* find name in the list */
 
@@ -612,10 +604,8 @@ ndExternalNameWack(
 
     if (idx == NAME_EMPTY)
     {
-        TRC1P("WACK for unknown name: %s", name);
-
-        TRCE();
-        return NQ_SUCCESS;
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "WACK for unknown name: %s", name);
+        goto Exit;
     }
 
     /* validate operation status */
@@ -635,7 +625,7 @@ ndExternalNameWack(
 
             if ( ttl != 0)
             {
-                staticData->names[idx].timeout = (ttl - 1) / UD_ND_DAEMONTIMEOUT;
+                staticData->names[idx].timeout = (NQ_UINT)((ttl - 1) / UD_ND_DAEMONTIMEOUT);
             }
 
         }
@@ -644,7 +634,8 @@ ndExternalNameWack(
         break;
     }
 
-    TRCE();
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", retValue);
     return retValue;
 }
 
@@ -669,7 +660,7 @@ ndExternalNameTimeout(
     NQ_UINT idx;                /* index in names */
     NQ_COUNT retValue = CM_NB_VERYBIGNBTIMEOUT;   /* the result */
     
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "delta:%d", delta);
 
     for (idx = 0; idx < sizeof(staticData->names)/sizeof(staticData->names[0]); idx++)
     {
@@ -720,7 +711,7 @@ ndExternalNameTimeout(
             break;
         }
     }
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", retValue);
     return retValue;
 }
 
@@ -747,8 +738,9 @@ sendQueryRequest(
     NQ_INT resLen;                  /* length of the sent data */
     CMNetBiosHeader* msgHdr;        /* casted pointer to the outgoing message */
     const NDAdapterInfo* adapter;   /* next adapter to send over */
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "name:%p dummy:%p", name, dummy);
 
     /* compose the message */
 
@@ -757,8 +749,8 @@ sendQueryRequest(
 
     if (msgLen <= 0)
     {
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "msgLen:%d", msgLen);
+        goto Exit;
     }
 
     /* determine tran ID, called address type and flags */
@@ -786,12 +778,14 @@ sendQueryRequest(
             );
         if (resLen <= 0)
         {
-            TRCERR("Failed to send the Name Query Request");
+            LOGERR(CM_TRC_LEVEL_ERROR, "Failed to send the Name Query Request");
         }
     }
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -819,8 +813,9 @@ returnPositiveQueryResponse(
     NQ_INT msgLen;              /* length of the outgoing message */
     NQ_INT resLen;              /* length of the sent data */
     CMNetBiosHeader* msgHdr;    /* casted pointer to the outgoing message */
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "name:%p dummy:%p addrEntry:%p, in port: %d", name, dummy, addrEntry, dummy->inPort);
 
     /* compose the message */
 
@@ -835,8 +830,8 @@ returnPositiveQueryResponse(
 
     if (msgLen <= 0)
     {
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "msgLen:%d", msgLen);
+        goto Exit;
     }
 
     /* determine tran ID, called address type and flags */
@@ -855,13 +850,13 @@ returnPositiveQueryResponse(
         );
     if (resLen <= 0)
     {
-        TRCERR("Failed to send Positive Query Response internally");
-        TRCE();
-        return NQ_FAIL;
+        goto Exit;
     }
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -889,8 +884,9 @@ returnNegativeQueryResponse(
     NQ_INT msgLen;              /* length of the outgoing message */
     NQ_INT resLen;              /* length of the sent data */
     CMNetBiosHeader* msgHdr;    /* casted pointer to the outgoing message */
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "name:%p dummy:%p error:0x%x", name, dummy, error);
 
     udNetBiosError(CM_NBERR_NEGATIVERESPONSE, name->nameInfo.name);
 
@@ -907,8 +903,8 @@ returnNegativeQueryResponse(
 
     if (msgLen <= 0)
     {
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "msgLen:%d", msgLen);
+        goto Exit;
     }
 
     /* determine tran ID, called address type and flags */
@@ -927,13 +923,14 @@ returnNegativeQueryResponse(
         );
     if (resLen <= 0)
     {
-        TRCERR("Failed to send Negative Query Response internally");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Failed to send Negative Query Response internally");
+        goto Exit;
     }
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -953,7 +950,8 @@ findName(
     const CMNetBiosName name
     )
 {
-    NQ_INT idx;       /* index in names */
+    NQ_COUNT idx;       /* index in names */
+    NQ_INT result = NAME_EMPTY;
 
     for (idx = 0; idx < sizeof(staticData->names)/sizeof(staticData->names[0]); idx++)
     {
@@ -961,12 +959,14 @@ findName(
         {
             if (cmNetBiosSameNames(name, staticData->names[idx].nameInfo.name))
             {
-                return idx;
+                result = (NQ_INT)idx;
+                goto Exit;
             }
         }
     }
 
-    return NAME_EMPTY;
+Exit:
+    return result;
 }
 
 /*
@@ -986,19 +986,37 @@ findNoName(
     void
     )
 {
-    NQ_INT idx;       /* index in names */
+	NQ_COUNT idx, oldestNameIndex = 0;       /* index in names */
+	NQ_UINT oldestValue = 0;
+	NQ_INT result = NAME_EMPTY;
 
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
     for (idx = 0; idx < sizeof(staticData->names)/sizeof(staticData->names[0]); idx++)
     {
         if (staticData->names[idx].status == NAME_EMPTY)
         {
-            return idx;
+            result = (NQ_INT)idx;
+            goto Exit;
         }
     }
 
-    TRCERR("Overflow in the name table");
+    for (idx = 0; idx < sizeof(staticData->names)/sizeof(staticData->names[0]); idx++)
+   	{
+    	if ((staticData->names[idx].ttl - staticData->names[idx].timeout) > oldestValue)
+    	{
+    		oldestValue = staticData->names[idx].ttl - staticData->names[idx].timeout;
+   			oldestNameIndex = idx;
+   		}
+   	}
 
-    return NAME_EMPTY;
+    staticData->names[oldestNameIndex].status = NAME_EMPTY;
+    staticData->names[oldestNameIndex].numRequests = 0;
+	
+    result = (NQ_INT)oldestNameIndex;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 #endif /* UD_ND_INCLUDENBDAEMON */

@@ -20,7 +20,6 @@
 
 #include "nsapi.h"
 #include "nssessio.h"
-
 #include "nsbuffer.h"
 #include "nssocket.h"
 #include "nsinsock.h"
@@ -104,7 +103,7 @@ doConnect(
 static
 NQ_STATUS
 recreateSocket(     /* on error, close a socket, then create a new one with the same
-                       params - this is the only way to unbind a socket on error */
+                       parameters - this is the only way to unbind a socket on error */
     SocketSlot* pSock
     );
 #endif /* UD_NQ_USETRANSPORTNETBIOS */
@@ -124,15 +123,18 @@ nsInitSession(
     void
     )
 {
-    TRCB();
+    NQ_STATUS result = NQ_SUCCESS;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
     if (NULL == staticData)
     {
-        TRCERR("Unable to allocate socket pool");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate socket pool");
+        result = NQ_FAIL;
+        sySetLastError(NQ_ERR_NOMEM);
+        goto Exit;
     }
 #endif /* SY_FORCEALLOCATION */
 
@@ -153,8 +155,10 @@ nsInitSession(
     }
 
 #endif /* defined(UD_NQ_USETRANSPORTNETBIOS) && defined(UD_NB_INCLUDENAMESERVICE) */
-    TRCE();
-    return NQ_SUCCESS;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -172,14 +176,14 @@ nsExitSession(
     void
     )
 {
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
     /* release memory */
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
-        syFree(staticData);
+        cmMemoryFree(staticData);
     staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 /*
@@ -199,24 +203,54 @@ nqRegisterNetBiosName(
     const NQ_CHAR* name   /* pointer to name to register as NetBIOS name */
     )
 {
+    NQ_STATUS         result = NQ_FAIL;
     CMNetBiosNameInfo nameWrkst;
     CMNetBiosNameInfo nameSrv;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "name:%p", name);
 
     nameWrkst.isGroup = FALSE;
     cmNetBiosNameCreate(nameWrkst.name, name, CM_NB_POSTFIX_WORKSTATION);
     if (nsRegisterName(&nameWrkst) == NQ_FAIL)
     {
-        return NQ_FAIL;
+#ifdef UD_NQ_INCLUDEEVENTLOG
+		udEventLog(
+			UD_LOG_MODULE_CS,
+			UD_LOG_CLASS_GEN,
+			UD_LOG_GEN_NAMEREGFAIL,
+			NULL,
+			NULL,
+			0,
+			NULL
+		);
+#endif /* UD_NQ_INCLUDEEVENTLOG */
+        goto Exit;
     }   
     
     nameSrv.isGroup = FALSE;
-    cmNetBiosNameCreate(nameSrv.name, name, CM_NB_POSTFIX_WORKSTATION);    
+    cmNetBiosNameCreate(nameSrv.name, name, CM_NB_POSTFIX_SERVER);    
     if (nsRegisterName(&nameSrv) == NQ_FAIL)
     {
+#ifdef UD_NQ_INCLUDEEVENTLOG
+		udEventLog(
+			UD_LOG_MODULE_CS,
+			UD_LOG_CLASS_GEN,
+			UD_LOG_GEN_NAMEREGFAIL,
+			NULL,
+			NULL,
+			0,
+			NULL
+		);
+#endif /* UD_NQ_INCLUDEEVENTLOG */
         nsReleaseName(&nameWrkst);
-        return NQ_FAIL;
+        goto Exit;
     }
-    return NQ_SUCCESS;
+
+    result = NQ_SUCCESS;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -248,6 +282,52 @@ nqReleaseNetBiosName(
 
 /*
  *====================================================================
+ * PURPOSE: Register a name on the network as a NetBIOS name (extended)
+ *--------------------------------------------------------------------
+ * PARAMS:  IN  name
+ *          IN  flags (combination of flags designating group or unique name 
+ *              and postfix, e.g. CM_NB_UNIQUE|CM_NB_POSTFIX_SERVER)
+ *
+ * RETURNS: NQ_SUCCESS or NQ_FAIL
+ *
+ * NOTES:   This is an extended version of nqRegisterNetBiosName()
+ *====================================================================
+ */
+NQ_STATUS nqRegisterNetBiosNameEx(const NQ_CHAR* name, const NQ_BYTE flags)
+{
+    CMNetBiosNameInfo nameToRegister;
+
+    nameToRegister.isGroup = flags & CM_NB_GROUP;
+    cmNetBiosNameCreate(nameToRegister.name, name, flags & CM_NB_POSTFIXMASK);
+
+    return nsRegisterName(&nameToRegister);
+}
+
+/*
+ *====================================================================
+ * PURPOSE: Release a name on the network as a NetBIOS name (extended)
+ *--------------------------------------------------------------------
+ * PARAMS:  IN  name
+ *          IN  flags (combination of flags designating group or unique name 
+ *              and postfix, e.g. CM_NB_UNIQUE|CM_NB_POSTFIX_SERVER)
+ *
+ * RETURNS: NQ_SUCCESS or NQ_FAIL
+ *
+ * NOTES:   This is an extended version of nqReleaseNetBiosName()
+ *====================================================================
+ */
+
+NQ_STATUS nqReleaseNetBiosNameEx(const NQ_CHAR* name, const NQ_BYTE flags)
+{
+    CMNetBiosNameInfo nameToRelease;
+
+    nameToRelease.isGroup = flags & CM_NB_GROUP;
+    cmNetBiosNameCreate(nameToRelease.name, name, flags & CM_NB_POSTFIXMASK);
+    return nsReleaseName(&nameToRelease);
+}
+
+/*
+ *====================================================================
  * PURPOSE: Create a socket
  *--------------------------------------------------------------------
  * PARAMS:  IN socket type - TCP or UDP
@@ -266,8 +346,9 @@ nsSocket(
         )
 {
     SocketSlot* pSock;      /* pointer to NS socket descriptor */
+    NSSocketHandle resultHdl = NULL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "type:%u transport:%u", type, transport);
 
     /* check parameters */
 
@@ -278,10 +359,9 @@ nsSocket(
     case NS_SOCKET_STREAM:
         break;
     default:
-        TRCERR("Unknown socket type");
-        TRC1P(" value %i", type);
-        TRCE();
-        return NULL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unknown socket type value %i", type);
+        sySetLastError(CM_NBERR_INVALIDPARAMETER);
+        goto Exit;
     }
 
     switch (transport)
@@ -297,26 +377,21 @@ nsSocket(
 #endif /* UD_NQ_USETRANSPORTIPV6 */
         break;
     default:
-        TRCERR("Unknown socket transport");
-        TRC1P(" value %i", transport);
-        TRCE();
-        return NULL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unknown socket transport value %i", transport);
+        sySetLastError(CM_NBERR_INVALIDPARAMETER);
+        goto Exit;
     }
-#endif
+#endif /* SY_DEBUGMODE */
 
-    /* allocate and initalize a socket descriptor */
-
+    /* allocate and initialize a socket descriptor */
     if ((pSock=getSocketSlot()) == NULL)        /* Get a slot for socket info */
     {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate socket slot");
         sySetLastError(CN_NBERR_SOCKETOVERFLOW);    /* no more slots */
-
-        TRCERR("Unable to allocate socket slot");
-        TRCE();
-        return NULL;
+        goto Exit;
     }
 
     /* create the socket in the underlying socket system */
-
     pSock->socket =
         syCreateSocket(
             (type==NS_SOCKET_STREAM),
@@ -325,39 +400,37 @@ nsSocket(
 #endif /* UD_NQ_USETRANSPORTIPV6 */
             CM_IPADDR_IPV4
             );
-
     if (!syIsValidSocket(pSock->socket))
     {
         putSocketSlot(pSock);
-
-        TRCERR("Unable to create socket");
-        TRCE();
-        return NULL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to create socket");
+        sySetLastError(NQ_ERR_SOCKETCREATE);
+        goto Exit;
     }
 
-    TRC1P("Created NS socket %d", pSock->socket);
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Created NS socket %d", pSock->socket);
 
     /* fill initial socket information */
-
     pSock->transport = transport;
     pSock->isListening = FALSE;
     pSock->port = 0;
     pSock->type = type;
     pSock->isBind = FALSE;
+	pSock->isAccepted = FALSE;
 
     /* set the default caller name to the own NETBIOS name */
     cmNetBiosNameCopy(pSock->name.name, cmNetBiosGetHostNameInfo()->name);
     cmNetBiosNameFormat(pSock->name.name, CM_NB_POSTFIX_WORKSTATION);
-
     cmNetBiosNameCopy(pSock->remoteName.name, cmNetBiosGetEmptyName());
-
     pSock->name.isGroup = FALSE;
     pSock->remoteName.isGroup = FALSE;
 
-    TRC2P("Socket created with fd=%d, type=%s", pSock->socket, (type==NS_SOCKET_STREAM)?"stream":"datagram");
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Socket created with fd=%d, type=%s", pSock->socket, (type==NS_SOCKET_STREAM)?"stream":"datagram");
+    resultHdl = pSock;
 
-    TRCE();
-    return  pSock;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", resultHdl);
+    return resultHdl;
 } /* nsSocket() */
 
 /*
@@ -381,31 +454,31 @@ nsBindInet(
       NQ_PORT port
       )
 {
-    NQ_STATUS res;         /* return value */
+    NQ_STATUS res = NQ_SUCCESS;         /* return value */
     SocketSlot* pSock;  /* the same as sockHandle but properly casted */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "sockHandle:%p ip:%p port:%u", sockHandle, ip, port);
 
     pSock = (SocketSlot*)sockHandle;
 #if SY_DEBUGMODE
     if (!checkSocketSlot(pSock))    /* Is a valid slot (used)? */
     {
         sySetLastError(CM_NBERR_ILLEGALSOCKETSLOT);
-        TRCERR("Illegal slot");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal slot");
+        res = NQ_FAIL;
+        goto Exit;
     }
 #endif
 
     pSock->isNetBios = FALSE;   /* Not NB socket */
 
     res = syBindSocket(pSock->socket, ip, port);
-    if (res==NQ_FAIL)
+    if (NQ_FAIL == res)
     {
         syCloseSocket(pSock->socket);
-        TRCERR("Unable to bind socket");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to bind socket");
+        res = NQ_FAIL;
+        goto Exit;
     }
 
     /* for a case when port was zero (dynamically allocated port) - get socket port
@@ -414,9 +487,9 @@ nsBindInet(
     syGetSocketPortAndIP(pSock->socket, &pSock->ip, &pSock->port);
     if (pSock->port == 0)
     {
-        TRCERR("Unable to obtain a dynamically bind port");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to obtain a dynamically bind port");
+        res = NQ_FAIL;
+        goto Exit;
     }
 
     pSock->isBind = TRUE;
@@ -425,12 +498,13 @@ nsBindInet(
     /* register all host addresses in DNS servers */
     if (nsDnsSetTargetAddresses() != NQ_SUCCESS)
     {
-        TRCERR("Unable to update DNS record");
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to update DNS record");
     }
 #endif /* defined(UD_NQ_USETRANSPORTIPV4) || defined(UD_NQ_USETRANSPORTIPV6) */
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+    return res;
 }
 
 /*
@@ -452,43 +526,41 @@ nsRegisterName(
 {
     NQ_BYTE*   msgBuf;             /* buffer for REGISTRATION REQUEST message */
     NQ_INT     msgLen;             /* message length */
+    NQ_STATUS  result = NQ_FAIL;
 
-    TRCB();
-    TRC1P("name = %s", name->name);
-    
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "name:%p", name);
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "name = %s", name->name);
+
+    msgBuf = nsGetSendDatagramBuffer();
+
     if (!cmNetBiosCheckName(name) )                     /* valid NetBIOS name? */
     {
         sySetLastError(CM_NBERR_NOTNETBIOSNAME);
-        TRCERR("Not a NetBIOS name");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Not a NetBIOS name");
+        goto Exit;
     }
     /* we assume that the name is not registered yet
        we generate a NAME REGISTRATION PACKET for registration with the ND */
 
-    msgBuf = nsGetSendDatagramBuffer();
     if ((msgLen = frameInternalNameRegistrationRequest((NQ_BYTE*)msgBuf, name)) == NQ_FAIL)
     {
-        nsPutSendDatagramBuffer();
-        TRCERR("Unable to generate Name Registration Request");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to generate Name Registration Request");
+        goto Exit;
     }
 
     /* send the request and wait for a response */
 
     if (nsProceedRequestToND((const NQ_BYTE*)msgBuf, (NQ_UINT)msgLen, NULL) == NQ_FAIL)
     {
-        nsPutSendDatagramBuffer();
-        TRCERR("ND failed to register the name");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "ND failed to register the name");
+        goto Exit;
     }
+    result = NQ_SUCCESS;
 
+Exit:
     nsPutSendDatagramBuffer();
-
-    TRCE();
-    return NQ_SUCCESS;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -510,9 +582,10 @@ nsReleaseName(
 {
     NQ_BYTE* msgBuf;        /* buffer for Cancel Listen and Name Release Request packet */
     NQ_INT msgLen;          /* length of the message in this buffer */
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
-    TRC1P("name = %s", name->name);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "name:%p", name);
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "name = %s", name->name);
     
     /* allocate buffer for Name Release Request */
 
@@ -523,17 +596,15 @@ nsReleaseName(
        )
      {
          sySetLastError(CM_NBERR_RELEASENAMEFAIL);
-         nsPutSendDatagramBuffer();
-
-         TRCERR("Unable to create Name Release Request packet");
-         TRCE();
-         return NQ_FAIL;
+         LOGERR(CM_TRC_LEVEL_ERROR, "Unable to create Name Release Request packet");
+         goto Exit;
      }
+     result = NQ_SUCCESS;
 
+Exit:
      nsPutSendDatagramBuffer();
-
-     TRCE();
-     return NQ_SUCCESS;
+     LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+     return result;
 }
 
 /*
@@ -542,6 +613,7 @@ nsReleaseName(
  *--------------------------------------------------------------------
  * PARAMS:  IN socket descriptor
  *          IN NetBIOS name
+ *          IN type of binding
  *
  * RETURNS: SUSSESS or NQ_FAIL
  *
@@ -554,14 +626,16 @@ nsReleaseName(
 NQ_STATUS
 nsBindNetBios(
       NSSocketHandle sockHandle,
-      const CMNetBiosNameInfo* localName
+      const CMNetBiosNameInfo* localName,
+      NQ_UINT16	type
       )
 {
-    NQ_IPADDRESS anyIp = CM_IPADDR_ANY4;
+    NQ_IPADDRESS anyIp = CM_IPADDR_ANY4 , localHost = CM_IPADDR_LOCAL;
     SocketSlot*        pSock;      /* the same as sockHandle but properly casted */
     NQ_STATUS          result;     /* result of socket operations */
+    NQ_STATUS    res = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "sockHandle:%p localName:%p type:%u", sockHandle, localName, type);
 
     pSock = (SocketSlot*)sockHandle;
 
@@ -569,9 +643,8 @@ nsBindNetBios(
     if (!checkSocketSlot(pSock))    /* Is a valid slot (used)? */
     {
         sySetLastError(CM_NBERR_ILLEGALSOCKETSLOT);
-        TRCERR("Illegal slot");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal slot");
+        goto Exit;
     }
 #endif
 
@@ -585,28 +658,27 @@ nsBindNetBios(
        this port. */
 
 #ifdef UD_NB_RETARGETSESSIONS
-    result = syBindSocket(pSock->socket, &anyIp, 0);
+    result = syBindSocket(pSock->socket, type == NS_BIND_DEAMON ? &localHost : &anyIp, 0);
 #else
-    result = syBindSocket(pSock->socket, &anyIp, (NQ_PORT)((pSock->type == NS_SOCKET_DATAGRAM) ? 0 : syHton16(CM_IN_SESSIONSERVICEPORT)));
+    result = syBindSocket(pSock->socket, type == NS_BIND_DEAMON ? &localHost : &anyIp, (NQ_PORT)((pSock->type == NS_SOCKET_DATAGRAM) ? 0 : syHton16(CM_IN_SESSIONSERVICEPORT)));
 #endif
 
-    if (result == NQ_FAIL)
+    if (NQ_FAIL == result)
     {
         syCloseSocket(pSock->socket);
-        TRCERR("Unable to bind");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to bind");
+        sySetLastError(NQ_ERR_SOCKETBIND);
+        goto Exit;
     }
     if (NQ_FAIL == nsRegisterName(localName))
     {
         if (syGetLastError() != CM_NBERR_NEGATIVERESPONSE && syGetLastError() != CM_NBERR_TIMEOUT)
         {
             recreateSocket(pSock);
-            TRCERR("Unable to generate Name Registration Request");
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to generate Name Registration Request");
+            goto Exit;
         }
-        TRCERR(" Name Registration Failed");
+        LOGERR(CM_TRC_LEVEL_ERROR, " Name Registration Failed");
 
 #ifdef UD_NQ_INCLUDEEVENTLOG
 		udEventLog(
@@ -619,6 +691,7 @@ nsBindNetBios(
 			NULL
 		);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
+		goto Exit;
     }
 
     if (!staticData->domainRegistered)
@@ -634,17 +707,19 @@ nsBindNetBios(
     syGetSocketPortAndIP(pSock->socket, &pSock->ip, &pSock->port);
     if (pSock->port == 0)
     {
-        TRCERR("Unable to obtain a dynamically bind port");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to obtain a dynamically bind port");
+        sySetLastError(NQ_ERR_SOCKETNAME);
+        goto Exit;
     }
 
     pSock->isBind = TRUE;
 
-    TRC2P("Socket %d bound to name: %s", pSock->socket, pSock->name.name);
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Socket %d bound to name: %s", pSock->socket, pSock->name.name);
+    res = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+    return res;
 }
 
 #endif /* UD_NQ_USETRANSPORTNETBIOS */
@@ -676,10 +751,10 @@ nsConnect(
     CMNetBiosNameInfo* calledName
     )
 {
-    SocketSlot* pSock;      /* the same as sockHandle but properly casted */
-    NQ_STATUS res;          /* operation result */
+    SocketSlot* pSock;       /* the same as sockHandle but properly casted */
+    NQ_STATUS res = NQ_FAIL; /* operation result */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "sockHandle:%p ip:%p calledName:%p", sockHandle, ip, calledName);
 
     pSock = (SocketSlot*)sockHandle;
 
@@ -687,9 +762,8 @@ nsConnect(
     if (!checkSocketSlot(pSock))    /* Is a valid slot (used)? */
     {
         sySetLastError(CM_NBERR_ILLEGALSOCKETSLOT);
-        TRCERR("Illegal slot");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal slot");
+        goto Exit;
     }
 #endif
 
@@ -698,9 +772,8 @@ nsConnect(
     if (pSock->transport == NS_TRANSPORT_NETBIOS && !cmNetBiosCheckName(calledName)) /* valid netBIOS name? */
     {
         sySetLastError(CM_NBERR_NOTNETBIOSNAME);
-        TRCERR("Not a NetBIOS name");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Not a NetBIOS name");
+        goto Exit;
     }
 
     pSock->isNetBios = TRUE;   /* is an NB socket */
@@ -709,35 +782,36 @@ nsConnect(
     {
 #ifdef UD_NQ_USETRANSPORTNETBIOS
         case NS_TRANSPORT_NETBIOS:
-            TRC("NS_TRANSPORT_NETBIOS, port 139");
-            res = doConnect(pSock, calledName, ip, syHton16(CM_NB_SESSIONSERVICEPORT), 0);
+            pSock->remotePort = CM_NB_SESSIONSERVICEPORT;
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NS_TRANSPORT_NETBIOS, port: %d", pSock->remotePort);
+            res = doConnect(pSock, calledName, ip, syHton16(pSock->remotePort), 0);
             break;
 #endif /* UD_NQ_USETRANSPORTNETBIOS */
 
 #if defined(UD_NQ_USETRANSPORTIPV4) || defined(UD_NQ_USETRANSPORTIPV6)
         case NS_TRANSPORT_IPV4:
         case NS_TRANSPORT_IPV6:
-            TRC("NS_TRANSPORT_IPV4, port 445");
-            res = doConnect(pSock, calledName, ip, syHton16(CM_NB_SESSIONSERVICEPORTIP), 0);
+            pSock->remotePort = CM_NB_SESSIONSERVICEPORTIP;
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NS_TRANSPORT_IPV4, port: %d", pSock->remotePort);
+            res = doConnect(pSock, calledName, ip, syHton16(pSock->remotePort), 0);
             break;
 #endif /* defined(UD_NQ_USETRANSPORTIPV4) || defined(UD_NQ_USETRANSPORTIPV6) */
 
       default:
         sySetLastError(CM_NBERR_INVALIDPARAMETER);
-        TRCERR("Invalid transport value");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Invalid transport value");
+        goto Exit;
     }
 
     /* copy the remote name and ip */
     syMemcpy(&pSock->remoteName, calledName, sizeof(*calledName));
     pSock->remoteIP = *ip;
 
-    /* determine self IP address */
-
+    /* determine self IP address and port */
     syGetSocketPortAndIP(pSock->socket, &pSock->ip, &pSock->port);
 
-    TRCE();
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
     return res;
 }
 
@@ -768,50 +842,47 @@ NQ_STATUS nsClose(
     NQ_INT res;             /* various results (bytes sent, status returned) */
 #endif
     NQ_BOOL isBind;         /* whether a bound socket */
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "Closing socket: 0x%x", sockHandle);
 
-    if (sockHandle == NULL)
+    if (NULL == sockHandle)
     {
-        TRCERR("Socket handle is NULL");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Socket handle is NULL");
+        sySetLastError(CM_NBERR_ILLEGALSOCKETSLOT);
+        goto Exit;
     }
 
     pSock = (SocketSlot*)sockHandle;
 #if SY_DEBUGMODE
     if (!checkSocketSlot(pSock))    /* Is a valid slot (used)? */
-    {
-        sySetLastError(CM_NBERR_ILLEGALSOCKETSLOT);
-        TRCERR("Illegal slot");
-        TRC1P("slot: %p", pSock);
+    {        
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal slot: %p", pSock);
         if (pSock != NULL)
         {
-            TRC1P("socket: %d", pSock->socket);
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "socket: %d", pSock->socket);
         }
-        TRCE();
-        return NQ_FAIL;
+        sySetLastError(CM_NBERR_ILLEGALSOCKETSLOT);
+        goto Exit;
     }
 #endif
 
-    if (releaseDnsName(pSock) != NQ_SUCCESS)
+    if (NQ_SUCCESS != releaseDnsName(pSock))
     {
-        TRCERR("Unable to clear DNS record");
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to clear DNS record");
     }
 
     isBind = pSock->isBind;
 
-    TRC1P("Closing socket %d", pSock->socket);
+	LOGMSG(CM_TRC_LEVEL_MESS_ALWAYS, "Closing socket (fid) %d", pSock->socket);
 
     putSocketSlot(pSock);
 
 #ifdef UD_NB_RETARGETSESSIONS
     /* allocate buffer for Cancel Listen and Name Release Request */
-
     msgBuf = nsGetSendDatagramBuffer();
 
     /* release listening */
-
     if (pSock->isListening)
     {
         InternalSocket* internalSock;   /* socket for communication with DD */
@@ -821,14 +892,9 @@ NQ_STATUS nsClose(
         {
             sySetLastError(CM_NBERR_CANCELLISTENFAIL);
             nsPutSendDatagramBuffer();
-
-            TRCERR("Unable to create Cancel Listen packet");
-            TRCE();
-            return NQ_FAIL;
         }
 
         /* send the Cancel Listen packet to the DD  */
-
         internalSock = getInternalSocketDD();   /* should never fail but may block the task */
 #if SY_DEBUGMODE
         if (internalSock==NULL || !syIsValidSocket(internalSock->socket))
@@ -836,7 +902,7 @@ NQ_STATUS nsClose(
             if (internalSock != NULL)
                 putInternalSocketDD(internalSock);
             nsPutSendDatagramBuffer();
-            TRCERR("Unable to get an internal socket to DD");
+            LOGERR("Unable to get an internal socket to DD");
             TRCE();
             return NQ_FAIL;
         }
@@ -845,19 +911,17 @@ NQ_STATUS nsClose(
         res = sySendToSocket (
                     internalSock->socket,
                     (const NQ_BYTE*)msgBuf,
-                    msgLen,
+                    (NQ_COUNT)msgLen,
                     &localhost,
                     syHton16(CM_IN_INTERNALDSPORT)
                     );
 
         putInternalSocketDD(internalSock);
-
         if (res == NQ_FAIL)
         {
             nsPutSendDatagramBuffer();
-            TRCERR("Unable to send Cancel Listen");
-            TRCE();
-            return NQ_FAIL;
+            LOGERR("Unable to send Cancel Listen");
+            sySetLastError(CM_NBERR_CANCELLISTENFAIL);
         }
 
     } /* end of if (pSock->isListening) */
@@ -869,21 +933,35 @@ NQ_STATUS nsClose(
     if (isBind && pSock->transport == NS_TRANSPORT_NETBIOS)
     {
         /* release the socket name */
-
         if (NQ_FAIL == nsReleaseName(&pSock->name))
         {
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to create Name Release Request packet");
             sySetLastError(CM_NBERR_RELEASENAMEFAIL);
-
-            TRCERR("Unable to create Name Release Request packet");
-            TRCE();
-            return NQ_FAIL;
+            goto Exit;
         }
+
+#ifndef CM_NQ_STORAGE
+		/* now release the domain registration */
+        if (staticData->domainRegistered)
+        {
+            CMNetBiosNameInfo domain;
+
+            syStrcpy(domain.name, cmNetBiosGetDomain()->name);
+            cmNetBiosNameFormat(domain.name, CM_NB_POSTFIX_WORKSTATION);
+            domain.isGroup = TRUE;
+            if (NQ_FAIL == nsReleaseName(&domain))
+            {
+            	LOGERR(CM_TRC_LEVEL_ERROR, "Unable to Release domain name registration.");
+                sySetLastError(CM_NBERR_RELEASENAMEFAIL);
+            }
+        }
+#endif /* CM_NQ_STORAGE */
     }
+    result = NQ_SUCCESS;
 
-    /* release socket descriptor */
-
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result: %d", result);
+    return result;
 }
 
  
@@ -903,96 +981,88 @@ NQ_STATUS nsClose(
  */
 
 #ifdef UD_NQ_USETRANSPORTNETBIOS
-
 NQ_STATUS
 nsGetHostByName(
     NQ_IPADDRESS *hostIp,
     CMNetBiosNameInfo* destName
     )
 {
+    NQ_STATUS result = NQ_FAIL;
+
 #ifdef UD_NB_INCLUDENAMESERVICE
     NQ_IPADDRESS zero = CM_IPADDR_ZERO;
     NQ_BYTE* msgBuf;                /* buffer for Name Query Request */
     NQ_INT msgLen;                  /* this message length */
     CMNetBiosAddrEntry addrEntry;   /* buffer for the response */
-#else
-    NQ_IPADDRESS4 ip;               /* ip address */
-#endif
+#else /* UD_NB_INCLUDENAMESERVICE */
+    NQ_IPADDRESS4 ip;               /* IP address */
+#endif /* UD_NB_INCLUDENAMESERVICE */
 
-    TRCB();
-
-    TRC1P("Trying to resolve NETBIOS name: %s", destName->name);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "hostIp:%p destName:%p", hostIp, destName);
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Trying to resolve NETBIOS name: %s", destName->name);
 
 #ifndef UD_NB_INCLUDENAMESERVICE
     ip = syGetHostByName(destName->name);
     if (ip == 0xFFFFFFFF || ip == SY_ZEROIP4)
     {
-        TRCERR("Invalid host IP");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Invalid host IP");
+        goto Exit;
     }
     else
     {
         CM_IPADDR_ASSIGN4(*hostIp, ip);
-        TRCE();
-        return NQ_SUCCESS;
+        result = NQ_SUCCESS;
+        goto Exit;
     }
 #else /* UD_NB_INCLUDENAMESERVICE */
+    msgBuf = nsGetSendDatagramBuffer();
 
     *hostIp = zero;
 
 #if SY_DEBUGMODE
-
      /* Check the passed pointer */
-
-    if (destName == NULL)
+    if (NULL == destName)
     {
-        TRCERR("Invalid host name");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Invalid host name");
+        goto Exit;
     }
-#endif
+#endif /* SY_DEBUGMODE */
 
     if (destName->name[0] == '*' )
     {
-       TRCERR("Invalid host name");
-       TRCE();
-       return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Invalid host name");
+        goto Exit;
     }
-
-    msgBuf = nsGetSendDatagramBuffer();
 
     /* generate a Name Query Request */
 
     if (NQ_FAIL == (msgLen = frameInternalNameQueryRequest((NQ_BYTE*)msgBuf, destName)))
     {
-        nsPutSendDatagramBuffer();
-
-        TRCERR("Unable to generate Name Query Request");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to generate Name Query Request");
+        goto Exit;
     }
 
     /* send the request and wait for a response */
 
     if (nsProceedRequestToND((const NQ_BYTE*)msgBuf, (NQ_UINT)msgLen, &addrEntry) == NQ_FAIL)
     {
-        nsPutSendDatagramBuffer();
-
-        TRCERR("ND failed to resolve the name");
-        TRCE();
-
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "ND failed to resolve the name");
+        goto Exit;
     }
-
-    nsPutSendDatagramBuffer();
 
     destName->isGroup = (syNtoh16(cmGetSUint16(addrEntry.flags)) & CM_NB_NAMEFLAGS_G) != 0;
     CM_IPADDR_ASSIGN4( *hostIp, cmGetSUint32(addrEntry.ip));          /* NBO */
-    TRC("Resolved ip: %s", cmIPDump(hostIp));
-    TRCE();
-    return NQ_SUCCESS;
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Resolved ip: %s", cmIPDump(hostIp));
 #endif /* UD_NB_INCLUDENAMESERVICE */
+
+    result = NQ_SUCCESS;
+
+Exit:
+#ifdef UD_NB_INCLUDENAMESERVICE
+    nsPutSendDatagramBuffer();
+#endif /* UD_NB_INCLUDENAMESERVICE */
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 #endif /* UD_NQ_USETRANSPORTNETBIOS */
 
@@ -1027,30 +1097,43 @@ nsGetHostName(
     CMNetBiosQuestion* questionBody;    /* question entry trailer */
     NQ_COUNT shift;                     /* various shifts in the message */
     SYSocketSet  socketSet;             /* set for reading from this socket */
-    CMNetBiosHeader* resHdr;            /* pointer to the response header */
-    CMNetBiosHeader* msgHdr;            /* pointer to the response header */
-    NQ_TIME timeOut;                    /* timeout in seconds, may change as the result of a WACK
+    CMNetBiosHeader* resHdr = NULL;     /* pointer to the response header */
+    CMNetBiosHeader* msgHdr = NULL;     /* pointer to the response header */
+    NQ_UINT32 timeOut;                    /* timeout in seconds, may change as the result of a WACK
                                            response */
     NQ_UINT16 savedTranId;              /* transaction ID in the request */
     CMNetBiosName calledName;           /* place "*" into this name */
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "calledIp:%p hostName:%p", calledIp, hostName);
+
+    msgHdr = (CMNetBiosHeader*)nsGetSendDatagramBuffer();
+    resHdr = (CMNetBiosHeader*)nsGetRecvDatagramBuffer();
+
+    /* allocate a UDP socket  */
+    socket = syCreateSocket(FALSE, CM_IPADDR_IPV4);   /* datagram socket */
+    if(!syIsValidSocket(socket))      /* error */
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to create datagram socket");
+        goto Exit;
+    }
+
+    if(syBindSocket(socket, &anyIp, 0) == NQ_FAIL)
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to bind datagram socket");
+        goto Exit;
+    }
 
 #if SY_DEBUGMODE
-
     /* Check the passed pointer */
-
-    if (hostName == NULL)
+    if (NULL == hostName)
     {
-        TRCERR("Invalid host name");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Invalid host name");
+        goto Exit;
     }
 #endif
 
-    msgHdr = (CMNetBiosHeader*) nsGetSendDatagramBuffer();
-
-     /* generate a Node Status Query Request */
+    /* generate a Node Status Query Request */
 
     hostShort = cmNetBiosGetNextTranId();
 
@@ -1073,13 +1156,10 @@ nsGetHostName(
     shift = cmNetBiosEncodeName(calledName, questionName);
     if (shift <= 0)
     {
-        nsPutSendDatagramBuffer();
-
         sySetLastError(CM_NBERR_NOTNETBIOSNAME);
-        TRCERR("Unable to encode name");
-        TRC1P("Illegal name: %s", hostName->name);
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to encode name");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Illegal name: %s", hostName->name);
+        goto Exit;
     }
 
     questionBody = (CMNetBiosQuestion*) (questionName + shift);
@@ -1089,55 +1169,28 @@ nsGetHostName(
 
     msgLen = (NQ_UINT)((NQ_BYTE*)(questionBody + 1) - (NQ_BYTE*)msgHdr);
 
-    /* allocate a UDP socket  */
-
-    socket = syCreateSocket(FALSE, CM_IPADDR_IPV4);   /* datagram socket */
-    if(!syIsValidSocket(socket))      /* error */
-    {
-        nsPutSendDatagramBuffer();
-        TRCERR("Unable to create datagram socket");
-        TRCE();
-        return NQ_FAIL;
-    }
-
-    if(syBindSocket(socket, &anyIp, 0) == NQ_FAIL)
-    {
-        nsPutSendDatagramBuffer();
-        syCloseSocket(socket);
-        TRCERR("Unable to bind datagram socket");
-        TRCE();
-        return NQ_FAIL;
-    }
-
-    resHdr = (CMNetBiosHeader*)nsGetRecvDatagramBuffer();
-
     timeOut = CM_NB_UNICASTREQRETRYTIMEOUT;        /* initial timeout */
 
     for (retryCount = CM_NB_UNICASTREQRETRYCOUNT; retryCount>0; retryCount--)
     {
-        NQ_INT result;              /* various results */
-        NQ_UINT16 codes;            /* reponse codes */
-        NQ_PORT port;               /* reponse codes */
-        NQ_IPADDRESS resIp;         /* reposen IP */
+        NQ_INT res;                 /* various results */
+        NQ_UINT16 codes;            /* response codes */
+        NQ_PORT port;               /* response codes */
+        NQ_IPADDRESS resIp;         /* response IP */
 
         /* send message to a remote host */
 
-        result = sySendToSocket(
+        res = sySendToSocket(
             socket,
             (const NQ_BYTE*)msgHdr,
             msgLen,
             calledIp,
             syHton16(CM_NB_NAMESERVICEPORT)
             );
-        if (result == NQ_FAIL)
+        if (NQ_FAIL == res)
         {
-            syCloseSocket(socket);
-            nsPutSendDatagramBuffer();
-            nsPutRecvDatagramBuffer();
-
-            TRCERR("Unable to send Host Status Request");
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to send Host Status Request");
+            goto Exit;
         }
 
         /* wait for response */
@@ -1151,18 +1204,13 @@ nsGetHostName(
             );
         if (result == NQ_FAIL)                 /* error the select failed  */
         {
-            syCloseSocket(socket);
-            nsPutSendDatagramBuffer();
-            nsPutRecvDatagramBuffer();
-
-            TRCERR("Error during select. Unable to read from ND");
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Error during select. Unable to read from ND");
+            goto Exit;
         }
 
         if (result == 0)                /* timeout  */
         {
-            TRC("Select timed out");
+            LOGERR(CM_TRC_LEVEL_ERROR, "Select timed out");
             continue;
         }
 
@@ -1177,7 +1225,7 @@ nsGetHostName(
             );
         if (result == 0 || result == NQ_FAIL)
         {
-            TRCERR("Receive error");
+            LOGERR(CM_TRC_LEVEL_ERROR, "Receive error");
             continue;
         }
 
@@ -1187,21 +1235,16 @@ nsGetHostName(
 
         if (!(codes & CM_NB_RESPONSE))
         {
-            TRCERR("Unexpected packet - not a response");
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected packet - not a response");
             continue;
         }
 
         if ((codes & CM_NB_RCODE_MASK) != CM_NB_RCODE_NOERR)
         {
-            syCloseSocket(socket);
-            nsPutSendDatagramBuffer();
-            nsPutRecvDatagramBuffer();
-
             sySetLastError(CM_NBERR_NEGATIVERESPONSE);
-            TRCERR("Negative response");
-            TRC1P(" RCODE: %d", codes & CM_NB_RCODE_MASK);
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Negative response");
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " RCODE: %d", codes & CM_NB_RCODE_MASK);
+            goto Exit;
         }
 
         /* proceed by OPCODE */
@@ -1221,14 +1264,9 @@ nsGetHostName(
 
             if (cmGetSUint16(resHdr->tranID) != savedTranId)
             {
-                syCloseSocket(socket);
-                nsPutSendDatagramBuffer();
-                nsPutRecvDatagramBuffer();
-
                 sySetLastError(CM_NBERR_NEGATIVERESPONSE);
-                TRCERR("Unexpected tran ID");
-                TRCE();
-                return NQ_FAIL;
+                LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected tran ID");
+                goto Exit;
             }
 
             pQuestion = (CMNetBiosQuestion*)cmNetBiosParseName(
@@ -1241,26 +1279,16 @@ nsGetHostName(
 
             if (pQuestion == NULL)
             {
-                syCloseSocket(socket);
-                nsPutSendDatagramBuffer();
-                nsPutRecvDatagramBuffer();
-
                 sySetLastError(CM_NBERR_NEGATIVERESPONSE);
-                TRCERR("Error parsing name in the response");
-                TRCE();
-                return NQ_FAIL;
+                LOGERR(CM_TRC_LEVEL_ERROR, "Error parsing name in the response");
+                goto Exit;
             }
 
             if (syNtoh16(cmGetSUint16(pQuestion->questionType)) != CM_NB_RTYPE_NBSTAT)
             {
-                syCloseSocket(socket);
-                nsPutSendDatagramBuffer();
-                nsPutRecvDatagramBuffer();
-
                 sySetLastError(CM_NBERR_NEGATIVERESPONSE);
-                TRCERR("Unepected question record");
-                TRCE();
-                return NQ_FAIL;
+                LOGERR(CM_TRC_LEVEL_ERROR, "Unepected question record");
+                goto Exit;
             }
 
             pData = (NQ_BYTE*)(pQuestion + 1);
@@ -1279,33 +1307,23 @@ nsGetHostName(
                     if ((flags & CM_NB_NAMESTATUS_ACT) != 0)
                     {
                         syStrncpy(hostName->name, (NQ_CHAR*)pData, 16);
-                        syCloseSocket(socket);
-                        nsPutSendDatagramBuffer();
-                        nsPutRecvDatagramBuffer();
-
-                        TRCE();
-                        return NQ_SUCCESS;
+                        result = NQ_SUCCESS;
+                        goto Exit;
                     }
                 }
 
                 pData += 16 + 2;
             }
-
-            syCloseSocket(socket);
-            nsPutSendDatagramBuffer();
-            nsPutRecvDatagramBuffer();
-
             sySetLastError(CM_NBERR_NEGATIVERESPONSE);
-            TRCERR("Unepected question record");
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unepected question record");
+            goto Exit;
         }
 
         if (codes == CM_NB_OPCODE_WACK)                     /* wait for acknowledge */
         {
             CMNetBiosResourceRecord* rrPtr;  /* resource record in the response */
 
-            TRC("WACK received");
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "WACK received");
 
             rrPtr = (CMNetBiosResourceRecord*)cmNetBiosSkipName(resHdr, resHdr + 1);
                                                             /* skip the name */
@@ -1317,22 +1335,23 @@ nsGetHostName(
         }
         else
         {
-            TRCERR("Unexpected packet code");
-            TRC1P("opcode: 0x%x", codes);
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected packet code");
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "opcode: 0x%x", codes);
             continue;
         }
 
     } /* end for */
 
-    syCloseSocket(socket);
+    sySetLastError(CM_NBERR_TIMEOUT);
+    LOGERR(CM_TRC_LEVEL_ERROR, "Operation timed out");
+
+Exit:
+    if (syIsValidSocket(socket))
+        syCloseSocket(socket);
     nsPutSendDatagramBuffer();
     nsPutRecvDatagramBuffer();
-
-    sySetLastError(CM_NBERR_TIMEOUT);
-    TRCERR("Operation timed out");
-    TRCE();
-
-    return NQ_FAIL;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 #endif /* UD_NQ_USETRANSPORTNETBIOS */
@@ -1356,34 +1375,48 @@ releaseDnsName(
     SocketSlot* pSock
     )
 {
+    NQ_STATUS result = NQ_FAIL;
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "pSock:%p", pSock);
+
     if (!pSock->isBind)
-        return NQ_SUCCESS;
+    {
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "not bind:%d", pSock->isBind);
+        result = NQ_SUCCESS;
+        goto Exit;
+    }
 
     switch (pSock->transport)
     {
         case NS_TRANSPORT_NETBIOS:
-            return NQ_SUCCESS;
+            result = NQ_SUCCESS;
+            break;
 
 #ifdef UD_NQ_USETRANSPORTIPV4
         case NS_TRANSPORT_IPV4:
             if (--ip4Count == 0)
-                return nsDnsClearTargetAddress(NS_DNS_A);
+                result = nsDnsClearTargetAddress(NS_DNS_A);
             else
-                return NQ_SUCCESS;
+                result = NQ_SUCCESS;
+            break;
 #endif /* UD_NQ_USETRANSPORTIPV4 */
 
 #ifdef UD_NQ_USETRANSPORTIPV6
         case NS_TRANSPORT_IPV6:
             if (--ip6Count == 0)
-                return nsDnsClearTargetAddress(NS_DNS_AAAA);
+                result = nsDnsClearTargetAddress(NS_DNS_AAAA);
             else
-                return NQ_SUCCESS;
+                result = NQ_SUCCESS;
+            break;
 #endif /* UD_NQ_USETRANSPORTIPV6 */
 
         default:
-            TRCERR("Invalid transport used");
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Invalid transport used");
+            break;
     }
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -1413,7 +1446,9 @@ doConnect(
     NQ_UINT16 level
     )
 {
-    TRCB();
+    NQ_STATUS result = NQ_FAIL;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "slot:%p name:%p ip:%p port:%u level:%u", slot, name, ip, port, level);
 
     sySetStreamSocketOptions(slot->socket);
 
@@ -1428,16 +1463,25 @@ doConnect(
             /* send session request & wait for response */
             for (retries = 0; retries < CM_NB_UNICASTREQRETRYCOUNT; retries++)
             {
+#ifndef CM_NQ_STORAGE
                 SYSocketSet socketSet;     /* read set */
+#endif
                 NQ_BYTE     buffer[SESSION_BUFFER_SIZE];
-                NQ_INT      length = frameInternalSessionRequest(buffer, name, slot);
-                NQ_INT      sent = sySendSocket(slot->socket, buffer, (NQ_UINT)length);
+                NQ_INT      length, sent;
 
-                TRC2P("Session request sent - size: %d(%d)", sent, length);
+                if ((length = frameInternalSessionRequest(buffer, name, slot)) <= 0)
+                {
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Failed to generate a request");
+					goto Exit;
+                }
+                sent = sySendSocket(slot->socket, buffer, (NQ_UINT)length);
+
+                LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Session request sent - size: %d(%d)", sent, length);
 
                 /* send the Session Request packet to the remote node */
                 if (sent > 0)
                 {
+#ifndef CM_NQ_STORAGE
                     syClearSocketSet(&socketSet);
                     syAddSocketToSet(slot->socket, &socketSet);
 
@@ -1454,75 +1498,76 @@ doConnect(
 
                         default: /* data ready for reading */
                             if ((length = syRecvSocket(slot->socket, buffer, SESSION_BUFFER_SIZE)) > 0)
+#else
+                    if ((length = syRecvSocketWithTimeout(slot->socket, buffer, SESSION_BUFFER_SIZE, CM_NB_UNICASTREQRETRYTIMEOUT)) > 0)
+#endif
+                    {
+                        CMNetBiosSessionRetarget* retarget;
+                        CMNetBiosSessionMessage* message;
+
+                        /* process different packets */
+                        message = (CMNetBiosSessionMessage*)buffer;
+                        switch (message->type)
+                        {
+                        case CM_NB_POSITIVESESSIONRESPONSE:     /* the work is done */
+                            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Success: Positive SSN response of size %d received", length);
+                            result = NQ_SUCCESS;
+                            goto Exit;
+
+                        case CM_NB_NEGATIVESESSIONRESPONSE:     /* total failure, close connection and fail */
+                            sySetLastError(CM_NBERR_NEGATIVERESPONSE);
+                            LOGERR(CM_TRC_LEVEL_ERROR, "Negative response");
+                            goto Exit;
+
+                        case CM_NB_SESSIONRETARGETRESPONSE:     /* close this connection and try with
+                                                                    new IP and port by calling this function
+                                                                    recursively */
+                            retarget = (CMNetBiosSessionRetarget*)buffer;
+                            port = (NQ_PORT)cmGetSUint16(retarget->port);                 /* in NBO */
+                            CM_IPADDR_ASSIGN4(*ip, cmGetSUint32(retarget->ip));  /* in NBO */
+
+                            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Retargetting to - ip %s", cmIPDump(ip));
+                            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Retargetting to - port: %d", syNtoh16(port));
+
+                            syCloseSocket(slot->socket);
+                            slot->socket = syCreateSocket(NS_SOCKET_STREAM, CM_IPADDR_IPV4);
+
+                            if (syIsValidSocket(slot->socket))
                             {
-                                CMNetBiosSessionRetarget* retarget;
-                                CMNetBiosSessionMessage* message;
-                                
-                                /* process different packets */
-                                message = (CMNetBiosSessionMessage*)buffer;
-                                switch (message->type)
-                                {
-                                    case CM_NB_POSITIVESESSIONRESPONSE:     /* the work is done */
-                                        TRC1P("Success: Positive SSN response of size %d received", length);
-                                        TRCE();
-                                        return NQ_SUCCESS;
-
-                                    case CM_NB_NEGATIVESESSIONRESPONSE:     /* total failure, close connection and fail */
-                                        sySetLastError(CM_NBERR_NEGATIVERESPONSE);
-                                        TRCERR("Negative response");
-                                        TRCE();
-                                        return NQ_FAIL;
-
-                                    case CM_NB_SESSIONRETARGETRESPONSE:     /* close this connection and try with
-                                                                               new IP and port by calling this function
-                                                                               recursively */
-                                        retarget = (CMNetBiosSessionRetarget*)buffer;
-                                        port = (NQ_PORT)cmGetSUint16(retarget->port);                 /* in NBO */
-                                        CM_IPADDR_ASSIGN4(*ip, cmGetSUint32(retarget->ip));  /* in NBO */
-
-                                        TRC1P("Retargetting to - ip %s", cmIPDump(ip));
-                                        TRC1P("Retargetting to - port: %d", syNtoh16(port));
-
-                                        syCloseSocket(slot->socket);
-                                        slot->socket = syCreateSocket(NS_SOCKET_STREAM, CM_IPADDR_IPV4);
-
-                                        if (syIsValidSocket(slot->socket))
-                                        {
-                                            /* go to the next recursion level */
-                                            NQ_STATUS res = doConnect(slot, name, ip, port, (NQ_UINT16)(level + 1));
-                                            TRCE();
-                                            return res;
-                                        }
-                                        else
-                                        {
-                                            TRCERR("Unable to re-create socket");
-                                            TRCE();
-                                            return NQ_FAIL;
-                                        }
-                                } /* switch (buffer->type) */
-                            } /* if (syRecv) */
+                                /* go to the next recursion level */
+                                result = doConnect(slot, name, ip, port, (NQ_UINT16)(level + 1));
+                                goto Exit;
+                            }
                             else
                             {
-                                TRC1P("Error: sysRecvfrom() returned %d. Retrying...", length);
-                                continue;
+                                LOGERR(CM_TRC_LEVEL_ERROR, "Unable to re-create socket");
+                                goto Exit;
                             }
+                        } /* switch (buffer->type) */
+                        } /* if (syRecv) */
+                        else
+                        {
+                            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Error: sysRecvfrom() returned %d. Retrying...", length);
+                            continue;
+                        }
+#ifndef CM_NQ_STORAGE
                     } /* switch (sySelect) */
+#endif
                 }  /* if (sySend) */
                 else
                 {
-                    TRCERR("Failed to send a message");
-                    TRC1P(" error: %d", syGetLastError());
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Failed to send a message");
+                    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " error: %d", syGetLastError());
                 }
             } /* for (retries) */
 
-
             sySetLastError(CM_NBERR_TIMEOUT);
-            TRCERR("Unable to connect - session response timed out");
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to connect - session response timed out");
         }
         else
         {
-            TRCERR("Connect failed");
-            TRC1P(" ip - %s", cmIPDump(ip));
+            LOGERR(CM_TRC_LEVEL_ERROR, "Connect failed");
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " ip - %s", cmIPDump(ip));
         }
     }
 #endif 
@@ -1531,17 +1576,18 @@ doConnect(
     {
         if (syConnectSocket(slot->socket, ip, port) == NQ_SUCCESS)
         {
-            TRCE();
-            return NQ_SUCCESS;
+            result = NQ_SUCCESS;
+            goto Exit;
         }
     
-        TRCERR("Connect failed");
-        TRC1P(" ip - %s", cmIPDump(ip));
+        LOGERR(CM_TRC_LEVEL_ERROR, "Connect failed");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " ip - %s", cmIPDump(ip));
     }
 #endif /* defined(UD_NQ_USETRANSPORTIPV4) || defined(UD_NQ_USETRANSPORTIPV6) */
 
-    TRCE();
-    return NQ_FAIL;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -1568,25 +1614,24 @@ recreateSocket(
     )
 {
     NQ_STATUS sts; /* operation status */
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "pSock:%p", pSock);
 
 #if SY_DEBUGMODE
     if (!checkSocketSlot(pSock))    /* Is a valid slot (used)? */
     {
         sySetLastError(CM_NBERR_ILLEGALSOCKETSLOT);
-        TRCERR("Illegal slot");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal slot");
+        goto Exit;
     }
 #endif
 
     sts = syCloseSocket(pSock->socket);
-    if (sts == NQ_FAIL)     /* error on close */
+    if (NQ_FAIL == sts)     /* error on close */
     {
-        TRCERR("Unable to close socket");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to close socket");
+        goto Exit;
     }
 
     /* create the socket in the underlying socket system */
@@ -1601,24 +1646,109 @@ recreateSocket(
     if (!syIsValidSocket(pSock->socket))
     {
         putSocketSlot(pSock);
-
-        TRCERR("Unable to create socket");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to create socket");
+        goto Exit;
     }
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Socket recreated created with fd=%d", pSock->socket);
+    result = NQ_SUCCESS;
 
-    TRC1P("Socket recreated created with fd=%d", pSock->socket);
-    TRCE();
-    return  NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 #endif /* UD_NQ_USETRANSPORTNETBIOS */
+
+
+NQ_IPADDRESS4 cmNetBiosGetWins(NQ_COUNT winsID)
+{
+    if (winsID > staticData->numServers)
+        return 0;
+
+    return CM_IPADDR_GET4(staticData->winsServers[winsID]);
+}
+
+NQ_COUNT cmNetBiosGetNumWinsServers(void)
+{
+    return staticData->numServers;
+}
 
 /********************************************************************
  *  Resolver callbacks
  ********************************************************************/
 
 #if defined(UD_NQ_USETRANSPORTNETBIOS) && defined(UD_NB_INCLUDENAMESERVICE)
+static 
+NQ_STATUS 
+    requestByNameWins(
+    SYSocketHandle socket, 
+    const NQ_WCHAR * name, 
+    void * context, 
+    const NQ_IPADDRESS * serverIp, 
+    NQ_BYTE postfix
+    )
+{
+    NQ_BYTE* msgBuf = NULL;         /* buffer for Name Query Request */
+    NQ_INT msgLen;                  /* this message length */
+    CMNetBiosNameInfo destName;     /* NetBIOS name */            
+    NQ_CHAR * nameA = NULL;         /* server name in ASCII */
+    NQ_STATUS result;               /* operation result */
+    NQ_STATUS res = NQ_FAIL;        /* return value */
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "socket:%d name:%s context:%p serverIp:%p postfix:%d", socket, cmWDump(name), context, serverIp, postfix);
+
+    /* create NetBIOS name */
+    nameA = cmMemoryCloneWStringAsAscii(name);
+    if (NULL == nameA)
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to generate Name Query Request");
+        goto Exit;
+    }
+    cmNetBiosNameCreate(destName.name, nameA, postfix);
+    destName.isGroup = FALSE;
+    cmMemoryFree(nameA);
+
+    msgBuf = nsGetSendDatagramBuffer();
+
+    /* generate a Name Query Request */
+    if (NQ_FAIL == (msgLen = frameInternalNameQueryRequest((NQ_BYTE*)msgBuf, &destName)))
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to generate Name Query Request");
+        goto Exit;
+    }
+
+    /* send the request and wait for a response */
+    result = sySendToSocket(socket, (const NQ_BYTE*)msgBuf, (NQ_UINT)msgLen, serverIp, syHton16(CM_NB_NAMESERVICEPORT));
+    if (result == NQ_FAIL)
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "ND failed to resolve the name");
+    }
+
+    res = (result > 0 ? NQ_SUCCESS : NQ_FAIL);
+
+Exit:
+    if (NULL != msgBuf)
+        nsPutSendDatagramBuffer();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+    return res;
+}
+
+NQ_STATUS nsRequestByNameWinsDC(
+    SYSocketHandle socket, 
+    const NQ_WCHAR * name, 
+    void * context, 
+    const NQ_IPADDRESS * serverIp
+    )
+{
+    NQ_STATUS result;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "socket:%d name:%s context:%p serverIp:%p", socket, cmWDump(name), context, serverIp);
+
+    result = requestByNameWins(socket, name, context, serverIp, CM_NB_POSTFIX_DOMAINCONTROLLER);
+
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
+}
 
 NQ_STATUS nsRequestByNameWins(
     SYSocketHandle socket, 
@@ -1626,52 +1756,87 @@ NQ_STATUS nsRequestByNameWins(
     void * context, 
     const NQ_IPADDRESS * serverIp
     )
+{    
+    NQ_STATUS result;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "socket:%d name:%s context:%p serverIp:%p", socket, cmWDump(name), context, serverIp);
+
+    result = requestByNameWins(socket, name, context, serverIp, CM_NB_POSTFIX_SERVER);
+
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
+}
+
+static
+NQ_STATUS requestByNameBcast(
+    SYSocketHandle socket, 
+    const NQ_WCHAR * name, 
+    void * context, 
+    const NQ_IPADDRESS * serverIp,
+    NQ_BYTE postfix
+    )
 {
     NQ_BYTE* msgBuf;                /* buffer for Name Query Request */
     NQ_INT msgLen;                  /* this message length */
     CMNetBiosNameInfo destName;     /* NetBIOS name */            
-    NQ_CHAR * nameA;                /* server name in ASCII */
-    NQ_STATUS result;               /* operation result */
+    NQ_CHAR * nameA = NULL;         /* server name in ASCII */
+    NQ_STATUS result = NQ_FAIL;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "socket:%d name:%s context:%p serverIp:%p postfix:%d", socket, cmWDump(name), context, serverIp, postfix);
+
+    msgBuf = nsGetSendDatagramBuffer();
 
     /* create NetBIOS name */
     nameA = cmMemoryCloneWStringAsAscii(name);
     if (NULL == nameA)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Unable to generate Name Query Request");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
-    cmNetBiosNameCreate(destName.name, nameA, CM_NB_POSTFIX_SERVER);
-    destName.isGroup = FALSE;
-
+    cmNetBiosNameCreate(destName.name, nameA, postfix);
     cmMemoryFree(nameA);
-    msgBuf = nsGetSendDatagramBuffer();
+    destName.isGroup = FALSE;
 
     /* generate a Name Query Request */
     if (NQ_FAIL == (msgLen = frameInternalNameQueryRequest((NQ_BYTE*)msgBuf, &destName)))
     {
-        nsPutSendDatagramBuffer();
         LOGERR(CM_TRC_LEVEL_ERROR, "Unable to generate Name Query Request");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
 
     /* send the request and wait for a response */
-
-    result = sySendToSocket(socket, (const NQ_BYTE*)msgBuf, (NQ_UINT)msgLen, serverIp, syHton16(CM_NB_NAMESERVICEPORT));
-    if (result == NQ_FAIL)
+    if (NQ_FAIL == nsSendRequestToND(socket, (const NQ_BYTE*)msgBuf, (NQ_UINT)msgLen))
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "ND failed to resolve the name");
-        LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+        goto Exit;
     }
 
-    nsPutSendDatagramBuffer();
+    result = NQ_SUCCESS;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return result > 0 ? NQ_SUCCESS : NQ_FAIL;
+Exit:
+    nsPutSendDatagramBuffer();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
+
+#ifndef UD_NQ_AVOIDDCRESOLUTIONNETBIOS
+NQ_STATUS nsRequestByNameBcastDC(
+    SYSocketHandle socket, 
+    const NQ_WCHAR * name, 
+    void * context, 
+    const NQ_IPADDRESS * serverIp
+    )
+{
+    NQ_STATUS result;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+
+    result = requestByNameBcast(socket, name, context, serverIp, CM_NB_POSTFIX_DOMAINMASTERBROWSER);
+
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
+}
+#endif /* UD_NQ_AVOIDDCRESOLUTIONNETBIOS */
 
 NQ_STATUS nsRequestByNameBcast(
     SYSocketHandle socket, 
@@ -1680,51 +1845,14 @@ NQ_STATUS nsRequestByNameBcast(
     const NQ_IPADDRESS * serverIp
     )
 {
-    NQ_BYTE* msgBuf;                /* buffer for Name Query Request */
-    NQ_INT msgLen;                  /* this message length */
-    CMNetBiosNameInfo destName;     /* NetBIOS name */            
-    NQ_CHAR * nameA;                /* server name in ASCII */
+    NQ_STATUS result;
 
     LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
-    /* create NetBIOS name */
-    nameA = cmMemoryCloneWStringAsAscii(name);
-    if (NULL == nameA)
-    {
-        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to generate Name Query Request");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
-    }
-    cmNetBiosNameCreate(destName.name, nameA, CM_NB_POSTFIX_SERVER);
-    cmMemoryFree(nameA);
-    destName.isGroup = FALSE;
+    result = requestByNameBcast(socket, name, context, serverIp, CM_NB_POSTFIX_SERVER);
 
-    msgBuf = nsGetSendDatagramBuffer();
-
-    /* generate a Name Query Request */
-    if (NQ_FAIL == (msgLen = frameInternalNameQueryRequest((NQ_BYTE*)msgBuf, &destName)))
-    {
-        nsPutSendDatagramBuffer();
-        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to generate Name Query Request");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
-    }
-
-    /* send the request and wait for a response */
-
-    if (nsSendRequestToND(socket, (const NQ_BYTE*)msgBuf, (NQ_UINT)msgLen) == NQ_FAIL)
-    {
-        nsPutSendDatagramBuffer();
-        LOGERR(CM_TRC_LEVEL_ERROR, "ND failed to resolve the name");
-        LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-
-        return NQ_FAIL;
-    }
-
-    nsPutSendDatagramBuffer();
-
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return NQ_SUCCESS;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d",result);
+    return result;
 }
 
 NQ_STATUS nsResponseByName(
@@ -1735,30 +1863,33 @@ NQ_STATUS nsResponseByName(
     )
 {
     CMNetBiosAddrEntry addrEntry;   /* buffer for the response */
+    NQ_STATUS result = NQ_FAIL;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "socket:%d pAddressArray:%p pNumIps:%p pContext:%p", socket, pAddressArray, numIps, pContext);
 
     *pAddressArray = NULL;
     if (nsReceiveResponseFromND(socket, &addrEntry) == NQ_FAIL)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "ND failed to resolve the name");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
 
-    *pAddressArray = cmMemoryAllocate(sizeof(NQ_IPADDRESS));
-    if (NULL == pAddressArray)
+    *pAddressArray = (NQ_IPADDRESS *)cmMemoryAllocate(sizeof(NQ_IPADDRESS));
+    if (NULL == *pAddressArray)
     {
         sySetLastError(CM_NBERR_INTERNALERROR);
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate IP buffer");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
-    CM_IPADDR_ASSIGN4(**pAddressArray, cmGetSUint32(addrEntry.ip));          /* NBO */
-    *numIps = 1;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return NQ_SUCCESS;
+    /* NBO */
+    CM_IPADDR_ASSIGN4(**pAddressArray, cmGetSUint32(addrEntry.ip));
+    *numIps = 1;
+    result = NQ_SUCCESS;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d, numIPs: %d", result, *numIps);
+    return result;
 }
 
 NQ_STATUS nsRequestByIp(
@@ -1775,9 +1906,9 @@ NQ_STATUS nsRequestByIp(
     NQ_COUNT shift;                     /* various shifts in the message */
     CMNetBiosHeader* msgHdr;            /* pointer to the request header */
     CMNetBiosName calledName;           /* place "*" into this name */
-    NQ_STATUS result;                   /* operation result */
+    NQ_STATUS result = NQ_FAIL;         /* operation result */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "socket:%d ip:%p context:%p serverIp:%p", socket, ip, context, serverIp);
 
     msgHdr = (CMNetBiosHeader*) nsGetSendDatagramBuffer();
 
@@ -1802,11 +1933,9 @@ NQ_STATUS nsRequestByIp(
     shift = cmNetBiosEncodeName(calledName, questionName);
     if (shift <= 0)
     {
-        nsPutSendDatagramBuffer();
         sySetLastError(CM_NBERR_NOTNETBIOSNAME);
         LOGERR(CM_TRC_LEVEL_ERROR, "Unable to encode name - illegal name: %s", calledName);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
 
     questionBody = (CMNetBiosQuestion*) (questionName + shift);
@@ -1817,13 +1946,17 @@ NQ_STATUS nsRequestByIp(
     msgLen = (NQ_UINT)((NQ_BYTE*)(questionBody + 1) - (NQ_BYTE*)msgHdr);
 
     result = sySendToSocket(socket, (const NQ_BYTE*)msgHdr, (NQ_UINT)msgLen, ip, syHton16(CM_NB_NAMESERVICEPORT));
-    if (result == NQ_FAIL)
+    if (NQ_FAIL == result)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "ND failed to resolve the name");
     }
+
+    result = ( result >= 0 ? NQ_SUCCESS : NQ_FAIL );
+
+Exit:
     nsPutSendDatagramBuffer();
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return result >= 0 ? NQ_SUCCESS:NQ_FAIL;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 NQ_STATUS nsResponseByIp(
@@ -1833,29 +1966,29 @@ NQ_STATUS nsResponseByIp(
     )
 {
     CMNetBiosHeader* resHdr;            /* pointer to the response header */
-    NQ_INT result;                      /* various results */
+    NQ_INT res;                         /* various results */
     NQ_UINT16 codes;                    /* response codes */
     NQ_PORT port;                       /* response port */
     NQ_IPADDRESS resIp;                 /* response IP */
+    NQ_STATUS result = NQ_FAIL;         /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "socket:%d pName:%p pContext:%p", socket, pName, pContext);
 
     resHdr = (CMNetBiosHeader*)nsGetRecvDatagramBuffer();
 
-    result = syRecvFromSocket(
+    res = syRecvFromSocket(
         socket,
         (NQ_BYTE*)resHdr,
         CM_NB_DATAGRAMBUFFERSIZE,
         &resIp,
         &port
         );
-    if (result == 0 || result == NQ_FAIL)
+
+    if (0 == res || NQ_FAIL == res)
     {
-        nsPutRecvDatagramBuffer();
         sySetLastError(CM_NBERR_NEGATIVERESPONSE);
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to receive response");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
 
     /* inspect packet type: response flag, error code */
@@ -1863,20 +1996,16 @@ NQ_STATUS nsResponseByIp(
 
     if (!(codes & CM_NB_RESPONSE))
     {
-        nsPutRecvDatagramBuffer();
         sySetLastError(CM_NBERR_NEGATIVERESPONSE);
         LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected packet - not a response");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
-    }
+        goto Exit;
+     }
 
     if ((codes & CM_NB_RCODE_MASK) != CM_NB_RCODE_NOERR)
     {
-        nsPutRecvDatagramBuffer();
         sySetLastError(CM_NBERR_NEGATIVERESPONSE);
         LOGERR(CM_TRC_LEVEL_ERROR, "Negative response: RCODE: %d", codes & CM_NB_RCODE_MASK);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
 
     /* proceed by OPCODE */
@@ -1886,7 +2015,7 @@ NQ_STATUS nsResponseByIp(
         /* the response match the request - this is a positive response */
     {
         CMNetBiosName    name;          /* called name after parsing */
-        NQ_STATIC NQ_CHAR scopeId[255]; /* buffer for parsed scope ID */
+        NQ_CHAR scopeId[255]; 			/* buffer for parsed scope ID */
         CMNetBiosQuestion* pQuestion;   /* pointer to the question record */
         NQ_BYTE* pData;                 /* pointer to arbitrary data */
         NQ_INT numNames;                /* number of names in the response */
@@ -1901,20 +2030,16 @@ NQ_STATUS nsResponseByIp(
                         );
         if (pQuestion == NULL)
         {
-            nsPutRecvDatagramBuffer();
             sySetLastError(CM_NBERR_NEGATIVERESPONSE);
             LOGERR(CM_TRC_LEVEL_ERROR, "Error parsing name in the response");
-            LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-            return NQ_FAIL;
+            goto Exit;
         }
 
         if (syNtoh16(cmGetSUint16(pQuestion->questionType)) != CM_NB_RTYPE_NBSTAT)
         {
-            nsPutRecvDatagramBuffer();
             sySetLastError(CM_NBERR_NEGATIVERESPONSE);
-            LOGERR(CM_TRC_LEVEL_ERROR, "Unepected question record");
-            LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected question record");
+            goto Exit;
         }
 
         pData = (NQ_BYTE*)(pQuestion + 1);
@@ -1931,28 +2056,41 @@ NQ_STATUS nsResponseByIp(
                 flags = syNtoh16(flags);
                 if ((flags & CM_NB_NAMESTATUS_ACT) != 0)
                 {
-                    CMNetBiosName nbName;       /* netbios name */    
-                    
+                    /* netbios name */
+                    CMNetBiosName nbName;
+                    NQ_INT* num;
+
                     syStrncpy(nbName, (NQ_CHAR*)pData, 16);
                     cmNetBiosNameClean(nbName);
                     *pName = cmMemoryCloneAString(nbName);
 
-                    nsPutRecvDatagramBuffer();
-                    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                    return NULL != *pName? NQ_SUCCESS : NQ_ERR_NOMEM;
+                    if (NULL != *pName)
+                    {
+                    	result = NQ_SUCCESS;
+
+                    	result = ( NULL != *pName? NQ_SUCCESS : NQ_ERR_NOMEM );
+                    	*pContext = num = (NQ_INT *)cmMemoryAllocate(sizeof(num));
+                        if (NULL == num)
+                        {
+                            LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+                            res = NQ_ERR_NOMEM;
+                            goto Exit;
+                        }
+                        *num = 1;
+                    }
+                    else
+                    {
+                    	result = NQ_ERR_NOMEM;
+                    }
+                    goto Exit;
                 }
             }
             pData += 16 + 2;
         }
 
-        nsPutRecvDatagramBuffer();
         sySetLastError(CM_NBERR_NEGATIVERESPONSE);
-        LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected question record");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
-
-    nsPutRecvDatagramBuffer();
 
     if (codes == CM_NB_OPCODE_WACK)                     /* wait for acknowledge */
     {
@@ -1964,8 +2102,11 @@ NQ_STATUS nsResponseByIp(
         sySetLastError(CM_NBERR_TIMEOUT);
         LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected packet code: opcode: 0x%x", codes);
     }
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return NQ_FAIL;
+
+Exit:
+    nsPutRecvDatagramBuffer();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 static void parseServerList(NQ_WCHAR * list)
@@ -1974,10 +2115,12 @@ static void parseServerList(NQ_WCHAR * list)
     NQ_WCHAR * curServer;                                   /* pointer to the current server IP */
     NQ_WCHAR * nextServer;                                  /* pointer to the next server IP */
     NQ_CHAR aServer[CM_IPADDR_MAXLEN];                      /* the same in ASCII */
-    
+
     method.type = NQ_RESOLVER_NETBIOS;
     method.isMulticast = FALSE;  /* unicast */
-    method.timeout = 1; /* seconds */
+    method.activationPriority = 2;
+    method.timeout.low = 1000; /* milliseconds */
+    method.timeout.high = 0;   /* milliseconds */
     method.waitAnyway = TRUE;
     method.requestByName = nsRequestByNameWins;
     method.responseByName = nsResponseByName;
@@ -1985,8 +2128,9 @@ static void parseServerList(NQ_WCHAR * list)
     method.responseByIp = nsResponseByIp;
 
     /* parse servers string */
-    for(curServer = list, staticData->numServers = 0; 
-        staticData->numServers < sizeof(staticData->winsServers) / sizeof(staticData->winsServers[0]); 
+    for (curServer = list, staticData->numServers = 0;
+        staticData->numServers < sizeof(staticData->winsServers) / sizeof(staticData->winsServers[0]);
+        curServer = nextServer + 1
         )
     {
         NQ_STATUS res;                      /* operation status */
@@ -1997,18 +2141,21 @@ static void parseServerList(NQ_WCHAR * list)
         {
             *nextServer = cmWChar('\0');
         }
-        cmUnicodeToAnsi(aServer, curServer);
-        res = cmAsciiToIp(aServer, &ip);
-        staticData->winsServers[staticData->numServers] = ip;
-        curServer = nextServer + 1;
-        /* register WINS with Resolver */
-        res = cmResolverRegisterMethod(&method, &staticData->winsServers[staticData->numServers]);
-        if (TRUE == res)
-            staticData->numServers++; 
-        if (NULL == nextServer)
+        if (cmWStrlen(curServer) < CM_IPADDR_MAXLEN)
         {
-            break;
+        	cmUnicodeToAnsiN(aServer, curServer, CM_IPADDR_MAXLEN * 2);
+            res = cmAsciiToIp(aServer, &ip);
+            if (NQ_SUCCESS == res)
+            {
+            	staticData->winsServers[staticData->numServers] = ip;
+                /* register WINS with Resolver */
+            	if (TRUE == cmResolverRegisterMethod(&method, &staticData->winsServers[staticData->numServers]))
+            		staticData->numServers++;
+            }
         }
+
+        if (NULL == nextServer)
+            break;
     }
 }
 
@@ -2016,15 +2163,20 @@ void cmNetBiosSetWinsA(const NQ_CHAR * servers)
 {
     const NQ_WCHAR * serversW;      /* unicode copy */
 
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "servers:%s", servers ? servers : "");
+
     if (NULL == servers)
     {
         cmNetBiosSetWinsW(NULL);
-        return;
+        goto Exit;
     }
     serversW = cmMemoryCloneAString(servers);
     if (NULL != serversW)
         cmNetBiosSetWinsW(serversW);
     cmMemoryFree(serversW);
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 void cmNetBiosSetWinsW(const NQ_WCHAR * servers)
@@ -2033,11 +2185,12 @@ void cmNetBiosSetWinsW(const NQ_WCHAR * servers)
     CMResolverMethodDescriptor descriptor;  /* method descriptor */
     NQ_WCHAR * aCopy;                       /* server list copy */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "servers:%s", cmWDump(servers));
 
     /* remove per WINS server methods */
     descriptor.type = NQ_RESOLVER_NETBIOS;  /* only type and multicast flag are required */
     descriptor.isMulticast = FALSE;
+
     for (idx = 0; idx < (NQ_INT)staticData->numServers; idx++)
     {
         cmResolverRemoveMethod(&descriptor, &staticData->winsServers[idx]);
@@ -2045,8 +2198,7 @@ void cmNetBiosSetWinsW(const NQ_WCHAR * servers)
     if (NULL == servers || 0 == syWStrlen(servers))
     {
         staticData->numServers = 0;
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return;
+        goto Exit;
     }
     aCopy = cmMemoryCloneWString(servers);
     if (NULL != aCopy)
@@ -2054,6 +2206,69 @@ void cmNetBiosSetWinsW(const NQ_WCHAR * servers)
         parseServerList(aCopy);
         cmMemoryFree(aCopy);
     }
+    nsRefreshNetBios(servers);
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+}
+
+void ndSetWinsW(const NQ_WCHAR * servers)
+{
+    NQ_INT idx;                             /* index in servers */
+    CMResolverMethodDescriptor descriptor;  /* method descriptor */
+    NQ_WCHAR * aCopy;                       /* server list copy */
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "servers:%s", cmWDump(servers));
+
+    /* remove per WINS server methods */
+    descriptor.type = NQ_RESOLVER_NETBIOS;  /* only type and multicast flag are required */
+    descriptor.isMulticast = FALSE;
+
+    for (idx = 0; idx < (NQ_INT)staticData->numServers; idx++)
+    {
+        cmResolverRemoveMethod(&descriptor, &staticData->winsServers[idx]);
+    }
+    if (NULL == servers || 0 == syWStrlen(servers))
+    {
+        staticData->numServers = 0;
+        goto Exit;
+    }
+    aCopy = cmMemoryCloneWString(servers);
+    if (NULL != aCopy)
+    {
+        parseServerList(aCopy);
+        cmMemoryFree(aCopy);
+    }
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+}
+
+
+void nsRefreshNetBios(const NQ_WCHAR * servers)
+{
+	NQ_BYTE*   	msgBuf;             /* buffer for INTERNALREFRESHLIST REQUEST message */
+	NQ_UINT		msgLen = 0;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "servers:%s", cmWDump(servers));
+
+	msgBuf = nsGetSendDatagramBuffer();
+
+	cmPutSUint16(((CMNetBiosHeader*)msgBuf)->tranID, syHton16(cmNetBiosGetNextTranId()));
+	cmPutSUint16(((CMNetBiosHeader*)msgBuf)->qdCount, syHton16(1));
+	cmPutSUint16(((CMNetBiosHeader*)msgBuf)->anCount, syHton16(0));
+	cmPutSUint16(((CMNetBiosHeader*)msgBuf)->nsCount, syHton16(0));
+	cmPutSUint16(((CMNetBiosHeader*)msgBuf)->arCount, syHton16(1));
+	cmPutSUint16(((CMNetBiosHeader*)msgBuf)->packCodes, syHton16(CM_NB_INTERNALREFRESHLIST));
+
+	/* send the request and wait for a response */
+	syMemcpy(msgBuf+sizeof(CMNetBiosHeader) , servers , (syWStrlen(servers) + 1) * sizeof(NQ_WCHAR));
+	msgLen = (NQ_UINT)(sizeof(CMNetBiosHeader) + (syWStrlen(servers) + 1) * sizeof(NQ_WCHAR));
+	if (nsProceedRequestToND((const NQ_BYTE*)msgBuf, (NQ_UINT)msgLen, NULL) == NQ_FAIL)
+	{
+		LOGERR(CM_TRC_LEVEL_ERROR, "ND failed to refresh the name");
+	}
+	nsPutSendDatagramBuffer();
     LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 

@@ -27,6 +27,13 @@
 
 #define ND_NOINTERNALNAME -1    /* name was not found */
 
+typedef struct
+{
+	CMItem item;
+	NQ_PORT port;
+}
+BindPort;
+
 /* initialize this code */
 
 NQ_STATUS                          /* NQ_SUCCESS or NQ_FAIL */
@@ -43,7 +50,7 @@ ndInternalNameStop(
 
 /* Get port binding of an internal name */
 
-NQ_INT16                              /* port (in NBO) or ND_NOINTERNALNAME */
+CMList *				              /* port list or NULL */
 ndInternalNameGetPort(
     const CMNetBiosName name          /* name to look for */
     );
@@ -59,9 +66,8 @@ ndInternalNameSetPort(
 /* Start registering all existing internal names over a specific adapter */
 
 NQ_STATUS                              /* NQ_SUCCESS or NQ_FAIL */
-ndInternalNameRegisterAllNames(
-    const NDAdapterInfo* response,  /* adapter to response to "dummy" */
-    const NDAdapterInfo* adapter    /* adapter to register over: may be either NEW or OLD */
+ndConfigChangeRegisterAllNames(
+    const NDAdapterInfo* response  /* adapter to response to "dummy" */
     );
 
 /* Start registering internal name over all adapters */
@@ -179,5 +185,8 @@ ndInternalProcessNameQuery(
     const CMNetBiosName name,       /* queried name */
     NQ_BOOL sendNegativeResponse    /* flag requiring sending of a negative name query response */
     );
+
+NQ_IPADDRESS4 *
+ndLLMNRNameLookup(NQ_CHAR * name);
 
 #endif  /* _NDINNAME_H_ */

@@ -21,6 +21,7 @@
 #define _SYAPI_H_
 
 #include "udparams.h"   /* user defined compilation parameters */
+#include "udadjust.h"	/* "permanent" parameters */
 #include "sycompil.h"   /* compiler-dependent definitions   */
 #include "udapi.h"      /* project dependent definitions */
 #include "syinclud.h"   /* system includes here */
@@ -31,25 +32,26 @@
 #include "syprintr.h"   /* printing API */
 #endif
 #include "sytrace.h"    /* tracing */
-#if defined(UD_CC_INCLUDEEXTENDEDSECURITY) && defined(UD_CC_INCLUDEEXTENDEDSECURITY_KERBEROS)
+#if defined(UD_CC_INCLUDEEXTENDEDSECURITY_KERBEROS) || defined(UD_NQ_INCLUDEKERBEROS)
 #include "sysasl.h"     /* GSASL interface */
 #endif
 #ifdef UD_CC_INCLUDELDAP
-#include "syldap.h"     /* ldap */
+/*#include "syldap.h" */    /* ldap */
 #endif
-/* initialize the module */
 
-NQ_BOOL
-syInit(
-    void
-    );
+/*@@syInit
+   Description
+   Initialize SY module.
+   Returns
+   <i>TRUE</i> on success or <i>FALSE</i> on failure. */
+NQ_BOOL syInit(void);
 
-/* stop the module */
-
-void
-syStop(
-    void
-    );
+/*@@
+Description
+Shutdown SY module.
+Returns
+None */
+void syStop(void);
 
 #endif  /* _SYAPI_H_ */
 

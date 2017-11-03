@@ -52,18 +52,21 @@ csComTreeConnect(
     CMCifsTreeConnectRequest* connectRequest;   /* casted request */
     CMCifsTreeConnectResponse* connectResponse; /* casted response */
     CSUser* pUser;                              /* pointer to the user descriptor */
-    NQ_UINT32 returnValue;                      /* error code returnes by other routines - NT */
+    NQ_UINT32 returnValue;                      /* error code returns by other routines - NT */
     NQ_BOOL unicodeRequired;                    /* client requires UNICODE */
     NQ_BYTE* path;                              /* pointer to the path string in the request */
     NQ_BYTE* password;                          /* pointer to the password string in the request */
     NQ_BYTE* service;                           /* pointer to the service string in the request */
-    NQ_STATIC NQ_TCHAR tcharPath[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN)];  /* full path to the share in ascii */
-    NQ_TCHAR *pShareName;                       /* required share */
+    NQ_STATIC NQ_WCHAR wcharPath[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];  /* full path to the share in ascii */
+    NQ_WCHAR *pShareName;                       /* required share */
     CSShare* pShare;                            /* share descriptor from the server share list */
     CSTree* pTree;                              /* pointer to a new tree slot */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDShareAccessEvent eventInfo;               /* share event information */
 #endif /* UD_NQ_INCLUDEEVENTLOG */
+#ifdef UD_NQ_INCLUDESMB3
+    CSSession	* pSession = NULL;
+#endif /* UD_NQ_INCLUDESMB3 */
 
     TRCB();
 
@@ -152,17 +155,17 @@ csComTreeConnect(
     if (unicodeRequired)
     {
         path = cmAllignTwo(path);
-        cmUnicodeToTchar(tcharPath, (NQ_WCHAR*)path);
+        syWStrcpy(wcharPath, (NQ_WCHAR*)path);
     }
     else
     {
-        cmAnsiToTchar(tcharPath, (NQ_CHAR*)path);
+        syAnsiToUnicode(wcharPath, (NQ_CHAR*)path);
     }
 
-    pShareName = cmTStrrchr(tcharPath, cmTChar('\\'));
+    pShareName = syWStrrchr(wcharPath, cmWChar('\\'));
     if (pShareName == NULL)
     {
-        pShareName = tcharPath;
+        pShareName = wcharPath;
     }
     else
     {
@@ -194,7 +197,7 @@ csComTreeConnect(
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("Share not found");
-        TRC1P("  required share: %s", cmTDump(pShareName));
+        TRC1P("  required share: %s", cmWDump(pShareName));
         TRCE();
         return csErrorReturn(SMB_STATUS_BAD_NETWORK_NAME, DOS_ERRnoshare);
     }
@@ -266,6 +269,27 @@ csComTreeConnect(
         TRCE();
         return csErrorReturn(SMB_STATUS_BAD_NETWORK_NAME, DOS_ERRnoshare);
     }
+
+#ifdef UD_NQ_INCLUDESMB3
+    pSession = csGetSessionById(pUser->session);
+    if (pSession != NULL && pShare->isEncrypted && pSession->dialect < CS_DIALECT_SMB30)
+	{
+#ifdef UD_NQ_INCLUDEEVENTLOG
+        udEventLog(
+            UD_LOG_MODULE_CS,
+            UD_LOG_CLASS_SHARE,
+            UD_LOG_SHARE_CONNECT,
+            pUser->name,
+            pUser->ip,
+            csErrorReturn(SMB_STATUS_ACCESS_DENIED, DOS_ERRnoaccess),
+            (const NQ_BYTE*)&eventInfo
+        );
+#endif /* UD_NQ_INCLUDEEVENTLOG */
+        TRCERR("share requires encrypted access and the current connection can't encrypt");
+    	TRCE();
+		return SMB_STATUS_ACCESS_DENIED;
+	}
+#endif /* UD_NQ_INCLUDESMB3 */
 
     /* check the service name */
     if (syStrcmp((NQ_CHAR*)service, "A:") == 0)
@@ -412,20 +436,22 @@ csComTreeConnectAndX(
     NQ_BYTE** pResponse
     )
 {
-    CMCifsTreeConnectAndXRequest* connectRequest;   /* casted request */
-    CMCifsTreeConnectAndXResponse* connectResponse; /* casted response */
-    CSUser* pUser;                                  /* pointer to the user descriptor */
-    NQ_UINT32 returnValue;                             /* error code returnes by other routines - NT */
-    NQ_BOOL unicodeRequired;                           /* client requires UNICODE */
-    NQ_BYTE* path;                                     /* pointer to the path string in the request */
-    NQ_BYTE* password;                                 /* pointer to the password string in the request */
-    NQ_BYTE* service;                                  /* pointer to the service string in the request */
-    NQ_STATIC NQ_TCHAR tcharPath[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN)];  /* full path to the share in ascii */
-    NQ_TCHAR *pShareName;                           /* required share */
-    CSShare* pShare;                                /* share descriptor from the server share list */
-    CSTree* pTree;                                  /* pointer to a new tree slot */
+    CMCifsTreeConnectAndXRequest* connectRequest;       /* casted request */
+    CMCifsTreeConnectAndXResponse* connectResponse;     /* casted response */
+    CSUser* pUser;                                      /* pointer to the user descriptor */
+    NQ_UINT32 returnValue;                              /* error code returns by other routines - NT */
+    NQ_BOOL unicodeRequired;                            /* client requires UNICODE */
+    NQ_BOOL extendedRspRequired;                        /* client requires extended response */
+    NQ_BYTE* path;                                      /* pointer to the path string in the request */
+    NQ_BYTE* password;                                  /* pointer to the password string in the request */
+    NQ_BYTE* service;                                   /* pointer to the service string in the request */
+    NQ_STATIC NQ_WCHAR wcharPath[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];  /* full path to the share in ascii */
+    NQ_WCHAR *pShareName;                               /* required share */
+    CSShare* pShare;                                    /* share descriptor from the server share list */
+    CSTree* pTree;                                      /* pointer to a new tree slot */
+    NQ_UINT16 byteCount;                                /* byte count in response */
 #ifdef UD_NQ_INCLUDEEVENTLOG
-    UDShareAccessEvent eventInfo;                   /* share event information */
+    UDShareAccessEvent eventInfo;                       /* share event information */
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     TRCB();
@@ -500,6 +526,10 @@ csComTreeConnectAndX(
         return csErrorReturn(SMB_STATUS_UNSUCCESSFUL, SRV_ERRerror);
     }
 
+    /* extended response required */
+
+    extendedRspRequired = cmLtoh16(cmGetSUint16(connectRequest->flags)) & SMB_TREECONNECTANDX_FLAGS_EXTENDEDRESPONSE;
+
     /* set the pointers to path, password and service */
 
     password = (NQ_BYTE*)(connectRequest + 1);
@@ -519,17 +549,17 @@ csComTreeConnectAndX(
     if (unicodeRequired)
     {
         path = cmAllignTwo(path);
-        cmUnicodeToTchar(tcharPath, (NQ_WCHAR*)path);
+        syWStrcpy(wcharPath, (NQ_WCHAR*)path);
     }
     else
     {
-        cmAnsiToTchar(tcharPath, (NQ_CHAR*)path);
+        syAnsiToUnicode(wcharPath, (NQ_CHAR*)path);
     }
 
-    pShareName = cmTStrrchr(tcharPath, cmTChar('\\'));
+    pShareName = syWStrrchr(wcharPath, cmWChar('\\'));
     if (pShareName == NULL)
     {
-        pShareName = tcharPath;
+        pShareName = wcharPath;
     }
     else
     {
@@ -559,16 +589,16 @@ csComTreeConnectAndX(
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("Share not found");
-        TRC1P("  required share: %s", cmTDump(pShareName));
+        TRC1P("  required share: %s", cmWDump(pShareName));
         TRCE();
         return csErrorReturn(SMB_STATUS_BAD_NETWORK_NAME, DOS_ERRnoshare);
     }
 
-    TRC1P("share found with name: %s", cmTDump(pShare->name));
-    TRC1P(" path %s", cmTDump(pShare->map));
+    TRC1P("share found with name: %s", cmWDump(pShare->name));
+    TRC1P(" path %s", cmWDump(pShare->map));
 #ifdef UD_NQ_INCLUDEEVENTLOG
     pTree = csGetNextTreeByShare(pShare , CS_ILLEGALID);
-    eventInfo.tid = pTree ? pTree->tid : -1;
+    eventInfo.tid = (NQ_UINT32)(pTree ? pTree->tid : -1);
 #endif
 
 #ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
@@ -640,22 +670,38 @@ csComTreeConnectAndX(
         TRCE();
         return csErrorReturn(SMB_STATUS_BAD_NETWORK_NAME, DOS_ERRnoshare);
     }
+	
+#if defined(UD_NQ_INCLUDESMB3) && !defined(UD_CS_ALLOW_NONENCRYPTED_ACCESS_TO_ENCRYPTED_SHARE)
+    {
+        CSSession *pSession = csGetSessionById(pUser->session);
 
-    /* prepare the response */
-
-    connectResponse = (CMCifsTreeConnectAndXResponse*)*pResponse;
-
-    connectResponse->wordCount = SMB_TREECONNECTANDX_RESPONSE_WORDCOUNT;
-    connectResponse->andXCommand = connectRequest->andXCommand;
-    connectResponse->andXReserved = 0;
-
+        if (pSession != NULL && pShare->isEncrypted && (pSession->dialect < CS_DIALECT_SMB30))
+        {
+#ifdef UD_NQ_INCLUDEEVENTLOG
+            udEventLog(
+                UD_LOG_MODULE_CS,
+                UD_LOG_CLASS_SHARE,
+                UD_LOG_SHARE_CONNECT,
+                pUser->name,
+                pUser->ip,
+                csErrorReturn(SMB_STATUS_ACCESS_DENIED, DOS_ERRnoaccess),
+                (const NQ_BYTE*)&eventInfo
+                );
+#endif /* UD_NQ_INCLUDEEVENTLOG */
+            TRCERR("share requires encrypted access and the current connection can't encrypt.");
+            TRCE();
+            return SMB_STATUS_ACCESS_DENIED;
+        }
+    }
+#endif /* defined(UD_NQ_INCLUDESMB3) && !defined(UD_CS_ALLOW_NONENCRYPTED_ACCESS_TO_ENCRYPTED_SHARE) */
+	
     /* disconnect TID if required */
 
     if (cmLtoh16(cmGetSUint16(connectRequest->flags)) & 0x1)
     {
         if ((pTree = csGetTreeByTid(cmLtoh16(cmGetSUint16(pHeaderOut->tid)))) != NULL)
         {
-            csReleaseTree(pTree->tid , TRUE);
+            csReleaseTree(pTree->tid, TRUE);
         }
     }
 
@@ -666,7 +712,7 @@ csComTreeConnectAndX(
         if (pShare->ipcFlag)
         {
 #ifdef UD_NQ_INCLUDEEVENTLOG
-            udEventLog (
+            udEventLog(
                 UD_LOG_MODULE_CS,
                 UD_LOG_CLASS_SHARE,
                 UD_LOG_SHARE_CONNECT,
@@ -674,9 +720,9 @@ csComTreeConnectAndX(
                 pUser->ip,
                 csErrorReturn(SMB_STATUS_BAD_DEVICE_TYPE, DOS_ERRdontsupportipc),
                 (const NQ_BYTE*)&eventInfo
-            );
+                );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-            TRCERR("Servic is A: while share name is IPC$");
+            TRCERR("Service is A: while share name is IPC$");
             TRCE();
             return csErrorReturn(SMB_STATUS_BAD_DEVICE_TYPE, DOS_ERRdontsupportipc);
         }
@@ -686,7 +732,7 @@ csComTreeConnectAndX(
         if (!pShare->ipcFlag)
         {
 #ifdef UD_NQ_INCLUDEEVENTLOG
-            udEventLog (
+            udEventLog(
                 UD_LOG_MODULE_CS,
                 UD_LOG_CLASS_SHARE,
                 UD_LOG_SHARE_CONNECT,
@@ -694,7 +740,7 @@ csComTreeConnectAndX(
                 pUser->ip,
                 csErrorReturn(SMB_STATUS_BAD_DEVICE_TYPE, DOS_ERRdontsupportipc),
                 (const NQ_BYTE*)&eventInfo
-            );
+                );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
             TRCERR("Service is IPC but share name is not IPC$");
             TRCE();
@@ -707,7 +753,7 @@ csComTreeConnectAndX(
     else
     {
 #ifdef UD_NQ_INCLUDEEVENTLOG
-        udEventLog (
+        udEventLog(
             UD_LOG_MODULE_CS,
             UD_LOG_CLASS_SHARE,
             UD_LOG_SHARE_CONNECT,
@@ -715,7 +761,7 @@ csComTreeConnectAndX(
             pUser->ip,
             csErrorReturn(SMB_STATUS_BAD_DEVICE_TYPE, DOS_ERRdontsupportipc),
             (const NQ_BYTE*)&eventInfo
-        );
+            );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("Unsupported service");
         TRC1P("  service: %s", service);
@@ -723,19 +769,59 @@ csComTreeConnectAndX(
         return csErrorReturn(SMB_STATUS_BAD_DEVICE_TYPE, DOS_ERRdontsupportipc);
     }
 
+    /* find a free entry in the tree table */
+
+    pTree = csGetNewTree(pUser);
+    if (pTree == NULL)
+    {
+#ifdef UD_NQ_INCLUDEEVENTLOG
+        udEventLog(
+            UD_LOG_MODULE_CS,
+            UD_LOG_CLASS_SHARE,
+            UD_LOG_SHARE_CONNECT,
+            pUser->name,
+            pUser->ip,
+            (NQ_UINT32)SMB_STATUS_INSUFFICIENT_RESOURCES,
+            (const NQ_BYTE*)&eventInfo
+            );
+#endif /* UD_NQ_INCLUDEEVENTLOG */
+        TRCERR("Tree table overflow");
+        TRCE();
+        return csErrorReturn(SMB_STATUS_UNSUCCESSFUL, SRV_ERRerror);
+    }
+    pTree->share = pShare;
+
+    /* prepare the response */
+
+    connectResponse = (CMCifsTreeConnectAndXResponse*)*pResponse;
+
+    cmPutSUint16(pHeaderOut->tid, cmHtol16(pTree->tid));
+    connectResponse->wordCount = extendedRspRequired ? SMB_TREECONNECTANDX_RESPONSE_WORDCOUNTEXT : SMB_TREECONNECTANDX_RESPONSE_WORDCOUNT;
+    connectResponse->andXCommand = connectRequest->andXCommand;
+    connectResponse->andXReserved = 0;
+    
     /* We do not have optional support */
 
     cmPutSUint16(connectResponse->optionalSupport, 0);
+    
+    /* extended response */
+
+    if (extendedRspRequired)
+    {
+        NQ_SUINT32 *pTemp = (NQ_UINT32 *)(connectResponse + 1);
+
+        cmPutSUint32(*pTemp, cmHtol32(pTree->maxAccessRights));      /* userMaxShareAccess */
+        cmPutSUint32(*(++pTemp), cmHtol32(pTree->maxAccessRights));  /* guestMaxShareAccess*/
+    }
 
     /* Copy service into the response. For ????? service treat share name IPC$ as
        IPC service, any other name as A: service.
-       Copy fielsystem name into the response. */
-
+       Copy file system name into the response. */
     {
-        NQ_CHAR* pStr;                                              /* pointer to strings in the response */
-        NQ_STATIC NQ_TCHAR fsName[CM_BUFFERLENGTH(NQ_TCHAR, 100)];  /* buffer for converting FS name into Unicode */
-
-        pStr = (NQ_CHAR*)(connectResponse + 1);
+        NQ_STATIC NQ_WCHAR fsName[CM_BUFFERLENGTH(NQ_WCHAR, 100)];  /* buffer for converting FS name into Unicode */
+        NQ_CHAR *pStr = (NQ_CHAR*)(connectResponse + 1) + (extendedRspRequired ? 10 : 2);    /* pointer to strings in the response */
+        NQ_SUINT16 *pByteCount = (NQ_UINT16 *)((NQ_CHAR*)(connectResponse + 1) + (extendedRspRequired ? 8 : 0));    /* pointer to byteCount in the response */
+        NQ_CHAR *pTemp = pStr;
 
         if (syStrcmp((NQ_CHAR*)service, "?????") == 0)
         {
@@ -760,7 +846,9 @@ csComTreeConnectAndX(
         pStr += syStrlen(pStr) + 1;
 
         if (pShare->ipcFlag)
-            cmAnsiToTchar(fsName, "IPC");
+        {
+            syAnsiToUnicode(fsName, "IPC");
+        }
         else
         {
             udGetFileSystemName(pShare->name, pShare->map,  fsName);
@@ -768,40 +856,17 @@ csComTreeConnectAndX(
         if (unicodeRequired)
         {
             pStr = (NQ_CHAR*)cmAllignTwo(pStr);
-            cmTcharToUnicode((NQ_WCHAR*)pStr, fsName);
+            syWStrcpy((NQ_WCHAR*)pStr, fsName);
             pStr += (cmWStrlen((const NQ_WCHAR*)pStr) + 1) * sizeof(NQ_WCHAR);
         }
         else
         {
-            cmTcharToAnsi(pStr, fsName);
+            syUnicodeToAnsi(pStr, fsName);
             pStr += syStrlen(pStr) + 1;
         }
-
-        cmPutSUint16(connectResponse->byteCount, cmHtol16((NQ_UINT16)((NQ_BYTE*)pStr - (NQ_BYTE*)(connectResponse + 1))));
+        byteCount = (NQ_UINT16)(pStr - pTemp);
+        cmPutSUint16(*pByteCount, cmHtol16(byteCount));
     }
-
-
-    /* find a free entry in the tree table */
-
-    pTree = csGetNewTree(pUser);
-    if (pTree == NULL)
-    {
-#ifdef UD_NQ_INCLUDEEVENTLOG
-        udEventLog (
-            UD_LOG_MODULE_CS,
-            UD_LOG_CLASS_SHARE,
-            UD_LOG_SHARE_CONNECT,
-            pUser->name,
-            pUser->ip,
-            (NQ_UINT32)SMB_STATUS_INSUFFICIENT_RESOURCES,
-            (const NQ_BYTE*)&eventInfo
-        );
-#endif /* UD_NQ_INCLUDEEVENTLOG */
-        TRCERR("Tree table overflow");
-        TRCE();
-        return csErrorReturn(SMB_STATUS_UNSUCCESSFUL, SRV_ERRerror);
-    }
-    pTree->share = pShare;
 
     if (!pShare->ipcFlag)
     {
@@ -821,19 +886,16 @@ csComTreeConnectAndX(
         (const NQ_BYTE*)&eventInfo
     );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-
-    cmPutSUint16(pHeaderOut->tid, cmHtol16(pTree->tid));
-
+        
     /* setup the next command offset */
 
     {
         NQ_UINT offset;            /* for calculating offsets */
 
-        offset =   (NQ_UINT)(sizeof(*connectResponse)
-                 + cmLtoh16(cmGetSUint16(connectResponse->byteCount)));
+        offset = (NQ_UINT)(sizeof(*connectResponse) + (extendedRspRequired ? 10 : 2) + byteCount);
         *pResponse += offset;
 
-        offset =   (NQ_UINT)((NQ_BYTE*)connectResponse + offset - (NQ_BYTE*)pHeaderOut);
+        offset = (NQ_UINT)((NQ_BYTE*)connectResponse + offset - (NQ_BYTE*)pHeaderOut);
         cmPutSUint16(connectResponse->andXOffset, cmHtol16((NQ_UINT16)offset));
     }
 
@@ -845,7 +907,6 @@ csComTreeConnectAndX(
  * <b>Disconnect existing tree</b>
  * Also called from cs2trcn.c (SMB2_TREE_DISCONNECT)
  */
-void csDoTreeDisconnect(CSTree *tree);
 void csDoTreeDisconnect(CSTree *tree)
 {
     if (!tree->share->ipcFlag)

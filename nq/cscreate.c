@@ -28,7 +28,7 @@
 #include "csdcerpc.h"
 #include "cscreate.h"
 #include "csbreak.h"
-
+#include "csinform.h"
 
 #ifdef UD_NQ_INCLUDECIFSSERVER
 
@@ -38,7 +38,7 @@
 /*
     A couple of the following tables define what happens when there are multiple
     openings of the same file. Each attempt has an open mode and a deny mode. So,
-    the result is determined by four values: old (prevous) open mode, old deny mode,
+    the result is determined by four values: old (previous) open mode, old deny mode,
     new open mode and new deny mode.
 
     The main code table (grantedAccessTable) defines access, granted for each
@@ -46,7 +46,7 @@
     dimensions are all used. For this reason we encode open mode and deny mode
     into packed values (values, starting from 0 and using all numbers).
 
-    Each element in the tabl;e defines four values: granted access for a
+    Each element in the table defines four values: granted access for a
     combination of EXE/non EXE files and same client/different clients.
  */
 
@@ -60,7 +60,7 @@
 #define DENY_SIZE  6  /* size of the deny dimension */
 
 /* packed values for open mode */
-#define ACCESS_RDWR    0 /* index for read/write acccess */
+#define ACCESS_RDWR    0 /* index for read/write access */
 #define ACCESS_RDONLY  1 /* index for read access */
 #define ACCESS_WRONLY  2 /* index for write access */
 #define ACCESS_EXECUTE 3 /* index for execute access */
@@ -114,7 +114,7 @@ static const NQ_UINT16 accessCodeTable[] = {
     ACCESS_RDWR     /* 0xF */
 };
 
-/* An element of the granted acccess table */
+/* An element of the granted access table */
 static struct
 {
     NQ_BYTE nonSame;    /* granted access: non-EXE, same client */
@@ -846,6 +846,7 @@ static struct
 
 };
 
+static NQ_WCHAR fileNameBuff[CM_MAXFILENAMELEN];
 
 #define MAX_NUM_OPLOCK_OPEN_FILES           ((UD_FS_NUMSERVERFILEOPEN * 3) / 4)
 #define MAX_NUM_OPLOCK_OPEN_UNIQUE_FILES    ((UD_FS_NUMSERVERFILENAMES * 3) / 4)
@@ -858,7 +859,7 @@ static struct
 
 static NQ_UINT32                          /* error code or 0 */
 openFile(
-    const NQ_TCHAR* pFileName,  /* file name */
+    const NQ_WCHAR* pFileName,  /* file name */
     CSTid tid,                  /* master tree ID */
     NQ_UINT16 desiredAccess,    /* desired access as in the request */
     NQ_UINT16* grantedAccess,   /* place for granted access */
@@ -870,7 +871,7 @@ openFile(
 static NQ_UINT32                   /* error code or 0 */
 createFile(
     NQ_BOOL directoryRequired,  /* TRUE for directory */
-    const NQ_TCHAR* pFileName,   /* file name */
+    const NQ_WCHAR* pFileName,   /* file name */
     CSTid tid,                  /* master tree ID */
     NQ_UINT16 desiredAccess,    /* file access bits */
     CSFile** pFile              /* OUT: file descriptor */
@@ -899,7 +900,7 @@ isAccessAllowed(
 
 static NQ_UINT32                    /* error code or 0 */
 createPrintFile(
-    const NQ_TCHAR* pFileName,      /* file name */
+    const NQ_WCHAR* pFileName,      /* file name */
     const CSShare* pShare,          /* pointer to the share */
     CSTid tid,                      /* master tree ID */
     NQ_UINT16 desiredAccess,        /* file access bits */
@@ -941,7 +942,7 @@ csComOpen(
     CMCifsStatus error;                     /* for composing DOS-style error */
     CSFile* pFile;                          /* pointer to file descriptor */
     const CSShare* pShare;                  /* pointer to the share */
-    NQ_TCHAR* pFileName = NULL;                    /* filename to open */
+    NQ_WCHAR* pFileName = NULL;                    /* filename to open */
     CSUid uid;                              /* required UID */
     CSTid tid;                              /* required TID */
     CSPid pid;                              /* required PID */
@@ -1019,9 +1020,11 @@ csComOpen(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+    					fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(openRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(openRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -1041,7 +1044,7 @@ csComOpen(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && cmTStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && syWStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -1052,13 +1055,13 @@ csComOpen(
     
     /* look for the file */
 
-    if (!csCheckPathAndFile(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPathAndFile(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && cmTStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && syWStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			csErrorReturn(SMB_STATUS_OBJECT_NAME_NOT_FOUND, DOS_ERRbadfile),
@@ -1066,7 +1069,7 @@ csComOpen(
 			);
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
         TRCERR("file does not exist");
-        TRC1P(" file: %s", cmTDump(pFileName));
+        TRC1P(" file: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_OBJECT_NAME_NOT_FOUND, DOS_ERRbadfile);
     }
@@ -1074,7 +1077,7 @@ csComOpen(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && cmTStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && syWStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -1218,7 +1221,7 @@ csComOpenAndX(
     CMCifsStatus error;                     /* for composing DOS-style error */
     CSFile* pFile;                          /* pointer to file descriptor */
     const CSShare* pShare;                  /* pointer to the share */
-    NQ_TCHAR* pFileName;                    /* filename to open */
+    NQ_WCHAR* pFileName;                    /* filename to open */
     CSUid uid;                              /* required UID */
     CSTid tid;                              /* required TID */
     CSPid pid;                              /* required PID */
@@ -1318,9 +1321,11 @@ csComOpenAndX(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+    					fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(openRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(openRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -1351,7 +1356,7 @@ csComOpenAndX(
 		);
 	eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-    if (!csCheckPath(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPath(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
  		eventInfo.before = TRUE;
@@ -1367,7 +1372,7 @@ csComOpenAndX(
 		eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
         TRCERR("path does not exist");
-        TRC1P(" path: %s", cmTDump(pFileName));
+        TRC1P(" path: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath);
     }
@@ -1408,7 +1413,7 @@ csComOpenAndX(
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			0,
@@ -1421,7 +1426,7 @@ csComOpenAndX(
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			0,
@@ -1718,10 +1723,11 @@ csComOpenAndX(
         {
             NQ_UINT32 creationTime = cmLtoh32(cmGetSUint32(openRequest->creationTime));
 
-            fileInfo.creationTime = creationTime;
-            fileInfo.lastAccessTime = creationTime;
-            fileInfo.lastChangeTime = creationTime;
-            fileInfo.lastWriteTime = 0;
+            fileInfo.creationTime = cmTimeConvertSecToMSec(creationTime);
+            fileInfo.lastAccessTime = cmTimeConvertSecToMSec(creationTime);
+            fileInfo.lastChangeTime = cmTimeConvertSecToMSec(creationTime);
+            fileInfo.lastWriteTime.high = 0;
+            fileInfo.lastWriteTime.low = 0;
             if (csSetFileInformation(pFile, pFileName, &fileInfo))
             {
                 csReleaseFile(pFile->fid);      /* also closes the file */
@@ -1737,8 +1743,7 @@ csComOpenAndX(
                 	))
             {
                 error = csErrorGetLast();
-                if (pFile != NULL)
-                    csReleaseFile(pFile->fid);      /* also closes the file */
+				csReleaseFile(pFile->fid);      /* also closes the file */
                 TRCERR("Unable to read file information");
                 TRCE();
                 return error;
@@ -1784,7 +1789,7 @@ csComOpenAndX(
     {
 		NQ_UINT16	temp = fileInfo.attributes & 0x3F;
         cmPutSUint16(openResponse->fileAttributes, cmHtol16(temp));
-        cmPutSUint32(openResponse->lastWriteTime, cmHtol32(fileInfo.lastWriteTime));
+        cmPutSUint32(openResponse->lastWriteTime, cmHtol32(cmTimeConvertMSecToSec(&fileInfo.lastWriteTime)));
     }
     else
     {
@@ -1858,7 +1863,7 @@ csComCreate(
     CMCifsStatus error;                         /* for composing DOS-style error */
     CSFile* pFile;                              /* pointer to file descriptor */
     const CSShare* pShare;                      /* pointer to the share */
-    NQ_TCHAR* pFileName;                        /* filename to open */
+    NQ_WCHAR* pFileName;                        /* filename to open */
     CSUid uid;                                  /* required UID */
     CSTid tid;                                  /* required TID */
     CSPid pid;                                  /* required PID */
@@ -1936,9 +1941,11 @@ csComCreate(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+    					fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(createRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(createRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -1985,7 +1992,7 @@ csComCreate(
 		);
 	eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-    if (!csCheckPath(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPath(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 		udEventLog(
@@ -2010,7 +2017,7 @@ csComCreate(
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("path does not exist");
-        TRC1P(" path: %s", cmTDump(pFileName));
+        TRC1P(" path: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath);
     }
@@ -2030,7 +2037,7 @@ csComCreate(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -2048,7 +2055,7 @@ csComCreate(
         udEventLog(
             UD_LOG_MODULE_CS,
             UD_LOG_CLASS_FILE,
-            (pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+            (pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
             pUser->name,
             pUser->ip,
             csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath),
@@ -2106,7 +2113,8 @@ csComCreate(
             return error;
         }
 
-        fileInfo.lastWriteTime = 0;
+        fileInfo.lastWriteTime.high = 0;
+        fileInfo.lastWriteTime.low = 0;
         fileInfo.attributes = cmLtoh16(cmGetSUint16(createRequest->fileAttributes)) | SMB_ATTR_ARCHIVE;
 
         if (csSetFileInformation(pFile, pFileName, &fileInfo))
@@ -2168,7 +2176,7 @@ csComCreateDirectory(
     NQ_BOOL unicodeRequired;                       /* whether client requires UNICODE */
     CMCifsStatus error;                         /* for composing DOS-style error */
     const CSShare* pShare;                      /* pointer to the share */
-    NQ_TCHAR* pFileName;                        /* filename to open */
+    NQ_WCHAR* pFileName;                        /* filename to open */
     CSTid tid;                                  /* tree ID for access check */
     CSUid uid;                                  /* user ID for access check */
     CSUser* pUser;                              /* pointer to the user descriptor */
@@ -2231,9 +2239,11 @@ csComCreateDirectory(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+    					fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(createRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(createRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -2279,7 +2289,7 @@ csComCreateDirectory(
 			);
 		eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-    if (!csCheckPath(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPath(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 		udEventLog(
@@ -2304,7 +2314,7 @@ csComCreateDirectory(
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("path does not exist");
-        TRC1P(" path: %s", cmTDump(pFileName));
+        TRC1P(" path: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath);
     }
@@ -2325,7 +2335,7 @@ csComCreateDirectory(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -2339,7 +2349,7 @@ csComCreateDirectory(
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			csErrorReturn(SMB_STATUS_OBJECT_NAME_COLLISION, DOS_ERRalreadyexists),
@@ -2358,14 +2368,14 @@ csComCreateDirectory(
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("Directory already exists");
-        TRC1P(" name: %s", cmTDump(pFileName));
+        TRC1P(" name: %s", cmWDump(pFileName));
         return csErrorReturn(SMB_STATUS_OBJECT_NAME_COLLISION, DOS_ERRalreadyexists);
     }
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -2456,29 +2466,36 @@ csComNtCreateAndX(
     )
 {
     CMCifsNtCreateAndXRequest* createRequest;   /* casted request */
-    CMCifsNtCreateAndXResponse* createResponse; /* casted response */
+    CMCifsNtCreateAndXExtendedResponse* createExtResponse; /* casted extended response */
     NQ_UINT32 returnValue;          /* error code in NT format or 0 for no error */
     NQ_BOOL unicodeRequired;        /* whether client requires UNICODE */
     const CSShare* pShare;          /* pointer to the share */
-    NQ_TCHAR* pFileName;            /* filename to open */
+    NQ_WCHAR* pFileName;            /* filename to open */
     CSUid uid;                      /* required UID */
     CSTid tid;                      /* required TID */
     CSPid pid;                      /* required PID */
     CSFid rootFid;                  /* root directory FID */
     CSUser* pUser;                  /* pointer to the user descriptor */
-    NQ_STATIC NQ_TCHAR fileName[UD_FS_FILENAMELEN]; /* buffer for composing the filename */
-    CSCreateParams params;          /* parameters for common postprocessing */
+    NQ_STATIC NQ_WCHAR fileName[UD_FS_FILENAMELEN]; /* buffer for composing the filename */
+    CSCreateParams params;          /* parameters for common post processing */
     NQ_UINT32 oplockLevel;          /* oplock level */
     CSName *pName;                  /* pointer to name */
+    NQ_BOOL isExtendedResponse; 	/* whether client requests extended response */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDFileAccessEvent eventInfo;    /* share event information */
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     TRCB();
 
+    /* cast request pointer */
+    createRequest = (CMCifsNtCreateAndXRequest*) pRequest;
+
+    /* is extended response required */
+    isExtendedResponse = (0 != ((cmLtoh32(cmGetSUint32(createRequest->flags))) & SMB_NTCREATEANDX_REQUESTEXTENDEDRESPONSE));
+
     /* check space in output buffer */
 
-    if ((returnValue = csDispatchCheckSpace(pHeaderOut, *pResponse, sizeof(*createResponse))
+    if ((returnValue = csDispatchCheckSpace(pHeaderOut, *pResponse, isExtendedResponse? sizeof(CMCifsNtCreateAndXExtendedResponse) : sizeof(CMCifsNtCreateAndXResponse))
         ) != 0
        )
     {
@@ -2487,15 +2504,14 @@ csComNtCreateAndX(
     }
 
     /* read unicode flag */
-
     unicodeRequired = cmLtoh16(cmGetSUint16(pHeaderOut->flags2)) & SMB_FLAGS2_UNICODE;
 
-    /* cast pointers */
+    /* cast response pointer - will use extended pointer for both extended and regular, since the fist part is same for both */
+    createExtResponse = (CMCifsNtCreateAndXExtendedResponse*) *pResponse;
 
-    createRequest = (CMCifsNtCreateAndXRequest*) pRequest;
-    createResponse = (CMCifsNtCreateAndXResponse*) *pResponse;
+    syMemset(createExtResponse, 0, isExtendedResponse? sizeof (CMCifsNtCreateAndXExtendedResponse) : sizeof(CMCifsNtCreateAndXResponse));
 
-    /* check counts */
+	/* check counts */
 
     if (   createRequest->wordCount != SMB_NTCREATEANDX_REQUEST_WORDCOUNT
         || cmLtoh16(cmGetSUint16(createRequest->byteCount)) < SMB_NTCREATEANDX_REQUEST_MINBYTES)
@@ -2570,9 +2586,11 @@ csComNtCreateAndX(
 
     /* convert filename to host filename */
     if ((pFileName = cmCifsNtohFilename(
+    					fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(createRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(createRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -2650,19 +2668,19 @@ csComNtCreateAndX(
             return csErrorReturn(SMB_STATUS_INVALID_HANDLE, DOS_ERRbadfid);
         }
 
-        cmTStrcpy(fileName, pRootName->name);      /* root name */
-        length = (NQ_UINT)cmTStrlen(fileName);
-        fileName[length] = cmTChar(SY_PATHSEPARATOR);
-        fileName[length + 1] = cmTChar(0);
+        syWStrcpy(fileName, pRootName->name);      /* root name */
+        length = (NQ_UINT)syWStrlen(fileName);
+        fileName[length] = cmWChar(SY_PATHSEPARATOR);
+        fileName[length + 1] = cmWChar(0);
        
-        length = (NQ_UINT)cmTStrlen(csGetTreeByTid(pRootDirectory->tid)->share->map);
-        if (cmTChar(SY_PATHSEPARATOR) == *(pFileName + length))
+        length = (NQ_UINT)syWStrlen(csGetTreeByTid(pRootDirectory->tid)->share->map);
+        if (cmWChar(SY_PATHSEPARATOR) == *(pFileName + length))
             length++;
-        cmTStrcat(fileName, pFileName + length);            /* add filename */
+        syWStrcat(fileName, pFileName + length);            /* add filename */
         pFileName = fileName;
     }
 
-    /* prepare for common postprocessing */
+    /* prepare for common post processing */
     params.disposition = cmLtoh32(cmGetSUint32(createRequest->createDisposition)); 
     params.desiredAccess = cmLtoh32(cmGetSUint32(createRequest->desiredAccess));
     params.sharedAccess = cmLtoh32(cmGetSUint32(createRequest->shareAccess));
@@ -2673,6 +2691,7 @@ csComNtCreateAndX(
     params.tid = tid;
     params.pid = pid;
     params.uid = uid;
+	params.context.flags = 0;
     params.unicodeRequired = unicodeRequired;
     params.fileAttributes = cmLtoh32(cmGetSUint32(createRequest->fileAttributes));
 
@@ -2685,6 +2704,7 @@ csComNtCreateAndX(
         return returnValue;
     }
     
+
     /* check for oplock */
 
     if ( SMB_STATUS_SHARING_VIOLATION != returnValue)
@@ -2756,21 +2776,23 @@ csComNtCreateAndX(
     }
 
     /* advance the outgoing response pointer */
-
-    *pResponse += sizeof(*createResponse);
+    *pResponse += isExtendedResponse? sizeof(CMCifsNtCreateAndXExtendedResponse) : sizeof(CMCifsNtCreateAndXResponse);
 
     /* compose the response */
+    if (isExtendedResponse)
+    	createExtResponse->wordCount = SMB_NTCREATEANDX_EXTENDED_RESPONSE_WORDCOUNT;
+    else
+    	createExtResponse->wordCount = SMB_NTCREATEANDX_RESPONSE_WORDCOUNT;
 
-    createResponse->wordCount = SMB_NTCREATEANDX_RESPONSE_WORDCOUNT;
-    createResponse->andXCommand = createRequest->andXCommand;
-    createResponse->andXReserved = 0;
+    createExtResponse->andXCommand = createRequest->andXCommand;
+    /*createExtResponse->andXReserved = 0; already zeroed */
    
     /* grant oplock if requested */
 
 #ifdef UD_CS_INCLUDERPC
     if (params.file->isPipe)
     {
-        createResponse->oplockLevel = SMB_NTCREATEANDX_RESPONSENOOPLOCK;
+    	createExtResponse->oplockLevel = SMB_NTCREATEANDX_RESPONSENOOPLOCK;
     }
     else
 #endif /* UD_CS_INCLUDERPC */
@@ -2780,63 +2802,85 @@ csComNtCreateAndX(
 
         if (csGetFilesCount() > MAX_NUM_OPLOCK_OPEN_FILES ||
             csGetUniqueFilesCount() > MAX_NUM_OPLOCK_OPEN_UNIQUE_FILES)
-            createResponse->oplockLevel = SMB_NTCREATEANDX_RESPONSENOOPLOCK;
+        	createExtResponse->oplockLevel = SMB_NTCREATEANDX_RESPONSENOOPLOCK;
         else
-            createResponse->oplockLevel = (oplockLevel == SMB_NTCREATEANDX_REQUESTOPLOCKNONE) ?
+        	createExtResponse->oplockLevel = (oplockLevel == SMB_NTCREATEANDX_REQUESTOPLOCKNONE) ?
                                           SMB_NTCREATEANDX_RESPONSENOOPLOCK : SMB_NTCREATEANDX_RESPONSEOPLOCKBATCH; 
-        TRC("oplockLevel granted: %d", createResponse->oplockLevel);
+        TRC("oplockLevel granted: %d", createExtResponse->oplockLevel);
 
-        params.file->oplockGranted = createResponse->oplockLevel != SMB_NTCREATEANDX_RESPONSENOOPLOCK;
+        params.file->oplockGranted = createExtResponse->oplockLevel != SMB_NTCREATEANDX_RESPONSENOOPLOCK;
         params.file->breakContext.socket = csDispatchGetSocket();
         params.file->breakContext.isSmb2 = FALSE;
     }
 
-    if (createResponse->andXCommand == 0xFF)
+    if (createExtResponse->andXCommand == 0xFF)
     {
-        cmPutSUint16(createResponse->andXOffset, 0);
+        /*cmPutSUint16(createExtResponse->andXOffset, 0); already zeroed */
     }
     else
     {
         NQ_UINT16 offset;   /* for calculating offset */
 
         offset = (NQ_UINT16)(*pResponse - (NQ_BYTE*)pHeaderOut);
-        cmPutSUint16(createResponse->andXOffset, cmHtol16(offset));
+        cmPutSUint16(createExtResponse->andXOffset, cmHtol16(offset));
     }
 
-    cmPutSUint16(createResponse->fid, cmHtol16(params.file->fid));
-    cmPutSUint32(createResponse->createAction, cmHtol32(params.takenAction));
+    cmPutSUint16(createExtResponse->fid, cmHtol16(params.file->fid));
+    cmPutSUint32(createExtResponse->createAction, cmHtol32(params.takenAction));
 
     if (pShare->ipcFlag)
     {
-        cmPutSUint32(createResponse->creationTime.low, 0);
-        cmPutSUint32(createResponse->creationTime.high, 0);
-        cmPutSUint32(createResponse->lastAccessTime.low, 0);
-        cmPutSUint32(createResponse->lastAccessTime.high, 0);
-        cmPutSUint32(createResponse->lastWriteTime.low, 0);
-        cmPutSUint32(createResponse->lastWriteTime.high, 0);
-        cmPutSUint32(createResponse->lastChangeTime.low, 0);
-        cmPutSUint32(createResponse->lastChangeTime.high, 0);
-        cmPutSUint32(createResponse->fileAttributes, SMB_ATTR_NORMAL);
-        cmPutSUint32(createResponse->allocationSize.low, cmHtol32((NQ_UINT32)(UD_NS_BUFFERSIZE - 0x44)));
-        cmPutSUint32(createResponse->allocationSize.high, 0);
-        cmPutSUint32(createResponse->endOfFile.low, 0);
-        cmPutSUint32(createResponse->endOfFile.high, 0);
-        cmPutSUint16(createResponse->fileType, cmHtol16(SMB_NTCREATEANDX_MESSAGEPIPE));
-        cmPutSUint16(createResponse->deviceState, cmHtol16((SMB_NTCREATEANDX_ICOUNT | SMB_NTCREATEANDX_READ | SMB_NTCREATEANDX_MESSAGETYPE)));
+    	/*
+    	 zeroed at beginning
+        cmPutSUint32(createExtResponse->creationTime.high, 0);
+        cmPutSUint32(createExtResponse->lastAccessTime.low, 0);
+        cmPutSUint32(createExtResponse->lastAccessTime.high, 0);
+        cmPutSUint32(createExtResponse->lastWriteTime.low, 0);
+        cmPutSUint32(createExtResponse->lastWriteTime.high, 0);
+        cmPutSUint32(createExtResponse->lastChangeTime.low, 0);
+        cmPutSUint32(createExtResponse->lastChangeTime.high, 0);
+        */
+        cmPutSUint32(createExtResponse->fileAttributes, SMB_ATTR_NORMAL);
+        cmPutSUint32(createExtResponse->allocationSize.low, cmHtol32((NQ_UINT32)(UD_NS_BUFFERSIZE - 0x44)));
+        /*
+        cmPutSUint32(createExtResponse->allocationSize.high, 0);
+        cmPutSUint32(createExtResponse->endOfFile.low, 0);
+        cmPutSUint32(createExtResponse->endOfFile.high, 0);
+        zeroed at beginning
+        */
+        cmPutSUint16(createExtResponse->fileType, cmHtol16(SMB_NTCREATEANDX_MESSAGEPIPE));
+        cmPutSUint16(createExtResponse->deviceState, cmHtol16((SMB_NTCREATEANDX_ICOUNT | SMB_NTCREATEANDX_READ | SMB_NTCREATEANDX_MESSAGETYPE)));
     }
     else
     {
-        csWriteFileTimes(&params.fileInfo, pName, (NQ_BYTE *)&createResponse->creationTime.low);
-        cmPutSUint32(createResponse->fileAttributes, cmHtol32(params.fileInfo.attributes));
-        cmPutSUint32(createResponse->allocationSize.low, cmHtol32(params.fileInfo.allocSizeLow));
-        cmPutSUint32(createResponse->allocationSize.high, cmHtol32(params.fileInfo.allocSizeHigh));
-        cmPutSUint32(createResponse->endOfFile.low, cmHtol32(params.fileInfo.sizeLow));
-        cmPutSUint32(createResponse->endOfFile.high, cmHtol32(params.fileInfo.sizeHigh));
-        cmPutSUint16(createResponse->fileType, 0);
-        cmPutSUint16(createResponse->deviceState, cmHtol16(7));  /* undocumented */
+        csWriteFileTimes(&params.fileInfo, pName, (NQ_BYTE *)&createExtResponse->creationTime.low);
+        cmPutSUint32(createExtResponse->fileAttributes, cmHtol32(params.fileInfo.attributes));
+        cmPutSUint32(createExtResponse->allocationSize.low, cmHtol32(params.fileInfo.allocSizeLow));
+        cmPutSUint32(createExtResponse->allocationSize.high, cmHtol32(params.fileInfo.allocSizeHigh));
+        cmPutSUint32(createExtResponse->endOfFile.low, cmHtol32(params.fileInfo.sizeLow));
+        cmPutSUint32(createExtResponse->endOfFile.high, cmHtol32(params.fileInfo.sizeHigh));
+        cmPutSUint16(createExtResponse->fileType, 0);
+        cmPutSUint16(createExtResponse->deviceState, cmHtol16(7));  /* undocumented */
     }
-    createResponse->directory = params.file->isDirectory ? 1 : 0;
-    cmPutSUint16(createResponse->byteCount, 0);
+    createExtResponse->directory = params.file->isDirectory ? 1 : 0;
+
+    if (isExtendedResponse)
+    {
+		/*cmPutSUint32(createExtResponse->fid_full.low, (cmHtol32((NQ_UINT32)params.file->fid)));*/ /* short fid, rest is zeroes */
+        cmPutSUint32(createExtResponse->maximalAccessRights, cmHtol32(csGetTreeByTid(tid)->maxAccessRights));
+        /*cmPutSUint32(createExtResponse->maximalAccessRights, cmHtol32(convertNqAccessToNtAccess(params.file->access)));*/
+        cmPutSUint32(createExtResponse->guestMaximalAccessRights, cmHtol32(csGetTreeByTid(tid)->maxAccessRights));
+        /*cmPutSUint32(createExtResponse->guestMaximalAccessRights, 0);*/
+        /*
+		 zeroed at beginning
+		
+		cmPutSUint16(createExtResponse->byteCount, 0);
+		*/
+    }
+    else
+    {
+    	cmPutSUint16(((CMCifsNtCreateAndXResponse *)createExtResponse)->byteCount, 0);
+    }
 
     TRCE();
     return 0;
@@ -2872,7 +2916,7 @@ csCreateCommonProcessing(
 
     TRCB();
 
-    TRC("fileName: %s", cmTDump(params->fileName));
+    TRC("fileName: %s", cmWDump(params->fileName));
 
     /* look for the path */
 
@@ -2898,7 +2942,7 @@ csCreateCommonProcessing(
     if (!csCheckPath(
             params->share, 
             params->fileName, 
-            (NQ_UINT)cmTStrlen(params->share->map), 
+            (NQ_UINT)syWStrlen(params->share->map), 
             params->user->preservesCase
             )
        )
@@ -2926,7 +2970,7 @@ csCreateCommonProcessing(
 		);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("path does not exist");
-        TRC1P(" path: %s", cmTDump(params->fileName));
+        TRC1P(" path: %s", cmWDump(params->fileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath);
     }
@@ -2941,7 +2985,7 @@ csCreateCommonProcessing(
 		(const NQ_BYTE*)&eventInfo
 		);
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-    /* futher action depends on a combination of:
+    /* further action depends on a combination of:
        1) whether file exists or not
        2) which action was required in this case
        3) if a directory required */
@@ -2961,7 +3005,7 @@ csCreateCommonProcessing(
     	udEventLog(
     	            UD_LOG_MODULE_CS,
     	            UD_LOG_CLASS_FILE,
-    	            (params->user->preservesCase || (params->share != NULL && cmTStrcmp( params->share->map , params->fileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+    	            (params->user->preservesCase || (params->share != NULL && syWStrcmp( params->share->map , params->fileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
     	            params->user->name,
     	            params->user->ip,
     	            0,
@@ -2976,7 +3020,7 @@ csCreateCommonProcessing(
     	udEventLog(
     	            UD_LOG_MODULE_CS,
     	            UD_LOG_CLASS_FILE,
-    	            (params->user->preservesCase || (params->share != NULL && cmTStrcmp( params->share->map , params->fileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+    	            (params->user->preservesCase || (params->share != NULL && syWStrcmp( params->share->map , params->fileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
     	            params->user->name,
     	            params->user->ip,
     	            0,
@@ -3201,12 +3245,12 @@ csCreateCommonProcessing(
 							UD_LOG_FILE_OPEN,
 							params->user->name,
 							params->user->ip,
-							syGetLastError(),
+							(NQ_UINT32)syGetLastError(),
 							(const NQ_BYTE*)&eventInfo
 						);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
             			TRCE();
-            			return syGetLastError();
+            			return (NQ_UINT32)syGetLastError();
             		}
 #ifdef UD_NQ_INCLUDEEVENTLOG
 					udEventLog(
@@ -3279,7 +3323,7 @@ csCreateCommonProcessing(
 				);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 				{
-					/*  closing file and openings again  */
+					/*  closing file and opening again  */
 					if ((params->desiredAccess & SMB_ACCESS_A) == SMB_ACCESS_A_READ ||
 					(params->desiredAccess & SMB_ACCESS_A) == SMB_ACCESS_A_EXECUTE)
 					{
@@ -3302,7 +3346,7 @@ csCreateCommonProcessing(
 							UD_LOG_FILE_CLOSE,
 							params->user->name,
 							params->user->ip,
-							syGetLastError(),
+							(NQ_UINT32)syGetLastError(),
 							(const NQ_BYTE*)&eventInfo
 						);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
@@ -3334,7 +3378,7 @@ csCreateCommonProcessing(
 
             params->file->isDirectory = directoryFound;
         }
-        else
+        else /* if (fileExists) */
         {  
             /* file was not found
                if the action to take assumes that the file exists - fail */
@@ -3420,8 +3464,7 @@ csCreateCommonProcessing(
              != NQ_SUCCESS)
         {
             error = csErrorGetLast();
-            if (params->file != NULL)
-                csReleaseFile(params->file->fid);      /* also closes the file */
+            csReleaseFile(params->file->fid);      /* also closes the file */
             TRCERR("Unable to read file information");
             TRCE();
             return error;
@@ -3435,7 +3478,8 @@ csCreateCommonProcessing(
                                     | SMB_ATTR_ARCHIVE
                                     );
     
-            params->fileInfo.lastWriteTime = 0;
+            params->fileInfo.lastWriteTime.high = 0;
+            params->fileInfo.lastWriteTime.low = 0;
     
             if (!directoryRequired && csSetFileInformation(
                                         params->file, 
@@ -3443,8 +3487,7 @@ csCreateCommonProcessing(
                                         &params->fileInfo)
                )
             {
-                if (params->file != NULL)
-                    csReleaseFile(params->file->fid);      /* also closes the file */
+            	csReleaseFile(params->file->fid);      /* also closes the file */
     
                 TRCERR("unable to change file attributes/time");
                 TRCE();
@@ -3458,8 +3501,7 @@ csCreateCommonProcessing(
                 	))
             {
                 error = csErrorGetLast();
-                if (params->file != NULL)
-                    csReleaseFile(params->file->fid);      /* also closes the file */
+                csReleaseFile(params->file->fid);      /* also closes the file */
                 TRCERR("Unable to read file information");
                 TRCE();
                 return error;
@@ -3508,7 +3550,7 @@ csNtTransactionCreate(
     CMCifsStatus error;             /* for composing DOS-style error */
     CSFile* pFile;                  /* pointer to file descriptor */
     const CSShare* pShare;          /* pointer to the share */
-    NQ_TCHAR* pFileName;             /* filename to open */
+    NQ_WCHAR* pFileName;             /* filename to open */
     CSUid uid;                      /* required UID */
     CSTid tid;                      /* required TID */
     CSPid pid;                      /* required PID */
@@ -3576,9 +3618,11 @@ csNtTransactionCreate(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+    					fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(createRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(createRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -3615,7 +3659,7 @@ csNtTransactionCreate(
     {
         CSFile* pRootDirectory;                     /* file descriptor for root directory */
         CSName* pRootName;                          /* file descriptor for root directory */
-        NQ_STATIC NQ_TCHAR fileName[UD_FS_FILENAMELEN]; /* buffer for composing the filename */
+        NQ_STATIC NQ_WCHAR fileName[UD_FS_FILENAMELEN]; /* buffer for composing the filename */
         NQ_UINT length;                                /* name length */
 
         if ((pRootDirectory = csGetFileByFid(rootFid, tid, uid)) == NULL)
@@ -3656,14 +3700,14 @@ csNtTransactionCreate(
             return csErrorReturn(SMB_STATUS_INVALID_HANDLE, DOS_ERRbadfid);
         }
 
-        cmTStrcpy(fileName, pRootName->name);      /* root name */
-        length = (NQ_UINT)cmTStrlen(fileName);
-        if (cmTChar(SY_PATHSEPARATOR) != fileName[length - 1])
+        syWStrcpy(fileName, pRootName->name);      /* root name */
+        length = (NQ_UINT)syWStrlen(fileName);
+        if (cmWChar(SY_PATHSEPARATOR) != fileName[length - 1])
         {
-            fileName[length] = cmTChar(SY_PATHSEPARATOR);
-            fileName[length + 1] = cmTChar(0);
+            fileName[length] = cmWChar(SY_PATHSEPARATOR);
+            fileName[length + 1] = cmWChar(0);
         }
-        cmTStrcat(fileName, pFileName);                /* add filename */
+        syWStrcat(fileName, pFileName);                /* add filename */
         pFileName = fileName;
     }
 
@@ -3689,7 +3733,7 @@ csNtTransactionCreate(
 		);
 	eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-    if (!csCheckPath(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPath(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 		udEventLog(
@@ -3714,7 +3758,7 @@ csNtTransactionCreate(
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("path does not exist");
-        TRC1P(" path: %s", cmTDump(pFileName));
+        TRC1P(" path: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath);
     }
@@ -3740,7 +3784,7 @@ csNtTransactionCreate(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -3772,7 +3816,7 @@ csNtTransactionCreate(
 			udEventLog(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
-				(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+				(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 				pUser->name,
 				pUser->ip,
 				0,
@@ -3865,7 +3909,7 @@ csNtTransactionCreate(
 			udEventLog(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
-				(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+				(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 				pUser->name,
 				pUser->ip,
 				csErrorReturn(SMB_STATUS_OBJECT_NAME_NOT_FOUND, DOS_ERRbadfile),
@@ -3929,12 +3973,12 @@ csNtTransactionCreate(
                             fileInfo.attributes,
                             (NQ_UINT16)cmLtoh32(cmGetSUint32(createRequest->extFileAttributes))
                             );
-            fileInfo.lastWriteTime = 0;
+            fileInfo.lastWriteTime.high = 0;
+            fileInfo.lastWriteTime.low = 0;
 
             if (csSetFileInformation(pFile, pFileName, &fileInfo))
             {
-                if (pFile != NULL)
-                    csReleaseFile(pFile->fid);      /* also closes the file */
+            	csReleaseFile(pFile->fid);      /* also closes the file */
 
                 TRCERR("unable to change file attributes/time");
                 TRCE();
@@ -3947,8 +3991,7 @@ csNtTransactionCreate(
         			))
             {
                 error = csErrorGetLast();
-                if (pFile != NULL)
-                    csReleaseFile(pFile->fid);      /* also closes the file */
+                csReleaseFile(pFile->fid);      /* also closes the file */
                 TRCERR("Unable to read file information");
                 TRCE();
                 return error;
@@ -4069,7 +4112,7 @@ csTransaction2Open(
     CMCifsStatus error;                 /* for composing DOS-style error */
     CSFile* pFile;                      /* pointer to file descriptor */
     const CSShare* pShare;              /* pointer to the share */
-    NQ_TCHAR* pFileName;                 /* filename to open */
+    NQ_WCHAR* pFileName;                 /* filename to open */
     CSUid uid;                          /* required UID */
     CSTid tid;                          /* required TID */
     CSPid pid;                          /* required PID */
@@ -4148,9 +4191,11 @@ csTransaction2Open(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+    					fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(openRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(openRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -4205,7 +4250,7 @@ csTransaction2Open(
 		);
 	eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-    if (!csCheckPath(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPath(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 	udEventLog(
@@ -4230,7 +4275,7 @@ csTransaction2Open(
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("path does not exist");
-        TRC1P(" path: %s", cmTDump(pFileName));
+        TRC1P(" path: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath);
     }
@@ -4257,7 +4302,7 @@ csTransaction2Open(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -4277,7 +4322,7 @@ csTransaction2Open(
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			csErrorReturn(SMB_STATUS_OBJECT_NAME_NOT_FOUND, DOS_ERRbadfile),
@@ -4333,7 +4378,7 @@ csTransaction2Open(
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			0,
@@ -4371,7 +4416,7 @@ csTransaction2Open(
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			0,
@@ -4463,7 +4508,8 @@ csTransaction2Open(
         return error;
     }
 
-    fileInfo.lastWriteTime = 0;
+    fileInfo.lastWriteTime.high = 0;
+    fileInfo.lastWriteTime.low = 0;
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
     eventInfo.before = TRUE;
 	udEventLog(
@@ -4579,7 +4625,7 @@ csTransaction2CreateDirectory(
     NQ_BOOL unicodeRequired;            /* whether client requires UNICODE */
     CMCifsStatus error;                 /* for composing DOS-style error */
     const CSShare* pShare;              /* pointer to the share */
-    NQ_TCHAR* pFileName;                 /* filename to open */
+    NQ_WCHAR* pFileName;                 /* filename to open */
     CSUid uid;                          /* required UID */
     CSTid tid;                          /* required TID */
     CSUser* pUser;                          /* pointer to the user descriptor */
@@ -4644,9 +4690,11 @@ csTransaction2CreateDirectory(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+    					fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(createRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(createRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -4693,7 +4741,7 @@ csTransaction2CreateDirectory(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -4707,7 +4755,7 @@ csTransaction2CreateDirectory(
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			csErrorReturn(SMB_STATUS_ACCESS_DENIED, DOS_ERRnoaccess),
@@ -4726,14 +4774,14 @@ csTransaction2CreateDirectory(
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("Directory already exists");
-        TRC1P(" name: %s", cmTDump(pFileName));
+        TRC1P(" name: %s", cmWDump(pFileName));
         return csErrorReturn(SMB_STATUS_ACCESS_DENIED, DOS_ERRnoaccess);
     }
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -4810,7 +4858,7 @@ csTransaction2CreateDirectory(
 
 static NQ_UINT32
 openFile(
-    const NQ_TCHAR* pFileName,
+    const NQ_WCHAR* pFileName,
     CSTid tid,
     NQ_UINT16 desiredAccess,
     NQ_UINT16* grantedAccess,
@@ -4834,7 +4882,7 @@ openFile(
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     TRCB();
-    TRC2P("Opening file: %s with mode: %04x", cmTDump(pFileName), desiredAccess);
+    TRC2P("Opening file: %s with mode: %04x", cmWDump(pFileName), desiredAccess);
 
     /* find tree */
 
@@ -4864,7 +4912,7 @@ openFile(
     if (csFileMarkedForDeletion(pFileName))
     {
         TRCERR("File is marked for deletion");
-        TRC1P(" file name: %s", cmTDump(pFileName));
+        TRC1P(" file name: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_DELETE_PENDING, DOS_ERRbadaccess);
     }
@@ -4879,7 +4927,7 @@ openFile(
 														))
     {
         TRCERR("Delete access cannot be granted on the file");
-        TRC1P(" file: %s", cmTDump(pFileName));
+        TRC1P(" file: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_ACCESS_DENIED, DOS_ERRnoaccess);
     }
@@ -4913,7 +4961,7 @@ openFile(
     if ((tempGrantedAccess = isAccessAllowed(pName, &desiredAccess, pTree->uid, readOnly)) > 0xFFFF)
     {
         TRCERR("Access is not allowed");
-        TRC3P(" file: %s, desired: %04x, old: %04x", cmTDump(pFileName), desiredAccess, (pName->first ? pName->first->access : 0));
+        TRC3P(" file: %s, desired: %04x, old: %04x", cmWDump(pFileName), desiredAccess, (pName->first ? pName->first->access : 0));
         TRCE();
         return tempGrantedAccess;
     }
@@ -5003,7 +5051,7 @@ openFile(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_OPEN,
-			(NQ_TCHAR *)pUser->name,
+			(NQ_WCHAR *)pUser->name,
 			pUser->ip,
 			0,
 			(const NQ_BYTE*)&eventInfo
@@ -5012,12 +5060,14 @@ openFile(
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         switch (desiredAccess & SMB_ACCESS_A)
         {
-#ifdef SY_FS_SEPARATEINFOMODE
 		case SMB_ACCESS_A_NONE:
 			TRC("SMB_ACCESS_A_NONE");
+#ifdef SY_FS_SEPARATEINFOMODE
 			(*pFile)->file = syOpenFileForInfo(pFileName, denyRead, denyWrite, denyExecute);
+#else
+			(*pFile)->file = syOpenFileForRead(pFileName, denyRead, denyWrite, denyExecute);
+#endif /* SY_FS_SEPARATEINFOMODE */
 			break;
-#endif /* SY_FS_SEPARATEINFOMODE */   
 		case SMB_ACCESS_A_READ:
 			TRC("SMB_ACCESS_A_READ");
             (*pFile)->file = syOpenFileForRead(pFileName, denyRead, denyWrite, denyExecute);
@@ -5041,7 +5091,7 @@ openFile(
                 UD_LOG_MODULE_CS,
                 UD_LOG_CLASS_FILE,
                 UD_LOG_FILE_OPEN,
-                (NQ_TCHAR *)pUser->name,
+                (NQ_WCHAR *)pUser->name,
                 pUser->ip,
                 csErrorReturn(SMB_STATUS_ACCESS_VIOLATION, DOS_ERRbadaccess),
                 (const NQ_BYTE*)&eventInfo
@@ -5062,7 +5112,7 @@ openFile(
                 UD_LOG_MODULE_CS,
                 UD_LOG_CLASS_FILE,
                 UD_LOG_FILE_OPEN,
-                (NQ_TCHAR *)pUser->name,
+                (NQ_WCHAR *)pUser->name,
                 pUser->ip,
                 error,
                 (const NQ_BYTE*)&eventInfo
@@ -5078,7 +5128,7 @@ openFile(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_OPEN,
-			(NQ_TCHAR *)pUser->name,
+			(NQ_WCHAR *)pUser->name,
 			pUser->ip,
 			0,
 			(const NQ_BYTE*)&eventInfo
@@ -5136,7 +5186,7 @@ openFile(
 static NQ_UINT32
 createFile(
     NQ_BOOL directoryRequired,
-    const NQ_TCHAR* pFileName,
+    const NQ_WCHAR* pFileName,
     CSTid tid,
     NQ_UINT16 desiredAccess,
     CSFile** pFile
@@ -5155,7 +5205,7 @@ createFile(
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     TRCB();
-    TRC2P("Creating file: %s with mode: %04x", cmTDump(pFileName), desiredAccess);
+    TRC2P("Creating file: %s with mode: %04x", cmWDump(pFileName), desiredAccess);
 
     if ((desiredAccess & SMB_ACCESS_A) == SMB_ACCESS_A_NONE)
     {
@@ -5200,14 +5250,14 @@ createFile(
             UD_LOG_MODULE_CS,
             UD_LOG_CLASS_FILE,
             UD_LOG_FILE_CREATE,
-            (NQ_TCHAR *)pUser->name,
+            (NQ_WCHAR *)pUser->name,
             pUser->ip,
             csErrorReturn(SMB_STATUS_OBJECT_NAME_COLLISION, DOS_ERRfileexists),
             (const NQ_BYTE*)&eventInfo
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("File already exists");
-        TRC1P(" file: %s", cmTDump(pFileName));
+        TRC1P(" file: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_OBJECT_NAME_COLLISION, DOS_ERRfileexists);
     }
@@ -5218,7 +5268,7 @@ createFile(
             UD_LOG_MODULE_CS,
             UD_LOG_CLASS_FILE,
             UD_LOG_FILE_CREATE,
-            (NQ_TCHAR *)pUser->name,
+            (NQ_WCHAR *)pUser->name,
             pUser->ip,
             csErrorReturn(SMB_STATUS_TOO_MANY_OPENED_FILES, DOS_ERRnofids),
             (const NQ_BYTE*)&eventInfo
@@ -5245,7 +5295,7 @@ createFile(
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			(pUser->preservesCase || (pTree->share != NULL && cmTStrcmp( pTree->share->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			(pUser->preservesCase || (pTree->share != NULL && syWStrcmp( pTree->share->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			0,
@@ -5253,13 +5303,13 @@ createFile(
 			);
 		eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-        if (csCheckFile(pTree->share, (NQ_TCHAR*)pFileName, pUser->preservesCase))
+        if (csCheckFile(pTree->share, (NQ_WCHAR*)pFileName, pUser->preservesCase))
         {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 			udEventLog(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
-				(pUser->preservesCase || (pTree->share != NULL && cmTStrcmp( pTree->share->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+				(pUser->preservesCase || (pTree->share != NULL && syWStrcmp( pTree->share->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 				pUser->name,
 				pUser->ip,
 				csErrorReturn(SMB_STATUS_ACCESS_DENIED, DOS_ERRnoaccess),
@@ -5271,14 +5321,14 @@ createFile(
                 UD_LOG_MODULE_CS,
                 UD_LOG_CLASS_FILE,
                 UD_LOG_FILE_CREATE,
-                (NQ_TCHAR *)pUser->name,
+                (NQ_WCHAR *)pUser->name,
                 pUser->ip,
                 csErrorReturn(SMB_STATUS_ACCESS_DENIED, DOS_ERRnoaccess),
                 (const NQ_BYTE*)&eventInfo
             );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
             TRCERR("Directory already exists");
-            TRC1P(" name: %s", cmTDump(pFileName));
+            TRC1P(" name: %s", cmWDump(pFileName));
 			TRCE();
             return csErrorReturn(SMB_STATUS_ACCESS_DENIED, DOS_ERRnoaccess);
         }
@@ -5286,7 +5336,7 @@ createFile(
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			(pUser->preservesCase || (pTree->share != NULL && cmTStrcmp( pTree->share->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			(pUser->preservesCase || (pTree->share != NULL && syWStrcmp( pTree->share->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			0,
@@ -5299,7 +5349,7 @@ createFile(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_CREATE,
-			(NQ_TCHAR *)pUser->name,
+			(NQ_WCHAR *)pUser->name,
 			pUser->ip,
 			0,
 			(const NQ_BYTE*)&eventInfo
@@ -5314,7 +5364,7 @@ createFile(
                 UD_LOG_MODULE_CS,
                 UD_LOG_CLASS_FILE,
                 UD_LOG_FILE_CREATE,
-                (NQ_TCHAR *)pUser->name,
+                (NQ_WCHAR *)pUser->name,
                 pUser->ip,
                 error,
                 (const NQ_BYTE*)&eventInfo
@@ -5330,7 +5380,7 @@ createFile(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_CREATE,
-			(NQ_TCHAR *)pUser->name,
+			(NQ_WCHAR *)pUser->name,
 			pUser->ip,
 			0,
 			(const NQ_BYTE*)&eventInfo
@@ -5344,14 +5394,14 @@ createFile(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_OPEN,
-			(NQ_TCHAR *)pUser->name,
+			(NQ_WCHAR *)pUser->name,
 			pUser->ip,
 			0,
 			(const NQ_BYTE*)&eventInfo
 		);
 		eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-        (*pFile)->directory = syOpenDirectory((NQ_TCHAR*)pFileName);
+        (*pFile)->directory = syOpenDirectory((NQ_WCHAR*)pFileName);
         if (!syIsValidDirectory((*pFile)->directory))
         {
             error = csErrorGetLast();
@@ -5360,7 +5410,7 @@ createFile(
                 UD_LOG_MODULE_CS,
                 UD_LOG_CLASS_FILE,
                 UD_LOG_FILE_OPEN,
-                (NQ_TCHAR *)pUser->name,
+                (NQ_WCHAR *)pUser->name,
                 pUser->ip,
                 error,
                 (const NQ_BYTE*)&eventInfo
@@ -5376,7 +5426,7 @@ createFile(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_OPEN,
-			(NQ_TCHAR *)pUser->name,
+			(NQ_WCHAR *)pUser->name,
 			pUser->ip,
 			0,
 			(const NQ_BYTE*)&eventInfo
@@ -5403,7 +5453,7 @@ createFile(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_CREATE,
-			(NQ_TCHAR *)pUser->name,
+			(NQ_WCHAR *)pUser->name,
 			pUser->ip,
 			0,
 			(const NQ_BYTE*)&eventInfo
@@ -5419,7 +5469,7 @@ createFile(
                 UD_LOG_MODULE_CS,
                 UD_LOG_CLASS_FILE,
                 UD_LOG_FILE_CREATE,
-                (NQ_TCHAR *)pUser->name,
+                (NQ_WCHAR *)pUser->name,
                 pUser->ip,
                 error,
                 (const NQ_BYTE*)&eventInfo
@@ -5435,14 +5485,129 @@ createFile(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_CREATE,
-			(NQ_TCHAR *)pUser->name,
+			(NQ_WCHAR *)pUser->name,
 			pUser->ip,
 			0,
 			(const NQ_BYTE*)&eventInfo
 		);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
+		{
+			/* close and reopen file with desired access mode */
+#ifdef UD_NQ_INCLUDEEVENTLOG
+			eventInfo.before = TRUE;
+			udEventLog(
+				UD_LOG_MODULE_CS,
+				UD_LOG_CLASS_FILE,
+				UD_LOG_FILE_CLOSE,
+				(NQ_WCHAR *)pUser->name,
+				pUser->ip,
+				0,
+				(const NQ_BYTE*)&eventInfo
+			);
+			eventInfo.before = FALSE;
+#endif /* UD_NQ_INCLUDEEVENTLOG */
+			syCloseFile((*pFile)->file);
+#ifdef UD_NQ_INCLUDEEVENTLOG
+			udEventLog(
+				UD_LOG_MODULE_CS,
+				UD_LOG_CLASS_FILE,
+				UD_LOG_FILE_CLOSE,
+				(NQ_WCHAR *)pUser->name,
+				pUser->ip,
+				(NQ_UINT32)syGetLastError(),
+				(const NQ_BYTE*)&eventInfo
+			);
+#endif /* UD_NQ_INCLUDEEVENTLOG */
 
-        TRC1P("File handle: %d", (*pFile)->file);
+#ifdef UD_NQ_INCLUDEEVENTLOG
+			eventInfo.before = TRUE;
+			udEventLog(
+				UD_LOG_MODULE_CS,
+				UD_LOG_CLASS_FILE,
+				UD_LOG_FILE_OPEN,
+				(NQ_WCHAR *)pUser->name,
+				pUser->ip,
+				0,
+				(const NQ_BYTE*)&eventInfo
+				);
+			eventInfo.before = FALSE;
+#endif /* UD_NQ_INCLUDEEVENTLOG */
+			switch (desiredAccess & SMB_ACCESS_A)
+			{
+			case SMB_ACCESS_A_NONE:
+#ifdef SY_FS_SEPARATEINFOMODE
+				(*pFile)->file = syOpenFileForInfo(pFileName, denyRead, denyWrite, denyExecute);
+#else
+				(*pFile)->file = syOpenFileForRead(pFileName, denyRead, denyWrite, denyExecute);
+#endif /* SY_FS_SEPARATEINFOMODE */
+				break;
+			case SMB_ACCESS_A_READ:
+				TRC("SMB_ACCESS_A_READ");
+				(*pFile)->file = syOpenFileForRead(pFileName, denyRead, denyWrite, denyExecute);
+				break;
+			case SMB_ACCESS_A_WRITE:
+				TRC("SMB_ACCESS_A_WRITE");
+				(*pFile)->file = syOpenFileForWrite(pFileName, denyRead, denyWrite, denyExecute);
+				break;
+			case SMB_ACCESS_A_FCB:
+			case SMB_ACCESS_A_READWRITE:
+				TRC("SMB_ACCESS_A_READWRITE");
+				(*pFile)->file = syOpenFileForReadWrite(pFileName, denyRead, denyWrite, denyExecute);
+				break;
+			case SMB_ACCESS_A_EXECUTE:
+				TRC("SMB_ACCESS_A_EXECUTE");
+				(*pFile)->file = syOpenFileForRead(pFileName, denyRead, denyWrite, denyExecute);
+				break;
+			default:
+#ifdef UD_NQ_INCLUDEEVENTLOG
+				udEventLog(
+					UD_LOG_MODULE_CS,
+					UD_LOG_CLASS_FILE,
+					UD_LOG_FILE_OPEN,
+					(NQ_WCHAR *)pUser->name,
+					pUser->ip,
+					csErrorReturn(SMB_STATUS_ACCESS_VIOLATION, DOS_ERRbadaccess),
+					(const NQ_BYTE*)&eventInfo
+				);
+#endif /* UD_NQ_INCLUDEEVENTLOG */
+				TRCERR("Illegal open mode: %08x", desiredAccess);
+				csReleaseFile((*pFile)->fid);
+				TRCE();
+				return csErrorReturn(SMB_STATUS_ACCESS_VIOLATION, DOS_ERRbadaccess);
+			}
+
+			if (!syIsValidFile((*pFile)->file))
+			{
+	            error = csErrorGetLast();
+#ifdef UD_NQ_INCLUDEEVENTLOG
+	            udEventLog(
+	                UD_LOG_MODULE_CS,
+	                UD_LOG_CLASS_FILE,
+	                UD_LOG_FILE_OPEN,
+	                (NQ_WCHAR *)pUser->name,
+	                pUser->ip,
+	                error,
+	                (const NQ_BYTE*)&eventInfo
+	            );
+#endif /* UD_NQ_INCLUDEEVENTLOG */
+	            csReleaseFile((*pFile)->fid);
+	            TRCERR("Unable to open file");
+				TRCE();
+	            return error;
+			}
+#ifdef UD_NQ_INCLUDEEVENTLOG
+			udEventLog(
+				UD_LOG_MODULE_CS,
+				UD_LOG_CLASS_FILE,
+				UD_LOG_FILE_OPEN,
+				(NQ_WCHAR *)pUser->name,
+				pUser->ip,
+				0,
+				(const NQ_BYTE*)&eventInfo
+			);
+#endif /* UD_NQ_INCLUDEEVENTLOG */
+		}
+        TRC("File handle: %d", (*pFile)->file);
 
         csNotifyImmediatelly(pFileName, SMB_NOTIFYCHANGE_ADDED, SMB_NOTIFYCHANGE_FILENAME);
 
@@ -5453,7 +5618,7 @@ createFile(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_ATTRIBGET,
-			(NQ_TCHAR *)pUser->name,
+			(NQ_WCHAR *)pUser->name,
 			pUser->ip,
 			0,
 			(const NQ_BYTE*)&eventInfo
@@ -5468,7 +5633,7 @@ createFile(
                 UD_LOG_MODULE_CS,
                 UD_LOG_CLASS_FILE,
                 UD_LOG_FILE_ATTRIBGET,
-                (NQ_TCHAR *)pUser->name,
+                (NQ_WCHAR *)pUser->name,
                 pUser->ip,
                 error,
                 (const NQ_BYTE*)&eventInfo
@@ -5484,7 +5649,7 @@ createFile(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_ATTRIBGET,
-			(NQ_TCHAR *)pUser->name,
+			(NQ_WCHAR *)pUser->name,
 			pUser->ip,
 			0,
 			(const NQ_BYTE*)&eventInfo
@@ -5503,7 +5668,7 @@ createFile(
                 UD_LOG_MODULE_CS,
                 UD_LOG_CLASS_FILE,
                 UD_LOG_FILE_CREATE,
-                (NQ_TCHAR *)pUser->name,
+                (NQ_WCHAR *)pUser->name,
                 pUser->ip,
                 error,
                 (const NQ_BYTE*)&eventInfo
@@ -5542,7 +5707,6 @@ convertNtAccessToDesiredAccess(
     NQ_UINT16 desiredAccess = SMB_ACCESS_A_READ;
 
     TRCB();
-
     TRC("--------->NT access: 0x%x, share: 0x%x", ntAccess, ntShare); 
 
     /* concern the requested access mode */
@@ -5607,6 +5771,10 @@ convertNtAccessToDesiredAccess(
     if (ntAccess & SMB_DESIREDACCESS_DELETE)
     {
         desiredAccess |= SMB_ACCESS_A_DELETE;
+#ifdef SY_FS_SEPARATEINFOMODE
+        if ((desiredAccess & SMB_ACCESS_A) == 0)
+        	desiredAccess |= SMB_ACCESS_A_NONE;
+#endif /* SY_FS_SEPARATEINFOMODE */
     }
 
     /* allow delete sharing when there is no data access */
@@ -5674,7 +5842,7 @@ isAccessAllowed(
     )
 {
     NQ_BOOL isExe;              /* TRUE when this file has a known executable extension */
-    NQ_TCHAR* pExtension;        /* file extension pointer */
+    NQ_WCHAR* pExtension;        /* file extension pointer */
     NQ_UINT16 denyOld;          /* old share mode */
     NQ_UINT16 denyNew;          /* new share mode */
     NQ_UINT16 openOld;          /* old open mode */
@@ -5702,14 +5870,14 @@ isAccessAllowed(
         return GRANT_READ;
     }
 
-    pExtension = cmTStrrchr(pName->name, cmTChar('.'));
+    pExtension = syWStrrchr(pName->name, cmWChar('.'));
 
-    if (pExtension != NULL && (NQ_UINT)cmTStrlen(pExtension) == 4)
+    if (pExtension != NULL && (NQ_UINT)syWStrlen(pExtension) == 4)
     {
         NQ_CHAR extension[10];
         NQ_UINT i;
 
-        cmTcharToAnsi(extension, pExtension);
+        syUnicodeToAnsi(extension, pExtension);
 
         for (i = 0; i < 4; i++)
         {
@@ -5768,8 +5936,8 @@ isAccessAllowed(
     denyOld = pName->first->access & SMB_ACCESS_S;
     openOld = pName->first->access & SMB_ACCESS_A;
 
-    denyOld = denyOld >> 4;
-    denyNew = denyNew >> 4;
+    denyOld = (NQ_UINT16)(denyOld >> 4);
+    denyNew = (NQ_UINT16)(denyNew >> 4);
     openOld = accessCodeTable[openOld];
     denyOld = denyCodeTable[denyOld];
     openNew = accessCodeTable[openNew];
@@ -5823,7 +5991,7 @@ isAccessAllowed(
 static 
 NQ_UINT32
 createPrintFile(
-    const NQ_TCHAR* pFileName,
+    const NQ_WCHAR* pFileName,
     const CSShare* pShare,
     CSTid tid,
     NQ_UINT16 desiredAccess,
@@ -5850,7 +6018,7 @@ createPrintFile(
     	UD_LOG_MODULE_CS,
     	UD_LOG_CLASS_FILE,
     	UD_LOG_FILE_CREATE,
-    	(NQ_TCHAR *)pUser->name,
+    	(NQ_WCHAR *)pUser->name,
       	pUser->ip,
       	0,
      	(const NQ_BYTE*)&eventInfo
@@ -5878,7 +6046,7 @@ createPrintFile(
     			UD_LOG_MODULE_CS,
     			UD_LOG_CLASS_FILE,
     			UD_LOG_FILE_CREATE,
-    			(NQ_TCHAR *)pUser->name,
+    			(NQ_WCHAR *)pUser->name,
     			pUser->ip,
     			csErrorReturn(SMB_STATUS_TOO_MANY_OPENED_FILES, DOS_ERRnofids),
     			(const NQ_BYTE*)&eventInfo
@@ -5896,7 +6064,7 @@ createPrintFile(
     			UD_LOG_MODULE_CS,
     			UD_LOG_CLASS_FILE,
     			UD_LOG_FILE_CREATE,
-    			(NQ_TCHAR *)pUser->name,
+    			(NQ_WCHAR *)pUser->name,
     			pUser->ip,
     			csErrorReturn(SMB_STATUS_TOO_MANY_OPENED_FILES, DOS_ERRnofids),
     			(const NQ_BYTE*)&eventInfo
@@ -5916,7 +6084,7 @@ createPrintFile(
     			UD_LOG_MODULE_CS,
     			UD_LOG_CLASS_FILE,
     			UD_LOG_FILE_CREATE,
-    			(NQ_TCHAR *)pUser->name,
+    			(NQ_WCHAR *)pUser->name,
     			pUser->ip,
     			csErrorReturn(SMB_STATUS_OBJECT_NAME_NOT_FOUND, DOS_ERRbadfile),
     			(const NQ_BYTE*)&eventInfo
@@ -5930,7 +6098,8 @@ createPrintFile(
     (*pFile)->printerHandle = prHandle;
 
     cmSdGetDefaultSecurityDescriptorByToken(&pUser->token, &sd);
-    if (((*pFile)->file = (SYFile)syStartPrintJob(prHandle, pFileName, pFileName, NULL, (const NQ_BYTE *)&sd.data, (NQ_COUNT)sd.length, pUser)) == -1)
+    (*pFile)->file = (SYFile)syStartPrintJob(prHandle, pFileName, pFileName, NULL, (const NQ_BYTE *)&sd.data, (NQ_COUNT)sd.length, pUser);
+    if ((NQ_INT)(*pFile)->file == -1)
     {
         csReleaseFile((*pFile)->fid);
         TRCERR("Failed to start print job");
@@ -5942,7 +6111,7 @@ createPrintFile(
     	UD_LOG_MODULE_CS,
     	UD_LOG_CLASS_FILE,
     	UD_LOG_FILE_CREATE,
-    	(NQ_TCHAR *)pUser->name,
+    	(NQ_WCHAR *)pUser->name,
       	pUser->ip,
       	0,
      	(const NQ_BYTE*)&eventInfo
@@ -5985,7 +6154,7 @@ csComOpenPrintFile(
     const CSShare* pShare;                       /* pointer to the share */
     CSUser* pUser;                               /* pointer to the user descriptor */
     CSFile* pFile;                               /* pointer to file descriptor */
-    NQ_STATIC NQ_TCHAR printFileName[CM_BUFFERLENGTH(NQ_TCHAR, 21)];/* print filename */
+    NQ_STATIC NQ_WCHAR printFileName[CM_BUFFERLENGTH(NQ_WCHAR, 21)];/* print filename */
     NQ_STATIC NQ_CHAR noName[] = "[Name Not Available]";
 
     TRCB();
@@ -6038,7 +6207,7 @@ csComOpenPrintFile(
         return csErrorReturn(SMB_STATUS_INVALID_PARAMETER, SRV_ERRinvtid);
     }
 
-    cmAnsiToTchar(printFileName, noName);
+    syAnsiToUnicode(printFileName, noName);
     if (createPrintFile(printFileName, pShare, tid, SMB_ACCESS_A_READWRITE, &pFile, pUser) != NQ_SUCCESS)
     {
         TRCERR("Failed to create a printer file");

@@ -106,7 +106,7 @@ cp858UnicodeToAnsi(
             case 0x20:
                 switch (wLsb)
                 {
-                case 0xac: *pA = (NQ_CHAR)0xd5;
+                case 0xac: *pA = (NQ_CHAR)0xd5; break;
                 case 0x17: *pA = (NQ_CHAR)0xf2;
                 }
                 break;
@@ -121,12 +121,16 @@ cp858UnicodeToAnsi(
     else
     {
         if (!aStr)
-            return 0;
+        {
+            length = 0;
+            goto Exit;
+        }
     }
     /* not enough space in provided buff */
     if (ignoreOutLength || (length < outLength))
         *pA = '\0';
 
+Exit:
     return length;
 }
 /*

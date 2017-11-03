@@ -24,6 +24,15 @@
 
 /* -- Structures -- */
 
+#ifdef UD_CC_INCLUDEDFS
+/* when dfs active, each mount can reference additional shares that should be unlocked on mount disconnect */
+typedef struct _CCShareLink
+{
+	CMItem item;
+	CCShare *pShare;
+}CCShareLink;
+#endif
+
 /* Description
    This structure describes a mount point.
    
@@ -37,10 +46,15 @@
 typedef struct _ccmount
 {
 	CMItem item;		                /* List item. */
-	NQ_WCHAR * path;	                /* Network path to remote share. */ 
+	NQ_WCHAR * path;	                /* Network path to remote share. */
+    NQ_WCHAR * pathPrefix;              /* Home directory remote path, when mounting path of form <server><share><sub folder> */
 	CCServer * server;	                /* Server pointer or NULL if not connected yet. */
 	CCShare * share;	                /* Tree connect pointer or NULL if not connected yet. */
     const AMCredentialsW * credentials; /* Pointer to credentials used for share connect */
+#ifdef UD_CC_INCLUDEDFS
+    CMList shareLinks;					/* Per each mount, shares that are mounted as part of DFS
+     	 	 	 	 	 	 	 	 	 * are kept in this list so they can be unlocked on remove mount. */
+#endif
 } CCMount; /* Mount point. */
 
 /* -- API Functions */
@@ -85,6 +99,19 @@ CCMount * ccMountFind(const NQ_WCHAR * path);
    Returns
    None.                                       */
 void ccMountIterateMounts(CMIterator * iterator);
+
+/*  Description
+    This function adds share to a mount's list of shares.
+
+    Per each mount, shares that are mounted as part of DFS
+    are kept in a list so they can be unlocked on remove mount.
+
+    Parameters
+    pMount : mount pointer
+    pShare : share pointer
+    Returns
+    None.                                       */
+void ccMountAddShareLink(CCMount *pMount, CCShare *pShare);
 
 #if SY_DEBUGMODE
 

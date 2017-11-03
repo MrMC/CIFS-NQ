@@ -61,7 +61,7 @@ typedef struct
 CallbackParams;
 
 /* pipe descriptor for standard LSA operations */
-static const NQ_WCHAR pipeName[] = { cmWChar('l'), cmWChar('s'), cmWChar('a'), cmWChar('r'), cmWChar('p'), cmWChar('c'), cmWChar(0) };
+static const NQ_WCHAR pipeName[] = { cmWChar('l'), cmWChar('s'), cmWChar('a'), cmWChar('r'), cmWChar('p'), cmWChar('c'), cmWChar('\0') };
 static const CCDcerpcPipeDescriptor pipeDescriptor =
 { pipeName,
   {cmPack32(0x12345778), cmPack16(0x1234), cmPack16(0xabcd), {0xef, 0x00},{0x01,0x23,0x45,0x67,0x89,0xab}},
@@ -69,7 +69,7 @@ static const CCDcerpcPipeDescriptor pipeDescriptor =
 };
 
 /* pipe descriptor for DSSETUP LSA operations */
-static const NQ_WCHAR pipeNameDs[] = { cmWChar('l'), cmWChar('s'), cmWChar('a'), cmWChar('r'), cmWChar('p'), cmWChar('c'), cmWChar(0) };
+static const NQ_WCHAR pipeNameDs[] = { cmWChar('l'), cmWChar('s'), cmWChar('a'), cmWChar('r'), cmWChar('p'), cmWChar('c'), cmWChar('\0') };
 static const CCDcerpcPipeDescriptor pipeDescriptorDs =
 { pipeNameDs,
   {cmPack32(0x3919286a), cmPack16(0xb10c), cmPack16(0x11d0), {0x9b, 0xa8},{0x00,0xc0,0x4f,0xd9,0x2e,0xf5}},
@@ -203,10 +203,11 @@ NQ_STATUS ccLsaLookupSids(
     NQ_BYTE * callParams
     )
 {
-    CallbackParams params;  /* parameters for OpenPolciy2/Close */
-    NQ_BOOL res;           /* operation result */
+    CallbackParams params;      /* parameters for OpenPolciy2/Close */
+    NQ_BOOL res;                /* operation result */
+    NQ_STATUS result = NQ_FAIL; /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "handle:%p request:%p domain:%p names:%p num:%d params:%p", pipeHandle, request, domainsPacker, namesPacker, numSids, callParams);
 
     /* pass parameters */
     params.host = ((CCFile *)pipeHandle)->share->user->server->item.name;
@@ -222,8 +223,7 @@ NQ_STATUS ccLsaLookupSids(
     if (!res)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing OpenPolicy2");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
 
     /* lookup sids */
@@ -231,8 +231,7 @@ NQ_STATUS ccLsaLookupSids(
     if (!res)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing LookupSids2");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
 
     /* close policy handle - policy params are already inside the param structure */
@@ -240,12 +239,13 @@ NQ_STATUS ccLsaLookupSids(
     if (!res)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing Close");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
+	result = NQ_SUCCESS;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -270,10 +270,11 @@ NQ_STATUS ccLsaGetUserToken(
     CMSdAccessToken * token
     )
 {
-    CallbackParams params;  /* parameters for OpenPolicy2/Close */
-    NQ_BOOL res;           /* operation result */
+    CallbackParams params;      /* parameters for OpenPolicy2/Close */
+    NQ_BOOL res;                /* operation result */
+    NQ_STATUS result = NQ_FAIL; /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "handle:%p name:%s domain:%s token:%p", pipeHandle, cmWDump(name), cmWDump(domain), token);
 
     /* pass parameters */
     params.user = name;
@@ -288,8 +289,7 @@ NQ_STATUS ccLsaGetUserToken(
     if (!res)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing OpenPolicy2");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
 
     /* lookup names */
@@ -297,8 +297,7 @@ NQ_STATUS ccLsaGetUserToken(
     if (!res)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing LookupNames2");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
 
     /* close policy handle - policy params are already inside the param structure */
@@ -306,12 +305,14 @@ NQ_STATUS ccLsaGetUserToken(
     if (!res)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing Close");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_FAIL;
+        goto Exit;
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return params.success? NQ_SUCCESS : NQ_FAIL;
+    result = (params.success ? NQ_SUCCESS : NQ_FAIL);
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 static NQ_COUNT policyQueryInfoRequestCallback (
@@ -324,7 +325,7 @@ static NQ_COUNT policyQueryInfoRequestCallback (
     CMRpcPacketDescriptor d;
     CallbackParams* cp = (CallbackParams *)params;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     cmRpcSetDescriptor(&d, buffer, FALSE);
     cmRpcPackUint16(&d, 7);                 /* query info opcode */
@@ -337,7 +338,7 @@ static NQ_COUNT policyQueryInfoRequestCallback (
 
     *moreData = FALSE;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", (d.current - d.origin) + 2);
     return (NQ_COUNT)((d.current - d.origin) + 2);
 }
 
@@ -353,7 +354,7 @@ static NQ_STATUS policyQueryInfoResponseCallback (
     CMRpcUnicodeString s;
     NQ_UINT32 ptr;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     cmRpcSetDescriptor(&d, (NQ_BYTE*)data, FALSE);
 
@@ -372,7 +373,8 @@ static NQ_STATUS policyQueryInfoResponseCallback (
         cmRpcParseSkip(&d, 4);     /* ref ID */
         /* read domain name */    
         cmRpcParseUnicode(&d, &s, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
-        cmUnicodeToTcharN(cp->info->name, s.text, sizeof(cp->info->name));
+        cmWStrncpy(cp->info->name, s.text, s.length);
+        cp->info->name[s.length] = cmWChar(0);
         /* read domain SID */
         cmRpcParseSkip(&d, 4);   /* count */
         cmSdParseSid(&d, &cp->info->sid);
@@ -381,7 +383,7 @@ static NQ_STATUS policyQueryInfoResponseCallback (
     /* RPC status */
     cmRpcParseUint32(&d, &cp->status);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", cp->status);
     return (NQ_STATUS)cp->status;
 }
 
@@ -394,7 +396,7 @@ static NQ_COUNT dsRoleGetPrimaryDomainInformationRequestCallback (
 {
     CMRpcPacketDescriptor d;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     cmRpcSetDescriptor(&d, buffer, FALSE);
     cmRpcPackUint16(&d, 0);                 /* opcode */
@@ -402,7 +404,7 @@ static NQ_COUNT dsRoleGetPrimaryDomainInformationRequestCallback (
 
     *moreData = FALSE;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", (d.current - d.origin));
     return (NQ_COUNT)((d.current - d.origin));
 }
 
@@ -417,7 +419,7 @@ static NQ_STATUS dsRoleGetPrimaryDomainInformationResponseCallback(
     CallbackParams *cp = (CallbackParams*)params;
     NQ_UINT32 refId;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s" , data, size, params, moreData ? "TRUE" : "FALSE");
 
     cmRpcSetDescriptor(&d, (NQ_BYTE*)data, FALSE);
 
@@ -436,14 +438,14 @@ static NQ_STATUS dsRoleGetPrimaryDomainInformationResponseCallback(
         	cmRpcParseSkip(&d, 2 * 4); /* skip rest strings refId */
         	cmRpcParseSkip(&d, 16);    /* skip guid */
         	cmRpcParseSkip(&d, 3 * 4); /* skip length + offset + size */
-            cmUnicodeToTchar(cp->info->name, (NQ_WCHAR *)d.current);
+            cmWStrcpy(cp->info->name, (NQ_WCHAR *)d.current);
         }
         cp->status = NQ_SUCCESS;
     }
     else
     	cmRpcParseUint32(&d, &cp->status);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", cp->status);
     return (NQ_STATUS)cp->status;
 }
 
@@ -455,7 +457,7 @@ NQ_UINT32 ccLsaDsRoleGetPrimaryDomainInformation(
     NQ_UINT32 status;
     NQ_HANDLE lsads;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "server:%s info:%p", cmWDump(server), info);
 
     /* connect to LSA DSSETUP */
     if ((lsads = ccDcerpcConnect(server, ccUserGetAdministratorCredentials(), ccLsaDsGetPipe(), TRUE)) != NULL)
@@ -479,7 +481,7 @@ NQ_UINT32 ccLsaDsRoleGetPrimaryDomainInformation(
     else
         status = (NQ_UINT32)NQ_ERR_NOACCESS;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", status);
     return status;
 }
 
@@ -492,7 +494,7 @@ NQ_UINT32 ccLsaPolicyQueryInfoDomain(
     NQ_UINT32 status;
     NQ_HANDLE lsa;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "server:%s info:%p", cmWDump(server), info);
 
     /* connect to LSA */
     if ((lsa = ccDcerpcConnect(server, ccUserGetAdministratorCredentials(), ccLsaGetPipe(), TRUE)) != NULL)
@@ -523,7 +525,7 @@ NQ_UINT32 ccLsaPolicyQueryInfoDomain(
     else
         status = (NQ_UINT32)NQ_ERR_NOACCESS;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", status);
     return status;
 }
 
@@ -553,7 +555,7 @@ static NQ_COUNT openPolicyRequestCallback (
     NQ_UINT32 refId;                    /* running referent ID */
     CallbackParams* callParams;         /* casted parameters for callback */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     refId = 1;
     callParams = (CallbackParams*)params;
@@ -578,7 +580,7 @@ static NQ_COUNT openPolicyRequestCallback (
     cmRpcPackUint32(&desc, callParams->access);     /* access mask */
     *moreData = FALSE;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", (desc.current - desc.origin) + 2);
     return (NQ_COUNT)((desc.current - desc.origin) + 2);
 }
 
@@ -607,14 +609,14 @@ static NQ_STATUS openPolicyResponseCallback (
     CMRpcPacketDescriptor desc;         /* descriptor for SRVSVC request */
     CallbackParams* callParams;         /* casted parameters for callback */
     NQ_UINT32 value;                    /* parsed long value */
+    NQ_STATUS result = NQ_FAIL;         /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     if (size < (sizeof(CMRpcUuid) + 4 + 4))
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "response too short, size: %d", size);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return (NQ_STATUS)NQ_FAIL;
+        goto Exit;
     }
     callParams = (CallbackParams*)params;
     cmRpcSetDescriptor(&desc, (NQ_BYTE*)data, FALSE);
@@ -624,11 +626,13 @@ static NQ_STATUS openPolicyResponseCallback (
     if (0 != value)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "unexpected status in response, status: %ld", value);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return (NQ_STATUS)NQ_FAIL;
+        goto Exit;
     }
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return NQ_SUCCESS;
+    result = NQ_SUCCESS;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*====================================================================
@@ -656,6 +660,8 @@ static NQ_COUNT closeRequestCallback (
     CMRpcPacketDescriptor desc;         /* descriptor for SRVSVC request */
     CallbackParams* callParams;         /* casted parameters for callback */
 
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
+
     callParams = (CallbackParams*)params;
     cmRpcSetDescriptor(&desc, buffer, FALSE);
     cmRpcPackUint16(&desc, CLOSE_OPNUM);
@@ -664,6 +670,7 @@ static NQ_COUNT closeRequestCallback (
     cmRpcPackUuid(&desc, &callParams->uuid);     /* policy UUID */
     *moreData = FALSE;
 
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", (desc.current - desc.origin) + 2);
     return (NQ_COUNT)((desc.current - desc.origin) + 2);
 }
 
@@ -689,11 +696,11 @@ static NQ_STATUS closeResponseCallback (
     NQ_BOOL moreData
     )
 {
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     /* do nothing */
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", NQ_SUCCESS);
     return NQ_SUCCESS;
 }
 
@@ -720,13 +727,14 @@ static NQ_COUNT lookupNamesRequestCallback (
     )
 {
     CMRpcPacketDescriptor desc;         /* descriptor for SRVSVC request */
-    CallbackParams * callParams;         /* casted parameters for callback */
+    CallbackParams * callParams;        /* casted parameters for callback */
     NQ_UINT32 refId;                    /* running referent ID */
-    NQ_WCHAR * accountName;				 /* buffer for qualified account name */
-    static const NQ_WCHAR delimiter[] = { cmWChar('@'), cmWChar(0) };
+    NQ_WCHAR * accountName = NULL;      /* buffer for qualified account name */
+    NQ_COUNT result = 0;                /* return value */
+    static const NQ_WCHAR delimiter[] = { cmWChar('@'), cmWChar('\0') };
     static const NQ_WCHAR empty[] = { cmWChar(0) };
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     callParams = (CallbackParams*)params;
     if (NULL == callParams->domain)
@@ -735,8 +743,9 @@ static NQ_COUNT lookupNamesRequestCallback (
         (cmWStrlen(callParams->user) + cmWStrlen(callParams->domain) + 3)));
     if (NULL == accountName)
     {
-    	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    	return NQ_ERR_OUTOFMEMORY;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+        sySetLastError(NQ_ERR_OUTOFMEMORY);
+        goto Exit;
     }
     cmWStrcpy(accountName, callParams->user);
     if (cmWStrchr(accountName, cmWChar('@')) == NULL && cmWStrcmp(callParams->domain, empty) != 0)
@@ -765,11 +774,12 @@ static NQ_COUNT lookupNamesRequestCallback (
     cmRpcPackUint32(&desc, 0);         /* undocumented */
     cmRpcPackUint32(&desc, 2);         /* undocumented */
     *moreData = FALSE;
-    
-    cmMemoryFree(accountName);
+    result = (NQ_COUNT)((desc.current - desc.origin) + 2);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return (NQ_COUNT)((desc.current - desc.origin) + 2);
+Exit:
+    cmMemoryFree(accountName);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 
@@ -797,8 +807,9 @@ static NQ_STATUS lookupNamesResponseCallback(
     CMRpcPacketDescriptor desc;         /* descriptor for SRVSVC request */
     CallbackParams* callParams;         /* casted parameters for callback */
     NQ_UINT32 v32;                      /* parsed long value */
+    NQ_STATUS result = NQ_FAIL;         /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     callParams = (CallbackParams*)params;
     cmRpcSetDescriptor(&desc, (NQ_BYTE*)data, FALSE);
@@ -807,20 +818,16 @@ static NQ_STATUS lookupNamesResponseCallback(
     cmRpcParseUint32(&desc, &v32);              /* domain list - count */
     if (1 != v32)
     {
-        LOGERR(CM_TRC_LEVEL_ERROR, "unexpected number of domains in response");
-        TRC1P(" num: %ld, should be 1", v32);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return (NQ_STATUS)NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "unexpected response:%ld, should be 1", v32);
+        goto Exit;
     }
     cmRpcParseSkip(&desc, 4);   /* trust info array - ref id */
     cmRpcParseSkip(&desc, 4);   /* trust info array - max count*/
     cmRpcParseUint32(&desc, &v32);              /* trust info array - count*/
     if (1 != v32)
     {
-        LOGERR(CM_TRC_LEVEL_ERROR, "unexpected number of domains in response");
-        TRC1P(" num: %ld, should be 1", v32);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return (NQ_STATUS)NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "unexpected response:%ld, should be 1", v32);
+        goto Exit;
     }
     cmRpcParseSkip(&desc, 2);   /* domain name - LSA name length */
     cmRpcParseSkip(&desc, 2);   /* domain name - LSA max name length */
@@ -836,28 +843,26 @@ static NQ_STATUS lookupNamesResponseCallback(
     cmRpcParseUint32(&desc, &v32);              /* rids - count */
     if (1 != v32)
     {
-        LOGERR(CM_TRC_LEVEL_ERROR, "unexpected number of RIDs in response");
-        TRC1P(" num: %ld, should be 1", v32);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return (NQ_STATUS)NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "unexpected RIDs response:%ld, should be 1", v32);
+        goto Exit;
     }
     cmRpcParseSkip(&desc, 4);   /* rids - ref id */
     cmRpcParseUint32(&desc, &v32);              /* rids - max count */
     if (1 != v32)
     {
-        LOGERR(CM_TRC_LEVEL_ERROR, "unexpected number of RIDs in response");
-        TRC1P(" num: %ld, should be 1", v32);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return (NQ_STATUS)NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "unexpected RIDs response:%ld, should be 1", v32);
+        goto Exit;
     }
     cmRpcParseSkip(&desc, 2);               /* rids - SID type */
-    cmRpcAllign(&desc, 4);                  /* */
+    cmRpcAllign(&desc, 4);
     cmRpcParseUint32(&desc, &callParams->token->rids[0]);       /* rid */
     callParams->token->numRids = 1;                             /* meanwhile */
     callParams->success = TRUE;
+    result = NQ_SUCCESS;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 
@@ -889,7 +894,7 @@ static NQ_COUNT lookupSidsRequestCallback (
     NQ_COUNT i;                         /* generic number */
     CMSdDomainSid sidBuffer;            /* buffer for getting SID */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     callParams = (CallbackParams*)params;
     cmRpcSetDescriptor(&desc, buffer, FALSE);
@@ -920,7 +925,7 @@ static NQ_COUNT lookupSidsRequestCallback (
     cmRpcPackUint32(&desc, 2);     /* undocumented */
     *moreData = FALSE;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", (desc.current - desc.origin) + 2);
     return (NQ_COUNT)((desc.current - desc.origin) + 2);
 }
 
@@ -956,9 +961,10 @@ lookupSidsResponseCallback (
     NQ_UINT32 sidId;                    /* read ref id */
     NQ_COUNT i;                         /* just a counter */
     CMRpcUnicodeString unicodeName;     /* Unicode name descriptor */
-    static NQ_TCHAR nameT[CM_BUFFERLENGTH(NQ_TCHAR, CM_USERNAMELENGTH)]; /* buffer for name */
+    CMRpcUnicodeString nameDescr;       /* domain name descriptor */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     callParams = (CallbackParams*)params;
     cmRpcSetDescriptor(&desc, (NQ_BYTE*)data, FALSE);
@@ -977,8 +983,6 @@ lookupSidsResponseCallback (
         strDesc.current += count * (2 * 2 + 4 * 2);
         for (i = 0; i < count; i++)
         {
-            CMRpcUnicodeString nameDescr;               /* domain name descriptor */
-
             cmRpcParseSkip(&desc, 2);   /* length */
             cmRpcParseSkip(&desc, 2);   /* size */
             cmRpcParseUint32(&desc, &nameId);           /* name - ref id */
@@ -986,8 +990,7 @@ lookupSidsResponseCallback (
             if (0 != nameId)
             {
                 cmRpcParseUnicode(&strDesc, &nameDescr, CM_RP_SIZE32 | CM_RP_FRAGMENT32);       /* name */
-                cmUnicodeToTcharN(nameT, nameDescr.text, nameDescr.length);
-                nameT[nameDescr.length] = 0;
+                nameDescr.text[nameDescr.length] = 0;
             }
             if (0 != sidId)
             {
@@ -995,7 +998,7 @@ lookupSidsResponseCallback (
                 cmSdParseSid(&strDesc, &sidBuffer);            /* sid - value */
             }
             (*callParams->domainConsumer)(
-                (0 == nameId ? NULL : nameT),
+                (0 == nameId ? NULL : nameDescr.text),
                 (0 == sidId ? NULL : &sidBuffer),
                 count,
                 maxCount,
@@ -1032,9 +1035,9 @@ lookupSidsResponseCallback (
 
         if (0 != nameId)
         {
-            cmRpcParseUnicode(&strDesc, &unicodeName, (CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
-            cmUnicodeToTcharN(nameT, unicodeName.text, unicodeName.length);
-            (*callParams->nameConsumer)(nameT, type, index, reserved, count, callParams->callParams);
+            cmRpcParseUnicode(&strDesc, &unicodeName, (CM_RP_SIZE32 | CM_RP_FRAGMENT32));
+            unicodeName.text[unicodeName.length] = cmWChar(0);
+            (*callParams->nameConsumer)(unicodeName.text, type, index, reserved, count, callParams->callParams);
         }
         else
         {
@@ -1042,7 +1045,7 @@ lookupSidsResponseCallback (
         }
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", NQ_SUCCESS);
     return NQ_SUCCESS;
 }
 

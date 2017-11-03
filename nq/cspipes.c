@@ -140,15 +140,15 @@ csNamedPipeEntry(
                 );
             pInfo->maximumInstances = 1;
             pInfo->currentInstances = 1;
-            pInfo->pipeNameLength = (NQ_BYTE)(cmTStrlen(pName->name) + 1) / sizeof(NQ_TCHAR);
+            pInfo->pipeNameLength = (NQ_BYTE)(syWStrlen(pName->name) + 1) / sizeof(NQ_WCHAR);
             if (unicodeRequired)
             {
                 pInfo->pipeNameLength = (NQ_BYTE)(pInfo->pipeNameLength * sizeof(NQ_WCHAR));
-                cmTcharToUnicode((NQ_WCHAR*)(pData + sizeof(*pInfo)), pName->name);
+                syWStrcpy((NQ_WCHAR*)(pData + sizeof(*pInfo)), pName->name);
             }
             else
             {
-                cmTcharToAnsi((NQ_CHAR*)(pData + sizeof(*pInfo)), pName->name);
+                syUnicodeToAnsi((NQ_CHAR*)(pData + sizeof(*pInfo)), pName->name);
             }
             if (descriptor->maxData < sizeof(*pInfo))
                 descriptor->dataCount = descriptor->maxData;

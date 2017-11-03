@@ -16,79 +16,25 @@
  * LAST AUTHOR   : $Author:$
  ********************************************************************/
 
-#include "cmapi.h"
+#include "ldapi.h"
 
 #ifdef UD_CC_INCLUDELDAP
+#include "syldap.h"
 
-static
-NQ_STATUS                               /* error code */
-ldConnectT(
-        const NQ_TCHAR * domain,        /* domain name */
-        const NQ_TCHAR * user,          /* user account name */
-        const NQ_TCHAR * password,      /* account password */ 
-        LDConnectionHandle * handle     /* resulted handle */ 
-        );
-
-static
-NQ_STATUS                               /* error code */
-ldGetUserCoverPageInfoT(
-        LDConnectionHandle handle,      /* LDAP handle */
-        const NQ_TCHAR *accountNameT,   /* account name */
-        const NQ_TCHAR *domainNameT,    /* domain name */
-        NQ_UINT *personalNameLen,       /* pointer to personal name length */
-        NQ_TCHAR *personalName,         /* personal name */
-        NQ_UINT *surnameLen,            /* pointer to personal surname length */
-        NQ_TCHAR *surname,              /* pointer to surname */
-        NQ_UINT *addressLen,            /* pointer to address length */
-        NQ_TCHAR *address,              /* pointer to address */
-        NQ_UINT *faxNumberLen,          /* pointer to fax number length */
-        NQ_TCHAR *faxNumber             /* pointer to fax number */
-        );
-
-static
-NQ_STATUS                               /* error code */ 
-ldPublishPrinterT(
-        LDConnectionHandle handle,      /* LDAP connection handle */
-        const NQ_TCHAR * parent,        /* where to publish in directory (may be NULL if domainName not NULL) */
-        const NQ_TCHAR * domainName,    /* domain name (may be NULL if parent not NULL)*/
-        const NQ_TCHAR * printerName    /* printer name */
-        );
-
-static
-NQ_STATUS                            
-ldAddPrinterPropertyStringT(
-        LDConnectionHandle handle,   /* LDAP connection handle */
-        const NQ_TCHAR *printerName, /* printer name (may be ldap dn name (CN=..., DC=...) */
-        const NQ_TCHAR *domainName,  /* domain name (may be NULL if printerName has ldap syntax */
-        const NQ_TCHAR *name,        /* property/attribute name */
-        const NQ_TCHAR *value        /* property/attribute value */
-        );
-
-NQ_STATUS                           /* error code */
-ldAddPrinterPropertyBinaryT(
-        LDConnectionHandle handle,   /* LDAP handle */
-        const NQ_TCHAR *printerName, /* printer name */
-        const NQ_TCHAR *domainName,  /* domain name (may be NULL if printerName has ldap syntax */
-        const NQ_TCHAR *name,        /* property/attribute name */
-        const NQ_BYTE *value,        /* property/attribute value */
-        NQ_UINT length               /* property/attribute value length */
-        );
-
-/* 
+/*
  * Start LDAP client
- * 
+ *
  */
 NQ_STATUS                               /* error code */
-ldStart(
-        )
-{        
+ldStart( )
+{
     return syLdStart();
 }
 
 
-/* 
+/*
  * Stop LDAP client
- * 
+ *
  */
 void
 ldStop(
@@ -101,75 +47,45 @@ ldStop(
  * Connect to LDAP Server
  * - open + bind
  * - the server is initially the DC
- * - rebinding (on a referral is proceed internaly with the same credentials
- * - GSS is used with avaiable security mechanisms
+ * - rebinding (on a referral is proceed internally with the same credentials
+ * - GSS is used with available security mechanisms
  * - this call creates dynamic context, to release call ldCloseConnection
  */
 NQ_STATUS                           /* error code */
 ldConnectA(
         const NQ_CHAR * domain,     /* domain name */
         const NQ_CHAR * user,       /* user account name */
-        const NQ_CHAR * password,   /* account password */ 
-        LDConnectionHandle * handle /* resulted handle */ 
+        const NQ_CHAR * password,   /* account password */
+        LDConnectionHandle * handle /* resulted handle */
         )
 {
-    NQ_STATIC NQ_TCHAR domainT[CM_BUFFERLENGTH(NQ_TCHAR, CM_NQ_HOSTNAMESIZE)];  
-    NQ_STATIC NQ_TCHAR userT[CM_BUFFERLENGTH(NQ_TCHAR, CM_USERNAMELENGTH)];
-    NQ_STATIC NQ_TCHAR passwordT[CM_BUFFERLENGTH(NQ_TCHAR, 65)];
+    NQ_STATIC NQ_WCHAR domainW[CM_BUFFERLENGTH(NQ_WCHAR, CM_NQ_HOSTNAMESIZE)];
+    NQ_STATIC NQ_WCHAR userW[CM_BUFFERLENGTH(NQ_WCHAR, CM_USERNAMELENGTH)];
+    NQ_STATIC NQ_WCHAR passwordW[CM_BUFFERLENGTH(NQ_WCHAR, 65)];
 
-    if (domain)     cmAnsiToTchar(domainT, domain);
-    if (user)       cmAnsiToTchar(userT, user);
-    if (password)   cmAnsiToTchar(passwordT, password);
+    if (domain)     cmAnsiToUnicode(domainW, domain);
+    if (user)       cmAnsiToUnicode(userW, user);
+    if (password)   cmAnsiToUnicode(passwordW, password);
 
-    return ldConnectT(domainT, userT, passwordT, handle);
+    return ldConnectW(domainW, userW, passwordW, handle);
 }
 
 /*
  * Connect to LDAP Server
  * - open + bind
  * - the server is initially the DC
- * - rebinding (on a referral is proceed internaly with the same credentials
- * - GSS is used with avaiable security mechanisms
+ * - rebinding (on a referral is proceed internally with the same credentials
+ * - GSS is used with available security mechanisms
  * - this call creates dynamic context, to release call ldCloseConnection
  */
 NQ_STATUS                            /* error code */
 ldConnectW(
         const NQ_WCHAR * domain,     /* domain name */
         const NQ_WCHAR * user,       /* user account name */
-        const NQ_WCHAR * password,   /* account password */ 
-        LDConnectionHandle * handle  /* resulted handle */ 
+        const NQ_WCHAR * password,   /* account password */
+        LDConnectionHandle * handle  /* resulted handle */
         )
 {
-    NQ_STATIC NQ_TCHAR domainT[CM_BUFFERLENGTH(NQ_TCHAR, CM_NQ_HOSTNAMESIZE)];  
-    NQ_STATIC NQ_TCHAR userT[CM_BUFFERLENGTH(NQ_TCHAR, CM_USERNAMELENGTH)];
-    NQ_STATIC NQ_TCHAR passwordT[CM_BUFFERLENGTH(NQ_TCHAR, 65)];
-
-    if (domain)     cmUnicodeToTchar(domainT, domain);
-    if (user)       cmUnicodeToTchar(userT, user);
-    if (password)   cmUnicodeToTchar(passwordT, password);
-
-    return ldConnectT(domainT, userT, passwordT, handle);
-}
-
-/*
- * Connect to LDAP Server
- * - open + bind
- * - the server is initially the DC
- * - rebinding (on a referral is proceed internaly with the same credentials
- * - GSS is used with avaiable security mechanisms
- * - this call creates dynamic context, to release call ldCloseConnection
- */
-static
-NQ_STATUS                            /* error code */
-ldConnectT(
-        const NQ_TCHAR * domain,     /* domain name */
-        const NQ_TCHAR * user,       /* user account name */
-        const NQ_TCHAR * password,   /* account password */ 
-        LDConnectionHandle * handle  /* resulted handle */ 
-        )
-{
-     LOGFB(CM_TRC_LEVEL_FUNC_TOOL);   
-     LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
      return syLdConnect(domain, user, password, handle);
 }
 
@@ -184,14 +100,14 @@ ldCloseConnection(
     return syLdCloseConnection(handle);
 }
 
-/* ldap_msgfree() regardless of return value !!!*/
+/* LDAP_msgfree() regardless of return value !!!*/
 NQ_STATUS                           /* error code */
 ldSearch(
         LDConnectionHandle handle,  /* LDAP handle */
         const NQ_CHAR * base,       /* root item to start search from */
-        NQ_INT scope,               /* one of the SY_LDAPSCOPE contants above */
+        NQ_INT scope,               /* one of the SY_LDAPSCOPE constants above */
         const NQ_CHAR * filter,     /* search filter, may be NULL */
-        const NQ_CHAR * attribs[],  /* pointer to an array of attribute names, NULL-terminated. 
+        const NQ_CHAR * attribs[],  /* pointer to an array of attribute names, NULL-terminated.
                                        NULL means all attributes. */
         LDResultHandle * result     /* buffer for resulted message handle */
         )
@@ -206,7 +122,7 @@ ldSearch(
 NQ_STATUS                           /* error code */
 ldReleaseResult(
         LDConnectionHandle handle,  /* LDAP handle */
-        LDResultHandle result       /* message handle */ 
+        LDResultHandle result       /* message handle */
         )
 {
     return syLdReleaseResult(handle, result);
@@ -218,7 +134,7 @@ ldReleaseResult(
 NQ_INT                              /* number of entries or -1 on error */
 ldGetNumEntries(
         LDConnectionHandle handle,  /* LDAP handle */
-        LDResultHandle result       /* message handle */ 
+        LDResultHandle result       /* message handle */
         )
 {
     return syLdGetNumEntries(handle, result);
@@ -240,26 +156,26 @@ ldGetEntry(
 
 
 /*
- * Get DN of the entry's object  
+ * Get DN of the entry's object
  */
-void                     
+void
 ldEntryName(
         LDConnectionHandle handle,  /* LDAP handle */
         LDEntryHandle entry,        /* entry handle */
-        NQ_CHAR *dn,                /* buffer for DN name */ 
-        NQ_UINT lenDn               /* length of DN buffer */                      
+        NQ_CHAR *dn,                /* buffer for DN name */
+        NQ_UINT lenDn               /* length of DN buffer */
         )
 {
     syLdEntryName(handle, entry, dn, lenDn);
 }
 
 /*
- * Get number of attributes  (no corresponding direct openldap api) 
+ * Get number of attributes  (no corresponding direct openLDAP API)
  */
 NQ_COUNT                            /* number of attributes */
 ldGetNumAttribs(
         LDConnectionHandle handle,  /* LDAP handle */
-        LDEntryHandle entry         /* entry handle */ 
+        LDEntryHandle entry         /* entry handle */
         )
 {
     return syLdGetNumAttribs(handle, entry);
@@ -281,7 +197,7 @@ ldGetAttrIndexByName(
 }
 
 /*
- * Get attribute name in result by its index (caller must free memory: ldFreeAttrName()) 
+ * Get attribute name in result by its index (caller must free memory: ldFreeAttrName())
  */
 const NQ_CHAR *                     /* name or NULL */
 ldGetAttrNameByIndex(
@@ -298,7 +214,7 @@ ldGetAttrNameByIndex(
  */
 void
 ldFreeAttrName(
-        const NQ_CHAR * name  
+        const NQ_CHAR * name
         )
 {
     syLdFreeAttrName(name);
@@ -314,11 +230,11 @@ ldGetNumValues(
         NQ_INT index                /* attribute index */
         )
 {
-    return syLdGetNumValues(handle, entry, index);    
+    return syLdGetNumValues(handle, entry, index);
 }
 
 /*
- * Get attribute values pointer (caller must free memory with ldFreeAttrValues)  
+ * Get attribute values pointer (caller must free memory with ldFreeAttrValues)
  */
 const LDValue **                    /* values pointer or NULL */
 ldGetAttrValues(
@@ -327,13 +243,13 @@ ldGetAttrValues(
         NQ_INT index                /* attribute index */
         )
 {
-    return syLdGetAttrValues(handle, entry, index);    
+    return syLdGetAttrValues(handle, entry, index);
 }
 
 /*
- * Free attribute values pointer (returned by ldGetAttrValues) 
+ * Free attribute values pointer (returned by ldGetAttrValues)
  */
-void                   
+void
 ldFreeAttrValues(
         const LDValue **values      /* values array */
         )
@@ -408,7 +324,7 @@ ldAddAttributeString(
 }
 
 /*
- * Add/modify attribute value (binary) 
+ * Add/modify attribute value (binary)
  */
 NQ_STATUS                           /* error code */
 ldAddAttributeBinary(
@@ -423,7 +339,7 @@ ldAddAttributeBinary(
 
 /*
  * Delete attribute
- * - available only for Modify transaction 
+ * - available only for Modify transaction
  */
 NQ_STATUS                           /* error code */
 ldDeleteAttribute(
@@ -449,7 +365,7 @@ ldExecute(
 
 /* Get cover page info (full name, address and fax number) for particular user */
 /* Caller should allocate buffers and pass their lengths.
-   In case of insufficient buffer length error code LDAP_MOREDATA is returned and required length 
+   In case of insufficient buffer length error code LDAP_MOREDATA is returned and required length
    put by corresponding pointer for subsequent call with reallocated buffers */
 NQ_STATUS                           /* error code */
 ldGetUserCoverPageInfoA(
@@ -466,63 +382,63 @@ ldGetUserCoverPageInfoA(
         NQ_CHAR *faxNumber         /* pointer to fax number */
         )
 {
-    NQ_STATUS status;
-    NQ_TCHAR *accountNameT, *domainNameT, *personalNameT, *surnameT, *addressT, *faxNumberT;
+    NQ_STATUS status = LDAP_ERROR;
+    NQ_WCHAR *accountNameW, *domainNameW, *personalNameW, *surnameW, *addressW, *faxNumberW;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL); 
-    
-    accountNameT = (NQ_TCHAR *)syCalloc(syStrlen(accountName) + 1, sizeof(NQ_TCHAR));
-    domainNameT = (NQ_TCHAR *)syCalloc(syStrlen(domainName) + 1, sizeof(NQ_TCHAR));
-    personalNameT = (NQ_TCHAR *)syCalloc(*personalNameLen + 1, sizeof(NQ_TCHAR));
-    surnameT = (NQ_TCHAR *)syCalloc(*surnameLen+ 1, sizeof(NQ_TCHAR));
-    addressT = (NQ_TCHAR *)syCalloc(*addressLen + 1, sizeof(NQ_TCHAR));
-    faxNumberT = (NQ_TCHAR *)syCalloc(*faxNumberLen + 1, sizeof(NQ_TCHAR));
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
-    if (accountNameT && domainNameT && personalNameT && surnameT && addressT && faxNumberT)
-    {    
-        cmAnsiToTchar(accountNameT, accountName);
-        cmAnsiToTchar(domainNameT, domainName);
+    accountNameW = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)((syStrlen(accountName) + 1) * sizeof(NQ_WCHAR)));
+    domainNameW = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)((syStrlen(domainName) + 1) * sizeof(NQ_WCHAR)));
+    personalNameW = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)((*personalNameLen + 1) * sizeof(NQ_WCHAR)));
+    surnameW = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)((*surnameLen+ 1) * sizeof(NQ_WCHAR)));
+    addressW = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)((*addressLen + 1) * sizeof(NQ_WCHAR)));
+    faxNumberW = (NQ_WCHAR *)cmMemoryAllocate(((NQ_UINT)(*faxNumberLen + 1) * (NQ_UINT)sizeof(NQ_WCHAR)));
+
+    if (accountNameW && domainNameW && personalNameW && surnameW && addressW && faxNumberW)
+    {
+        cmAnsiToUnicode(accountNameW, accountName);
+        cmAnsiToUnicode(domainNameW, domainName);
     }
     else
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
-    
-    status = ldGetUserCoverPageInfoT(handle, 
-                                    accountNameT, 
-                                    domainNameT, 
-                                    personalNameLen, 
-                                    personalNameT, 
+
+    status = ldGetUserCoverPageInfoW(handle,
+                                    accountNameW,
+                                    domainNameW,
+                                    personalNameLen,
+                                    personalNameW,
                                     surnameLen,
-                                    surnameT,
-                                    addressLen, 
-                                    addressT, 
-                                    faxNumberLen, 
-                                    faxNumberT);
-    if (status == NQ_SUCCESS)
+                                    surnameW,
+                                    addressLen,
+                                    addressW,
+                                    faxNumberLen,
+                                    faxNumberW);
+    if (NQ_SUCCESS == status)
     {
-    cmTcharToAnsi(personalName, personalNameT);
-    cmTcharToAnsi(surname, surnameT);
-    cmTcharToAnsi(address, addressT);
-    cmTcharToAnsi(faxNumber, faxNumberT);
+        cmUnicodeToAnsi(personalName, personalNameW);
+        cmUnicodeToAnsi(surname, surnameW);
+        cmUnicodeToAnsi(address, addressW);
+        cmUnicodeToAnsi(faxNumber, faxNumberW);
     }
 
-    syFree(accountNameT);
-    syFree(domainNameT);
-    syFree(personalNameT);
-    syFree(surnameT);
-    syFree(addressT);
-    syFree(faxNumberT);
-
-    LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
+Exit:
+    cmMemoryFree(accountNameW);
+    cmMemoryFree(domainNameW);
+    cmMemoryFree(personalNameW);
+    cmMemoryFree(surnameW);
+    cmMemoryFree(addressW);
+    cmMemoryFree(faxNumberW);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", status);
+    
     return status;
 }
 
 /* Get cover page info (full name, address and fax number) for particular user */
 /* Caller should allocate buffers and pass their lengths.
-   In case of insufficient buffer length error code LDAP_MOREDATA is returned and required length 
+   In case of insufficient buffer length error code LDAP_MOREDATA is returned and required length
    put by corresponding pointer for subsequent call with reallocated buffers */
 NQ_STATUS                           /* error code */
 ldGetUserCoverPageInfoW(
@@ -539,146 +455,70 @@ ldGetUserCoverPageInfoW(
         NQ_WCHAR *faxNumber        /* pointer to fax number */
         )
 {
-    NQ_STATUS status;
-    NQ_TCHAR *accountNameT, *domainNameT, *personalNameT, *surnameT, *addressT, *faxNumberT;
-
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL); 
-    
-    accountNameT = (NQ_TCHAR *)syCalloc(cmWStrlen(accountName) + 1, sizeof(NQ_TCHAR) * 2);
-    domainNameT = (NQ_TCHAR *)syCalloc(cmWStrlen(domainName) + 1, sizeof(NQ_TCHAR) * 2);
-    personalNameT = (NQ_TCHAR *)syCalloc(*personalNameLen + 1, sizeof(NQ_TCHAR));
-    surnameT = (NQ_TCHAR *)syCalloc(*surnameLen+ 1, sizeof(NQ_TCHAR));
-    addressT = (NQ_TCHAR *)syCalloc(*addressLen + 1, sizeof(NQ_TCHAR));
-    faxNumberT = (NQ_TCHAR *)syCalloc(*faxNumberLen + 1, sizeof(NQ_TCHAR));
-
-    if (accountNameT && domainNameT && personalNameT && surnameT && addressT && faxNumberT)
-    {    
-        cmUnicodeToTchar(accountNameT, accountName);
-        cmUnicodeToTchar(domainNameT, domainName);
-    }
-    else
-    {
-        LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
-    }
-
-    status = ldGetUserCoverPageInfoT(handle, 
-                                    accountNameT, 
-                                    domainNameT, 
-                                    personalNameLen, 
-                                    personalNameT, 
-                                    surnameLen,
-                                    surnameT,
-                                    addressLen, 
-                                    addressT, 
-                                    faxNumberLen, 
-                                    faxNumberT);
-
-    cmTcharToUnicode(personalName, personalNameT);
-    cmTcharToUnicode(surname, surnameT);
-    cmTcharToUnicode(address, addressT);
-    cmTcharToUnicode(faxNumber, faxNumberT);
-
-    syFree(accountNameT);
-    syFree(domainNameT);
-    syFree(personalNameT);
-    syFree(surnameT);
-    syFree(addressT);
-    syFree(faxNumberT);
-
-    LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-    return status;
-}
-
-
-/* Get cover page info (full name, address and fax number) for particular user */
-/* Caller should allocate buffers and pass their lengths.
-   In case of insufficient buffer length error code LDAP_MOREDATA is returned and required length 
-   put by corresponding pointer for subsequent call with reallocated buffers 
-   Account name parameter may be LDAP base query or username */
-static
-NQ_STATUS                           /* error code */
-ldGetUserCoverPageInfoT(
-        LDConnectionHandle handle, /* LDAP handle */
-        const NQ_TCHAR *accountNameT,/* account name */
-        const NQ_TCHAR *domainNameT,/* domain name */
-        NQ_UINT *personalNameLen,  /* pointer to personal name length */
-        NQ_TCHAR *personalName,     /* personal name */
-        NQ_UINT *surnameLen,       /* pointer to personal surname length */
-        NQ_TCHAR *surname,          /* pointer to surname */
-        NQ_UINT *addressLen,       /* pointer to address length */
-        NQ_TCHAR *address,          /* pointer to address */
-        NQ_UINT *faxNumberLen,     /* pointer to fax number length */
-        NQ_TCHAR *faxNumber         /* pointer to fax number */
-        )
-{
     LDResultHandle  result;
-    /*const char *noattribs[] = {LDAP_NO_ATTRS, NULL};*/
     const NQ_CHAR *attribs[] = {"name", "sn", "postalAddress", "facsimileTelephoneNumber", NULL};
     LDEntryHandle entry;
     NQ_INT index;
     const LDValue **values;
-    NQ_CHAR *baseName; 
-    NQ_TCHAR *baseNameT; 
+    NQ_WCHAR *baseNameW = NULL;
+    NQ_CHAR *baseNameA = NULL;
     NQ_COUNT length;
-    NQ_TCHAR emptyNameT[] = {cmTChar('\0')};
-    NQ_TCHAR *p1, *p2;
+	NQ_WCHAR emptyNameW[] = {cmWChar('\0')};
+    NQ_WCHAR *p1, *p2;
     NQ_STATUS status = LDAP_SUCCESS;
-    NQ_STATIC NQ_TCHAR cnString[] = {cmTChar('C'), cmTChar('N'), cmTChar('='), cmTChar('\0')};
+	NQ_STATIC const NQ_WCHAR cnString[] = {cmWChar('C'), cmWChar('N'), cmWChar('='), cmWChar('\0')};
 
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "handle:%p accountName:%s domainName:%s", handle, cmWDump(accountName), cmWDump(domainName)); 
 
     /* create account name of type 'CN=<user>, CN=Users, DC=<domain>, DC=<com>' */
-    length = cmTStrlen(accountNameT) + cmTStrlen(domainNameT) + 24;
-    baseNameT = (NQ_TCHAR *)syCalloc(length, sizeof(NQ_TCHAR));
-    if (!baseNameT)
+    length = syWStrlen(accountName) + syWStrlen(domainName) + 24;
+    baseNameW = (NQ_WCHAR *)cmMemoryAllocate(length * (NQ_UINT)sizeof(NQ_WCHAR));
+    if (!baseNameW)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+        status = LDAP_ERROR;
+        goto Exit;
     }
 
-    if (cmTStricmp(cnString, accountNameT) != 0)
+    if (cmWStricmp(cnString, accountName) != 0)
     {
-        cmAnsiToTchar(baseNameT, "CN=");
-        cmTStrcat(baseNameT, accountNameT);
-        cmAnsiToTchar(baseNameT + cmTStrlen(baseNameT), ", CN=Users");  
-        p1 = (NQ_TCHAR *)domainNameT;
-        p2 = cmTStrchr(p1, cmTChar('.'));
+        cmAnsiToUnicode(baseNameW, "CN=");
+        cmWStrcat(baseNameW, accountName);
+        cmAnsiToUnicode(baseNameW + cmWStrlen(baseNameW), ", CN=Users");
+        p1 = (NQ_WCHAR *)domainName;
+        p2 = cmWStrchr(p1, cmWChar('.'));
         while (p2 != NULL)
         {
-            *p2 = cmTChar('\0');
-            cmAnsiToTchar(baseNameT + cmTStrlen(baseNameT), ", DC=");
-            cmTStrcat(baseNameT, p1);
+            *p2 = cmWChar('\0');
+            cmAnsiToUnicode(baseNameW + cmWStrlen(baseNameW), ", DC=");
+            cmWStrcat(baseNameW, p1);
             p1 = p2 + 1;
-            p2 = cmTStrchr(p1, cmTChar('.'));
+            p2 = cmWStrchr(p1, cmWChar('.'));
         }
-        cmAnsiToTchar(baseNameT + cmTStrlen(baseNameT), ", DC=");
-        cmTStrcat(baseNameT, p1);
+        cmAnsiToUnicode(baseNameW + cmWStrlen(baseNameW), ", DC=");
+        cmWStrcat(baseNameW, p1);
     }
-    TRC("baseName %s", cmTDump(baseNameT));
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "baseName %s", cmWDump(baseNameW));
 
     /* convert to UTF8 string */
-    if ((baseName = (NQ_CHAR *)syCalloc(length, 4)) == NULL)
+    if ((baseNameA = (NQ_CHAR *)cmMemoryAllocate(length * 4)) == NULL)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        status = LDAP_ERROR;
+        goto Exit;
     }
-    cmTcharToUTF8N(baseName, baseNameT, length * 4);  
-    syFree(baseNameT);
-    
+    cmUnicodeToUTF8N(baseNameA, baseNameW, length * 4);
+
     /* find a user entry */
-    TRC("handle 0x%x, baseName %s", handle, baseName);
-    if (ldSearch(handle, baseName, LDAP_SCOPESUBTREE, "(ObjectClass=user)", attribs, &result) != 0)
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "handle 0x%x, baseName %s", handle, baseNameA);
+    if (ldSearch(handle, baseNameA, LDAP_SCOPESUBTREE, "(ObjectClass=user)", attribs, &result) != 0)
     {
-        LOGERR(CM_TRC_LEVEL_ERROR, "failed to get user %s", baseName);
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        LOGERR(CM_TRC_LEVEL_ERROR, "failed to get user %s", baseNameA);
+        status = LDAP_ERROR;
+        goto Exit;
     }
-    syFree(baseName);
-    
+
     /* iterate through search result */
     if ((entry = ldGetEntry(handle, result, 0)) != NULL)
     {
@@ -687,29 +527,29 @@ ldGetUserCoverPageInfoT(
         if (num == 0)
         {
             ldReleaseResult(handle, result);
-            LOGERR(CM_TRC_LEVEL_ERROR, "failed to get attributes %s", baseName);
-            LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-            return LDAP_ERROR;
+            LOGERR(CM_TRC_LEVEL_ERROR, "failed to get attributes %s", baseNameA);
+            status = LDAP_ERROR;
+            goto Exit;
         }
-        
+
         /* get personal name */
         if ((index = ldGetAttrIndexByName(handle, entry, "name")) != -1)
         {
             values = ldGetAttrValues(handle, entry, index);
             if (values[0]->len > *personalNameLen)
             {
-                *personalNameLen = values[0]->len;
+                *personalNameLen = (NQ_UINT)values[0]->len;
                 status = LDAP_MOREDATA;
             }
             else
-            {               
-                cmUTF8ToTcharN(personalName, (const NQ_CHAR *)values[0]->data, values[0]->len * sizeof(NQ_TCHAR));   
+            {
+                cmUTF8ToUnicodeN(personalName, (const NQ_CHAR *)values[0]->data, (NQ_UINT)values[0]->len * (NQ_UINT)sizeof(NQ_WCHAR));
             }
-            ldFreeAttrValues(values);            
+            ldFreeAttrValues(values);
         }
         else
         {
-            cmTStrcpy(personalName, emptyNameT);
+            cmWStrcpy(personalName, emptyNameW);
         }
 
         /* get surname */
@@ -718,18 +558,18 @@ ldGetUserCoverPageInfoT(
             values = ldGetAttrValues(handle, entry, index);
             if (values[0]->len > *surnameLen)
             {
-                *surnameLen = values[0]->len;
+                *surnameLen = (NQ_UINT)values[0]->len;
                 status = LDAP_MOREDATA;
             }
             else
             {
-                cmUTF8ToTcharN(surname, (const NQ_CHAR *)values[0]->data, values[0]->len * sizeof(NQ_TCHAR));   
+                cmUTF8ToUnicodeN(surname, (const NQ_CHAR *)values[0]->data, (NQ_UINT)values[0]->len * (NQ_UINT)sizeof(NQ_WCHAR));
             }
-            ldFreeAttrValues(values);            
+            ldFreeAttrValues(values);
         }
         else
         {
-             cmTStrcpy(surname, emptyNameT);
+             cmWStrcpy(surname, emptyNameW);
         }
 
         /* get address */
@@ -738,18 +578,18 @@ ldGetUserCoverPageInfoT(
             values = ldGetAttrValues(handle, entry, index);
             if (values[0]->len > *addressLen)
             {
-                *addressLen = values[0]->len;
+                *addressLen = (NQ_UINT)values[0]->len;
                 status = LDAP_MOREDATA;
             }
             else
             {
-                cmUTF8ToTcharN(address, (const NQ_CHAR *)values[0]->data, values[0]->len * sizeof(NQ_TCHAR));   
+                cmUTF8ToUnicodeN(address, (const NQ_CHAR *)values[0]->data, (NQ_UINT)values[0]->len * (NQ_UINT)sizeof(NQ_WCHAR));
             }
-            ldFreeAttrValues(values);                        
-        } 
+            ldFreeAttrValues(values);
+        }
         else
         {
-            cmTStrcpy(address, emptyNameT);
+            cmWStrcpy(address, emptyNameW);
         }
 
         /* get fax number */
@@ -758,108 +598,103 @@ ldGetUserCoverPageInfoT(
             values = ldGetAttrValues(handle, entry, index);
             if (values[0]->len > *faxNumberLen)
             {
-                *faxNumberLen = values[0]->len;
+                *faxNumberLen = (NQ_UINT)values[0]->len;
                 status = LDAP_MOREDATA;
             }
             else
             {
-                cmUTF8ToTcharN(faxNumber, (const NQ_CHAR *)values[0]->data, values[0]->len * sizeof(NQ_TCHAR));   
+                cmUTF8ToUnicodeN(faxNumber, (const NQ_CHAR *)values[0]->data, (NQ_UINT)values[0]->len * (NQ_UINT)sizeof(NQ_WCHAR));
             }
-            ldFreeAttrValues(values);                          
+            ldFreeAttrValues(values);
         }
         else
         {
-            cmTStrcpy(faxNumber, emptyNameT);
+            cmWStrcpy(faxNumber, emptyNameW);
         }
-    }    
-    
+    }
+
     /* release search result */
     ldReleaseResult(handle, result);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-    return status;
-
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", status);
+	return status;
 }
 
 
-
-static
-NQ_STATUS                               /* error code */ 
-ldPublishPrinterT(
+NQ_STATUS                               /* error code */
+ldPublishPrinterW(
         LDConnectionHandle handle,      /* LDAP connection handle */
-        const NQ_TCHAR * parent,        /* where to publish in directory (may be NULL if domainName not NULL) */
-        const NQ_TCHAR * domainName,    /* domain name (may be NULL if parent not NULL)*/
-        const NQ_TCHAR * printerName    /* printer name */
+        const NQ_WCHAR * parent,        /* where to publish in directory (may be NULL if domainName not NULL) */
+        const NQ_WCHAR * domainName,    /* domain name (may be NULL if parent not NULL)*/
+        const NQ_WCHAR * printerName    /* printer name */
         )
 {
     LDTransactionHandle trns;       /* transaction descriptor */
     NQ_CHAR *uNCName = NULL, *parentA = NULL, *printerNameA = NULL;
-    NQ_STATUS status;
+    NQ_STATUS status = LDAP_ERROR;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL); 
-    
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "handle:%p parent:%s domainName:%s printerName:%s", handle, cmWDump(parent), cmWDump(domainName), cmWDump(printerName)); 
+
+    if (!handle || !printerName || (!parent && !domainName))
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Invalid input");
+        goto Exit;
+    }
+
     /* construct printer name of form 'CN=' */
-    if ((printerNameA = (NQ_CHAR *)syCalloc(cmTStrlen(printerName) + 4, sizeof(NQ_CHAR))) == NULL)
+    if ((printerNameA = (NQ_CHAR *)cmMemoryAllocate((cmWStrlen(printerName) + 4) * sizeof(NQ_CHAR))) == NULL)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
     syStrcpy(printerNameA, "CN=");
-    cmTcharToAnsi(printerNameA + syStrlen(printerNameA), printerName);
+    cmUnicodeToAnsi(printerNameA + syStrlen(printerNameA), printerName);
 
     /* construct printer uNCName */
-    if ((uNCName = (NQ_CHAR *)syCalloc(syStrlen((NQ_CHAR *)cmGetFullHostName()) + cmTStrlen(printerName) + 4, sizeof(NQ_CHAR))) == NULL)
+    if ((uNCName = (NQ_CHAR *)cmMemoryAllocate(((NQ_UINT)syStrlen((NQ_CHAR *)cmGetFullHostName()) + (NQ_UINT)cmWStrlen(printerName) + 4) * sizeof(NQ_CHAR))) == NULL)
     {
-        syFree(printerNameA);
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
     syStrcpy(uNCName, "\\\\");
     syStrcat(uNCName, cmGetFullHostName());
     syStrcat(uNCName, "\\");
     syStrcat(uNCName, printerNameA + 3);
-   
+
     /* construct parent */
 
     if (parent)
     {
-        if ((parentA = (NQ_CHAR *)syCalloc(cmTStrlen(parent) + 1, sizeof(NQ_CHAR))) == NULL)
+        if ((parentA = (NQ_CHAR *)cmMemoryAllocate((cmWStrlen(parent) + 1) * sizeof(NQ_CHAR))) == NULL)
         {
-            syFree(printerNameA);
-            syFree(uNCName);
             LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-            LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-            return LDAP_ERROR;
+            goto Exit;
         }
-        cmTcharToAnsi(parentA, parent);
+        cmUnicodeToAnsi(parentA, parent);
     }
     else /* construct domain name */
     {
-        NQ_TCHAR *p1, *p2;
+        NQ_WCHAR *p1, *p2;
 
-        if ((parentA = (NQ_CHAR *)syCalloc(cmTStrlen(domainName) + 25, sizeof(NQ_CHAR) * 2)) == NULL)
+        if ((parentA = (NQ_CHAR *)cmMemoryAllocate(((NQ_UINT)cmWStrlen(domainName) + 25) * (NQ_UINT)sizeof(NQ_CHAR) * 2)) == NULL)
         {
-            syFree(printerNameA);
-            syFree(uNCName);
             LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-            LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-            return LDAP_ERROR;
+            goto Exit;
         }
         syStrcpy(parentA, "CN=Computers, ");
-        p1 = (NQ_TCHAR *)domainName;
-        p2 = cmTStrchr(p1, cmTChar('.'));
+        p1 = (NQ_WCHAR *)domainName;
+        p2 = cmWStrchr(p1, cmWChar('.'));
         while (p2 != NULL)
         {
-            *p2 = cmTChar('\0');
+            *p2 = cmWChar('\0');
             syStrcat(parentA, "DC=");
-            cmTcharToAnsi(parentA + syStrlen(parentA), p1);
+            cmUnicodeToAnsi(parentA + syStrlen(parentA), p1);
             p1 = p2 + 1;
-            p2 = cmTStrchr(p1, cmTChar('.'));
+            p2 = cmWStrchr(p1, cmWChar('.'));
         }
         syStrcat(parentA, ", DC=");
-        cmTcharToAnsi(parentA + syStrlen(parentA), p1);
+        cmUnicodeToAnsi(parentA + syStrlen(parentA), p1);
     }
 
     LOGMSG(CM_TRC_LEVEL_MESS_ALWAYS, "printer: %s, parent: %s", printerNameA, parentA ? parentA : "");
@@ -878,83 +713,17 @@ ldPublishPrinterT(
     /* execute transaction */
     status = ldExecute(trns, TRUE);
 
-    /* free pointers */
-    syFree(uNCName);
-    syFree(printerNameA);
-    if (parentA) syFree(parentA);
-
-    LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-    return status;    
-}
-
-/* Publish printer transaction */
-NQ_STATUS                           /* error code */ 
-ldPublishPrinterW(
-        LDConnectionHandle handle,   /* LDAP connection handle */
-        const NQ_WCHAR * parent,     /* where to publish in directory (may be NULL if domainName not NULL) */
-        const NQ_WCHAR * domainName, /* domain name (may be NULL if parent not NULL)*/
-        const NQ_WCHAR * printerName /* printer name */
-        )
-{
-    NQ_STATUS status;
-    NQ_TCHAR *parentT = NULL, *printerNameT, *domainNameT = NULL;
-
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL); 
-
-    if (!handle || !printerName || (!parent && !domainName))
-    {
-        LOGERR(CM_TRC_LEVEL_ERROR, "Invalid input");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
-    }
-
-    if (parent)
-    {
-        if ((parentT = (NQ_TCHAR *)syCalloc(cmWStrlen(parent) + 1, sizeof(NQ_TCHAR) * 2)) == NULL)
-        {
-            LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-            LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-            return LDAP_ERROR;
-        }
-        cmUnicodeToTchar(parentT, parent);
-    }
-
-    if (domainName)
-    {
-        if ((domainNameT = (NQ_TCHAR *)syCalloc(cmWStrlen(domainName) + 1, sizeof(NQ_TCHAR) * 2)) == NULL)
-        {
-            if (parentT)        syFree(parentT);
-            LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-            LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-            return LDAP_ERROR;
-        }
-        cmUnicodeToTchar(domainNameT, domainName);
-    }
-
-    if ((printerNameT = (NQ_TCHAR *)syCalloc(cmWStrlen(printerName) + 1, sizeof(NQ_TCHAR) * 2)) == NULL)
-    {
-        if (parentT)        syFree(parentT);
-        if (domainNameT)    syFree(domainNameT);
-        LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
-    }
-    cmUnicodeToTchar(printerNameT, printerName);
-
-    status = ldPublishPrinterT(handle, parentT, domainNameT, printerNameT);
-    
-    if (parentT)        syFree(parentT);
-    if (domainNameT)    syFree(domainNameT);
-    syFree(printerNameT);
-
-    LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
+Exit:
+    cmMemoryFree(parentA);
+    cmMemoryFree(uNCName);
+    cmMemoryFree(printerNameA);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", status);
     return status;
 }
 
 
-
 /* Publish printer transaction */
-NQ_STATUS                           /* error code */ 
+NQ_STATUS                           /* error code */
 ldPublishPrinterA(
         LDConnectionHandle handle,  /* LDAP connection handle */
         const NQ_CHAR * parent,     /* where to publish in directory (may be NULL if domainName not NULL) */
@@ -962,266 +731,196 @@ ldPublishPrinterA(
         const NQ_CHAR * printerName /* printer name */
         )
 {
-    NQ_STATUS status;
-    NQ_TCHAR *parentT = NULL, *printerNameT, *domainNameT = NULL;
+    NQ_STATUS status = LDAP_ERROR;
+    NQ_WCHAR *parentW = NULL, *printerNameW = NULL, *domainNameW = NULL;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL); 
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     if (!handle || !printerName || (!parent && !domainName))
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Invalid input");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
 
     if (parent)
     {
-        if ((parentT = (NQ_TCHAR *)syCalloc(syStrlen(parent) + 1, sizeof(NQ_TCHAR) * 2)) == NULL)
+        if ((parentW = (NQ_WCHAR *)cmMemoryAllocate(((NQ_UINT)syStrlen(parent) + 1) * (NQ_UINT)sizeof(NQ_WCHAR) * 2)) == NULL)
         {
             LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-            LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-            return LDAP_ERROR;
+            goto Exit;
         }
-        cmAnsiToTchar(parentT, parent);
+        cmAnsiToUnicode(parentW, parent);
     }
 
     if (domainName)
     {
-        if ((domainNameT = (NQ_TCHAR *)syCalloc(syStrlen(domainName) + 1, sizeof(NQ_TCHAR) * 2)) == NULL)
+        if ((domainNameW = (NQ_WCHAR *)cmMemoryAllocate(((NQ_UINT)syStrlen(domainName) + 1) * (NQ_UINT)sizeof(NQ_WCHAR) * 2)) == NULL)
         {
-            if (parentT)        syFree(parentT);
             LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-            LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-            return LDAP_ERROR;
+            goto Exit;
         }
-        cmAnsiToTchar(domainNameT, domainName);
+        cmAnsiToUnicode(domainNameW, domainName);
     }
 
-    if ((printerNameT = (NQ_TCHAR *)syCalloc(syStrlen(printerName) + 1, sizeof(NQ_TCHAR) * 2)) == NULL)
+    if ((printerNameW = (NQ_WCHAR *)cmMemoryAllocate(((NQ_UINT)syStrlen(printerName) + 1) * (NQ_UINT)    sizeof(NQ_WCHAR) * 2)) == NULL)
     {
-        if (parentT)        syFree(parentT);
-        if (domainNameT)    syFree(domainNameT);
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
-    cmAnsiToTchar(printerNameT, printerName);
+    cmAnsiToUnicode(printerNameW, printerName);
 
-    status = ldPublishPrinterT(handle, parentT, domainNameT, printerNameT);
+    status = ldPublishPrinterW(handle, parentW, domainNameW, printerNameW);
     
-    if (parentT)        syFree(parentT);
-    if (domainNameT)    syFree(domainNameT);
-    syFree(printerNameT);
+Exit:
+    status = ldPublishPrinterW(handle, parentW, domainNameW, printerNameW);
+    if (parentW)        cmMemoryFree(parentW);
+    if (domainNameW)    cmMemoryFree(domainNameW);
+    cmMemoryFree(printerNameW);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d",status);
     return status;
-}        
+}
 
 
 /* Add printer property with string value (ASCII) */
-NQ_STATUS                            
+NQ_STATUS
 ldAddPrinterPropertyStringA(
         LDConnectionHandle handle,  /* LDAP connection handle */
         const NQ_CHAR *printerName, /* printer name */
-        const NQ_CHAR *domainName,  /* domain name (may be NULL if printerName has ldap syntax */
+        const NQ_CHAR *domainName,  /* domain name (may be NULL if printerName has LDAP syntax */
         const NQ_CHAR *name,        /* property/attribute name */
         const NQ_CHAR *value        /* property/attribute value */
         )
 {
-    NQ_STATUS status;
-    NQ_TCHAR *printerNameT = NULL, *domainNameT = NULL, *nameT = NULL, *valueT = NULL;
+    NQ_STATUS status = LDAP_ERROR;
+    NQ_WCHAR *printerNameW = NULL, *domainNameW = NULL, *nameW = NULL, *valueW = NULL;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL); 
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     if (!printerName || !name || !value)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Invalid input");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
 
-    printerNameT = (NQ_TCHAR *)syCalloc(syStrlen(printerName) + 1, sizeof(NQ_TCHAR));
+    printerNameW = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)(syStrlen(printerName) + 1) * (NQ_UINT)sizeof(NQ_WCHAR));
     if (domainName)
-        domainNameT = (NQ_TCHAR *)syCalloc(syStrlen(domainName) + 1, sizeof(NQ_TCHAR));
-    nameT = (NQ_TCHAR *)syCalloc(syStrlen(name) + 1, sizeof(NQ_TCHAR));
-    valueT = (NQ_TCHAR *)syCalloc(syStrlen(value) + 1, sizeof(NQ_TCHAR));
+        domainNameW = (NQ_WCHAR *)cmMemoryAllocate(((NQ_UINT)syStrlen(domainName) + 1) * (NQ_UINT)sizeof(NQ_WCHAR));
+    nameW = (NQ_WCHAR *)cmMemoryAllocate(((NQ_UINT)syStrlen(name) + 1) * (NQ_UINT)sizeof(NQ_WCHAR));
+    valueW = (NQ_WCHAR *)cmMemoryAllocate(((NQ_UINT)syStrlen(value) + 1) * (NQ_UINT)sizeof(NQ_WCHAR));
 
-    if (!printerNameT || !nameT || !valueT || (domainName && !domainNameT))
+    if (!printerNameW || !nameW || !valueW || (domainName && !domainNameW))
     {
-        if (printerNameT)    syFree(printerNameT);
-        if (domainNameT)     syFree(domainNameT);
-        if (nameT)           syFree(nameT);
-        if (valueT)          syFree(valueT);
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
     else
     {
-        cmAnsiToTchar(printerNameT, printerName);    
+        cmAnsiToUnicode(printerNameW, printerName);
         if (domainName)
-            cmAnsiToTchar(domainNameT, domainName);    
-        cmAnsiToTchar(nameT, name);
-        cmAnsiToTchar(valueT, value);
+            cmAnsiToUnicode(domainNameW, domainName);
+        cmAnsiToUnicode(nameW, name);
+        cmAnsiToUnicode(valueW, value);
     }
 
-    status = ldAddPrinterPropertyStringT(handle, printerNameT, domainNameT, nameT, valueT);
-    
-    syFree(printerNameT);
-    if (domainNameT)    syFree(domainNameT);
-    syFree(nameT);
-    syFree(valueT);
+    status = ldAddPrinterPropertyStringW(handle, printerNameW, domainNameW, nameW, valueW);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
+Exit:
+    cmMemoryFree(printerNameW);
+    cmMemoryFree(domainNameW);
+    cmMemoryFree(nameW);
+    cmMemoryFree(valueW);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", status);
     return status;
 }
 
 /* Add printer property with string value (Unicode) */
-NQ_STATUS                            
+NQ_STATUS
 ldAddPrinterPropertyStringW(
         LDConnectionHandle handle,   /* LDAP connection handle */
         const NQ_WCHAR *printerName, /* printer name */
-        const NQ_WCHAR *domainName,  /* domain name (may be NULL if printerName has ldap syntax */
+        const NQ_WCHAR *domainName,  /* domain name (may be NULL if printerName has LDAP syntax */
         const NQ_WCHAR *name,        /* property/attribute name */
         const NQ_WCHAR *value        /* property/attribute value */
         )
 {
-    NQ_STATUS status;
-    NQ_TCHAR *printerNameT = NULL, *domainNameT = NULL, *nameT = NULL, *valueT = NULL;
+    NQ_STATUS status = LDAP_ERROR;
+    NQ_CHAR *base = NULL, *nameA = NULL, *valueA = NULL;
+	LDTransactionHandle *trns;
+	LDResultHandle result;
+	const NQ_WCHAR cn[] = {cmWChar('C'), cmWChar('N'), cmWChar('='), cmWChar('\0')};
 
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL); 
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "handle:%p printerName:%s domainName:%s name:%s value:%s", handle, cmWDump(printerName), cmWDump(domainName), cmWDump(name), value);
 
     if (!printerName || !name || !value)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Invalid input");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
-
-    printerNameT = (NQ_TCHAR *)syCalloc(cmWStrlen(printerName) + 1, sizeof(NQ_TCHAR) * 2);
-    if (domainName)
-        domainNameT = (NQ_TCHAR *)syCalloc(cmWStrlen(domainName) + 1, sizeof(NQ_TCHAR) * 2);
-    nameT = (NQ_TCHAR *)syCalloc(cmWStrlen(name) + 1, sizeof(NQ_TCHAR) * 2);
-    valueT = (NQ_TCHAR *)syCalloc(cmWStrlen(value) + 1, sizeof(NQ_TCHAR) * 2);
-
-    if (!printerNameT || !nameT || !valueT || (domainName && !domainNameT))
-    {
-        if (printerNameT)    syFree(printerNameT);
-        if (domainNameT)     syFree(domainNameT);
-        if (nameT)           syFree(nameT);
-        if (valueT)          syFree(valueT);
-        LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
-    }
-    else
-    {
-        cmUnicodeToTchar(printerNameT, printerName);        
-        cmUnicodeToTchar(nameT, name);
-        cmUnicodeToTchar(valueT, value);
-    }
-
-    status = ldAddPrinterPropertyStringT(handle, printerNameT, domainNameT, nameT, valueT);
-    
-    syFree(printerNameT);
-    if (domainNameT)    syFree(domainNameT);
-    syFree(nameT);
-    syFree(valueT);
-
-    LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-    return status;
-}
-
-/* Add printer property with string value */
-static
-NQ_STATUS                            
-ldAddPrinterPropertyStringT(
-        LDConnectionHandle handle,   /* LDAP connection handle */
-        const NQ_TCHAR *printerName, /* printer name (may be ldap dn name (CN=..., DC=...) */
-        const NQ_TCHAR *domainName,  /* domain name (may be NULL if printerName has ldap syntax */
-        const NQ_TCHAR *name,        /* property/attribute name */
-        const NQ_TCHAR *value        /* property/attribute value */
-        )
-{
-    NQ_CHAR *base = NULL, *nameA, *valueA;
-    LDTransactionHandle *trns; 
-    LDResultHandle result;
-    NQ_STATUS status;
-    const NQ_TCHAR cn[] = {cmTChar('C'), cmTChar('N'), cmTChar('='), cmTChar('\0')};
-
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL); 
+    /* at this point TCHAR function and WChar functions were jointed together */
 
     /* construct base name for search operation */
-    if (cmTStrincmp(cn, printerName, cmTStrlen(cn)) == 0)
+    if (cmWStrincmp(cn, printerName, cmWStrlen(cn)) == 0)
     {
-        if ((base = (NQ_CHAR *)syCalloc(1, cmTStrlen(printerName) * 4 + 1)) == NULL)
+        if ((base = (NQ_CHAR *)cmMemoryAllocate(cmWStrlen(printerName) * 4 + 1)) == NULL)
         {
             LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-            LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-            return LDAP_ERROR;
+            goto Exit;
         }
-        cmTcharToUTF8N(base, printerName, cmTStrlen(printerName));
+        cmUnicodeToUTF8N(base, printerName, cmWStrlen(printerName));
     }
     else
     {
-        NQ_TCHAR *p1, *p2;
-        if ((base = (NQ_CHAR *)syCalloc(1, cmTStrlen(printerName) * 4 + cmTStrlen(domainName) * 4 + 6)) == NULL)
+        NQ_WCHAR *p1, *p2;
+        if ((base = (NQ_CHAR *)cmMemoryAllocate(cmWStrlen(printerName) * 4 + cmWStrlen(domainName) * 4 + 6)) == NULL)
         {
             LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-            LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-            return LDAP_ERROR;
+            goto Exit;
         }
         syStrcpy(base, "CN=");
-        cmTcharToUTF8N(base + syStrlen(base), printerName, cmTStrlen(printerName) * 4 + cmTStrlen(domainName) * 4 + 6 - syStrlen(base));
+        cmUnicodeToUTF8N(base + syStrlen(base), printerName, (NQ_UINT)cmWStrlen(printerName) * 4 + (NQ_UINT)cmWStrlen(domainName) * 4 + 6 - (NQ_COUNT)syStrlen(base));
         syStrcat(base, ",CN=Computers, ");
 
         /* construct domain name */
 
-        p1 = (NQ_TCHAR *)domainName;
-        p2 = cmTStrchr(p1, cmTChar('.'));
+        p1 = (NQ_WCHAR *)domainName;
+        p2 = cmWStrchr(p1, cmWChar('.'));
         while (p2 != NULL)
         {
-            *p2 = cmTChar('\0');
+            *p2 = cmWChar('\0');
             syStrcat(base, "DC=");
-            cmTcharToAnsi(base + syStrlen(base), p1);
+            cmUnicodeToAnsi(base + syStrlen(base), p1);
             p1 = p2 + 1;
-            p2 = cmTStrchr(p1, cmTChar('.'));
+            p2 = cmWStrchr(p1, cmWChar('.'));
         }
         syStrcat(base, ", DC=");
-        cmTcharToAnsi(base + syStrlen(base), p1);
-        TRC("base: %s", base);
+        cmUnicodeToAnsi(base + syStrlen(base), p1);
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "base: %s", base);
     }
 
     /* find printer*/
     if (ldSearch(handle, base, LDAP_SCOPESUBTREE, "(objectCategory=PrintQueue)", NULL, &result) != 0)
     {
-        syFree(base);
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to find printer");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
     ldReleaseResult(handle, result);
 
     /* convert attribute name */
-    if ((nameA = (NQ_CHAR *)syCalloc(1, cmTStrlen(name) * 4)) == NULL)
+    if ((nameA = (NQ_CHAR *)cmMemoryAllocate(cmWStrlen(name) * 4)) == NULL)
     {
-        syFree(base);
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
-    cmTcharToUTF8N(nameA, name, cmTStrlen(name));
-    
+    cmUnicodeToUTF8N(nameA, name, cmWStrlen(name));
+
     /* convert attribute value */
-    if ((valueA = (NQ_CHAR *)syCalloc(1, cmTStrlen(value) * 4)) == NULL)
+    if ((valueA = (NQ_CHAR *)cmMemoryAllocate(cmWStrlen(value) * 4)) == NULL)
     {
-        syFree(base);
-        syFree(nameA);
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
-    cmTcharToUTF8N(valueA, value, cmTStrlen(value));
+    cmUnicodeToUTF8N(valueA, value, cmWStrlen(value));
 
     /* start Modify transaction */
     trns = ldModify(handle, NULL, base);
@@ -1232,12 +931,13 @@ ldAddPrinterPropertyStringT(
     /* execute transaction */
     status = ldExecute(trns, TRUE);
 
+Exit:
     /* free pointers */
-    syFree(base);
-    syFree(nameA);
-    syFree(valueA);
+    cmMemoryFree(base);
+    cmMemoryFree(nameA);
+    cmMemoryFree(valueA);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", status); 
     return status;
 }
 
@@ -1247,53 +947,48 @@ NQ_STATUS                           /* error code */
 ldAddPrinterPropertyBinaryA(
         LDConnectionHandle handle,   /* LDAP handle */
         const NQ_CHAR *printerName, /* printer name */
-        const NQ_CHAR *domainName,  /* domain name (may be NULL if printerName has ldap syntax */
+        const NQ_CHAR *domainName,  /* domain name (may be NULL if printerName has LDAP syntax */
         const NQ_CHAR *name,        /* property/attribute name */
         const NQ_BYTE *value,       /* property/attribute value */
         NQ_UINT length              /* property/attribute value length */
         )
 {
-    NQ_STATUS status;
-    NQ_TCHAR *printerNameT = NULL, *domainNameT = NULL, *nameT = NULL;
+    NQ_STATUS status = LDAP_ERROR;
+    NQ_WCHAR *printerNameW = NULL, *domainNameW = NULL, *nameW = NULL;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL); 
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     if (!printerName || !name || !value)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Invalid input");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
 
-    printerNameT = (NQ_TCHAR *)syCalloc(syStrlen(printerName) + 1, sizeof(NQ_TCHAR));
+    printerNameW = (NQ_WCHAR *)cmMemoryAllocate(((NQ_UINT)syStrlen(printerName) + 1) * (NQ_UINT)sizeof(NQ_WCHAR));
     if (domainName)
-        domainNameT = (NQ_TCHAR *)syCalloc(syStrlen(domainName) + 1, sizeof(NQ_TCHAR));
-    nameT = (NQ_TCHAR *)syCalloc(syStrlen(name) + 1, sizeof(NQ_TCHAR));
+        domainNameW = (NQ_WCHAR *)cmMemoryAllocate(((NQ_UINT)syStrlen(domainName) + 1) * (NQ_UINT)sizeof(NQ_WCHAR));
+    nameW = (NQ_WCHAR *)cmMemoryAllocate(((NQ_COUNT)syStrlen(name) + 1) * (NQ_COUNT)sizeof(NQ_WCHAR));
 
-    if (!printerNameT || !nameT)
+    if (!printerNameW || !nameW)
     {
-        if (printerNameT)    syFree(printerNameT);
-        if (domainNameT)     syFree(domainNameT);
-        if (nameT)           syFree(nameT);
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
     else
     {
-        cmAnsiToTchar(printerNameT, printerName);    
+        cmAnsiToUnicode(printerNameW, printerName);
         if (domainName)
-            cmAnsiToTchar(domainNameT, domainName);    
-        cmAnsiToTchar(nameT, name);
+            cmAnsiToUnicode(domainNameW, domainName);
+        cmAnsiToUnicode(nameW, name);
     }
 
-    status = ldAddPrinterPropertyBinaryT(handle, printerNameT, domainNameT, nameT, value, length);
-    
-    syFree(printerNameT);
-    if (domainNameT)    syFree(domainNameT);
-    syFree(nameT);
+    status = ldAddPrinterPropertyBinaryW(handle, printerNameW, domainNameW, nameW, value, length);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
+Exit:
+    cmMemoryFree(printerNameW);
+    if (domainNameW) cmMemoryFree(domainNameW);
+    cmMemoryFree(nameW);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", status);
     return status;
 }
 
@@ -1302,135 +997,79 @@ NQ_STATUS                           /* error code */
 ldAddPrinterPropertyBinaryW(
         LDConnectionHandle handle,   /* LDAP handle */
         const NQ_WCHAR *printerName, /* printer name */
-        const NQ_WCHAR *domainName,  /* domain name (may be NULL if printerName has ldap syntax */
+        const NQ_WCHAR *domainName,  /* domain name (may be NULL if printerName has LDAP syntax */
         const NQ_WCHAR *name,        /* property/attribute name */
         const NQ_BYTE *value,        /* property/attribute value */
         NQ_UINT length               /* property/attribute value length */
         )
 {
-    NQ_STATUS status;
-    NQ_TCHAR *printerNameT = NULL, *domainNameT = NULL, *nameT = NULL;
+    NQ_STATUS status = LDAP_ERROR;
+    NQ_CHAR *base = NULL, *nameA = NULL;
+	LDTransactionHandle *trns;
+	LDResultHandle result;
+	const NQ_WCHAR cn[] = {cmWChar('C'), cmWChar('N'), cmWChar('='), cmWChar('\0')};
+	NQ_WCHAR *p1, *p2;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL); 
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     if (!printerName || !name || !value)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Invalid input");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
-
-    printerNameT = (NQ_TCHAR *)syCalloc(cmWStrlen(printerName) + 1, sizeof(NQ_TCHAR) * 2);
-    if (domainName)
-        domainNameT = (NQ_TCHAR *)syCalloc(cmWStrlen(domainName) + 1, sizeof(NQ_TCHAR) * 2);
-    nameT = (NQ_TCHAR *)syCalloc(cmWStrlen(name) + 1, sizeof(NQ_TCHAR) * 2);
-
-    if (!printerNameT || !nameT)
-    {
-        if (printerNameT)    syFree(printerNameT);
-        if (domainNameT)     syFree(domainNameT);
-        if (nameT)           syFree(nameT);
-        LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
-    }
-    else
-    {
-        cmUnicodeToTchar(printerNameT, printerName);    
-        if (domainName)
-            cmUnicodeToTchar(domainNameT, domainName);    
-        cmUnicodeToTchar(nameT, name);
-    }
-
-    status = ldAddPrinterPropertyBinaryT(handle, printerNameT, domainNameT, nameT, value, length);
-    
-    syFree(printerNameT);
-    if (domainNameT)    syFree(domainNameT);
-    syFree(nameT);
-
-    LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-    return status;
-}
-
-
-
-NQ_STATUS                           /* error code */
-ldAddPrinterPropertyBinaryT(
-        LDConnectionHandle handle,   /* LDAP handle */
-        const NQ_TCHAR *printerName, /* printer name */
-        const NQ_TCHAR *domainName,  /* domain name (may be NULL if printerName has ldap syntax */
-        const NQ_TCHAR *name,        /* property/attribute name */
-        const NQ_BYTE *value,        /* property/attribute value */
-        NQ_UINT length               /* property/attribute value length */
-        )
-{
-    NQ_CHAR *base = NULL, *nameA;
-    LDTransactionHandle *trns; 
-    LDResultHandle result;
-    NQ_STATUS status;
-    const NQ_TCHAR cn[] = {cmTChar('C'), cmTChar('N'), cmTChar('='), cmTChar('\0')};
-    NQ_TCHAR *p1, *p2;
-
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL); 
 
     /* construct base name for search operation */
-    if (cmTStrincmp(cn, printerName, cmTStrlen(cn)) == 0)
+    if (cmWStrincmp(cn, printerName, cmWStrlen(cn)) == 0)
     {
-        if ((base = (NQ_CHAR *)syCalloc(1, cmTStrlen(printerName) * 4 + 1)) == NULL)
+        if ((base = (NQ_CHAR *)cmMemoryAllocate(cmWStrlen(printerName) * 4 + 1)) == NULL)
         {
             LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-            LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-            return LDAP_ERROR;
+            goto Exit;
         }
-        cmTcharToUTF8N(base, printerName, cmTStrlen(printerName));
+        cmUnicodeToUTF8N(base, printerName, cmWStrlen(printerName));
     }
     else
     {
-        if ((base = (NQ_CHAR *)syCalloc(1, cmTStrlen(printerName) * 4 + cmTStrlen(domainName) * 4 + 6)) == NULL)
+        if ((base = (NQ_CHAR *)cmMemoryAllocate(cmWStrlen(printerName) * 4 + cmWStrlen(domainName) * 4 + 6)) == NULL)
         {
             LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-            LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-            return LDAP_ERROR;
+            goto Exit;
         }
         syStrcpy(base, "CN=");
-        cmTcharToUTF8N(base + syStrlen(base), printerName, cmTStrlen(printerName));
+        cmUnicodeToUTF8N(base + syStrlen(base), printerName, cmWStrlen(printerName));
         syStrcat(base, ",CN=Computers, ");
 
         /* construct domain name */
-        p1 = (NQ_TCHAR *)domainName;
-        p2 = cmTStrchr(p1, cmTChar('.'));
+        p1 = (NQ_WCHAR *)domainName;
+        p2 = cmWStrchr(p1, cmWChar('.'));
         while (p2 != NULL)
         {
-            *p2 = cmTChar('\0');
+            *p2 = cmWChar('\0');
             syStrcat(base, "DC=");
-            cmTcharToAnsi(base + syStrlen(base), p1);
+            cmUnicodeToAnsi(base + syStrlen(base), p1);
             p1 = p2 + 1;
-            p2 = cmTStrchr(p1, cmTChar('.'));
+            p2 = cmWStrchr(p1, cmWChar('.'));
         }
         syStrcat(base, ", DC=");
-        cmTcharToAnsi(base + syStrlen(base), p1);
-        TRC("base: %s", base);
+        cmUnicodeToAnsi(base + syStrlen(base), p1);
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "base: %s", base);
     }
 
     /* find printer*/
     if (ldSearch(handle, base, LDAP_SCOPESUBTREE, "(objectCategory=PrintQueue)", NULL, &result) != 0)
     {
-        syFree(base);
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to find printer");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
     ldReleaseResult(handle, result);
 
     /* convert attribute name */
-    if ((nameA = (NQ_CHAR *)syCalloc(1, cmTStrlen(name) * 4)) == NULL)
+    if ((nameA = (NQ_CHAR *)cmMemoryAllocate(cmWStrlen(name) * 4)) == NULL)
     {
-        syFree(base);
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate memory");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
-        return LDAP_ERROR;
+        goto Exit;
     }
-    cmTcharToUTF8N(nameA, name, cmTStrlen(name));   
+    cmUnicodeToUTF8N(nameA, name, cmWStrlen(name));
 
     /* start Modify transaction */
     trns = ldModify(handle, NULL, base);
@@ -1441,13 +1080,12 @@ ldAddPrinterPropertyBinaryT(
     /* execute transaction */
     status = ldExecute(trns, TRUE);
 
-    /* free pointers */
-    syFree(base);
-    syFree(nameA);
+Exit:
+	/* free pointers */
+	cmMemoryFree(base);
+    cmMemoryFree(nameA);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_TOOL); 
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", status);
     return status;
 }
-
-
 #endif /* UD_CC_INCLUDELDAP */

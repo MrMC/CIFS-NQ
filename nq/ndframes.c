@@ -27,7 +27,7 @@
 
  Functions whose start with ndFrameFramesSendFrame are sending packets outside
  Functions whose start with ndFrameFramesReturn are sending packets back to an internal
- apprlication
+ application
  */
 
 /*
@@ -50,7 +50,8 @@ ndGenerateNameWhateverRequest(
     CMNetBiosHeader* msgHdr,
     const CMNetBiosName name,
     NQ_UINT32 ip,
-    NQ_BOOL nodeTypeB
+    NQ_BOOL nodeTypeB,
+	NQ_BOOL isGroupName
     )
 {
     NQ_BYTE*            questionName;   /* pointer to the target question name */
@@ -58,9 +59,10 @@ ndGenerateNameWhateverRequest(
     NQ_BYTE*            resName;        /* pointer to the target RR name */
     CMNetBiosResourceRecord* resBody;   /* pointer to the target RR body */
     CMNetBiosAddrEntry* addrEntry;      /* pointer to an ADDR ENTRY structure */
-    NQ_UINT              shift;          /* various shifts in the message */
+    NQ_UINT             shift;          /* various shifts in the message */
+    NQ_INT              result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "msgHdr:%p name:%s ip:0x%x nodeTypeB:%s", msgHdr, name ? name : "", ip, nodeTypeB ? "TRUE" : "FALSE");
 
     /* fill in the frame buffer header */
 
@@ -78,16 +80,15 @@ ndGenerateNameWhateverRequest(
     if (shift <= 0)
     {
         sySetLastError(CM_NBERR_NOTNETBIOSNAME);
-        TRCERR("Unable to encode name");
-        TRC1P("Illegal name: %s", name);
-        TRCE();
-        return -1;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to encode name");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Illegal name: %s", name);
+        goto Exit;
     }
 
     questionBody = (CMNetBiosQuestion*) (questionName + shift);
 
-    cmPutSUint16(questionBody->questionType,  syHton16(CM_NB_RTYPE_NB));      /* type */;
-    cmPutSUint16(questionBody->questionClass, syHton16(CM_NB_RCLASS_IN));     /* class */;
+    cmPutSUint16(questionBody->questionType,  syHton16(CM_NB_RTYPE_NB));      /* type */
+    cmPutSUint16(questionBody->questionClass, syHton16(CM_NB_RCLASS_IN));     /* class */
 
     /* fill in the resource record */
 
@@ -98,16 +99,15 @@ ndGenerateNameWhateverRequest(
     if (shift <= 0)
     {
         sySetLastError(CM_NBERR_NOTNETBIOSNAME);
-        TRCERR("Unable to encode a name pointer");
-        TRC1P("Illegal name: %s", name);
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to encode a name pointer");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Illegal name: %s", name);
+        goto Exit;
     }
 
     resBody = (CMNetBiosResourceRecord*)(resName + shift);
 
-    cmPutSUint16(resBody->rrType,   syHton16(CM_NB_RTYPE_NB));         /* type */;
-    cmPutSUint16(resBody->rrClass,  syHton16(CM_NB_RCLASS_IN));        /* class */;
+    cmPutSUint16(resBody->rrType,   syHton16(CM_NB_RTYPE_NB));         /* type */
+    cmPutSUint16(resBody->rrClass,  syHton16(CM_NB_RCLASS_IN));        /* class */
     cmPutSUint32(resBody->ttl,      0);
     cmPutSUint16(resBody->rdLength, syHton16(sizeof(CMNetBiosAddrEntry)));
 
@@ -117,19 +117,23 @@ ndGenerateNameWhateverRequest(
         NQ_UINT16 temp;     /* for composing flags */
         CMNetBiosName domain;
         
-        cmNetBiosNameCreate(domain, cmNetBiosGetDomain()->name,CM_NB_POSTFIX_WORKSTATION);
+        cmNetBiosNameCreate(domain, cmNetBiosGetDomain()->name,CM_NB_POSTFIX_SERVER);
         addrEntry = (CMNetBiosAddrEntry*)(resBody + 1);
-        temp = (NQ_BYTE)((nodeTypeB)? CM_NB_NAMEFLAGS_ONT_B : CM_NB_NAMEFLAGS_ONT_M);
-        if (0 == cmAStricmp(name, domain))
+        /* if WINS server address exists we behave as H node and register as H node.
+         * else we register as B node */
+        temp = (NQ_UINT16)((nodeTypeB)? CM_NB_NAMEFLAGS_ONT_B : CM_NB_NAMEFLAGS_ONT_H);
+        if (0 == cmAStricmp(name, domain) || isGroupName)
         {
             temp |= CM_NB_NAMEFLAGS_G;
         }
         cmPutSUint16(addrEntry->flags, syHton16(temp));
         cmPutSUint32(addrEntry->ip, ip);
     }
+    result = (NQ_INT)((NQ_BYTE*)(addrEntry + 1) - (NQ_BYTE*)msgHdr);
 
-    TRCE();
-    return (NQ_INT)((NQ_BYTE*)(addrEntry + 1) - (NQ_BYTE*)msgHdr);
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -161,8 +165,9 @@ ndGenerateNameWhateverResponse(
     NQ_BYTE*               answerName;     /* pointer to the target answer name */
     CMNetBiosResourceRecord* resBody;   /* pointer to the target RR body */
     NQ_UINT                shift;          /* various shifts in the message */
+    NQ_INT                 result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "msgHdr:%p name:%s type:%u moreData:%p moreLength:%u", msgHdr, name ? name : "", type, moreData, moreLength);
 
     /* fill in the frame buffer header */
 
@@ -179,24 +184,26 @@ ndGenerateNameWhateverResponse(
     if (shift <= 0)
     {
         sySetLastError(CM_NBERR_NOTNETBIOSNAME);
-        TRCERR("Unable to encode name");
-        TRC1P("Illegal name: %s", name);
-        TRCE();
-        return -1;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to encode name");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Illegal name: %s", name);
+        goto Exit;
     }
 
     /* fill in the resource record */
 
     resBody = (CMNetBiosResourceRecord*) (answerName + shift);
-    cmPutSUint16(resBody->rrType,    syHton16(type));                     /* type */;
-    cmPutSUint16(resBody->rrClass,   syHton16(CM_NB_RCLASS_IN));          /* class */;
+    cmPutSUint16(resBody->rrType,    syHton16(type));                     /* type */
+    cmPutSUint16(resBody->rrClass,   syHton16(CM_NB_RCLASS_IN));          /* class */
     cmPutSUint32(resBody->ttl,       0);
     cmPutSUint16(resBody->rdLength,  syHton16((NQ_UINT16)moreLength));
     if (moreLength > 0)
         syMemcpy((NQ_BYTE*)(resBody + 1), moreData, moreLength);
 
-    TRCE();
-    return (NQ_INT)(((NQ_BYTE*)(resBody + 1) - (NQ_BYTE*)msgHdr) + moreLength);
+    result = (NQ_INT)((NQ_BYTE*)(resBody + 1) - (NQ_BYTE*)msgHdr) + (NQ_INT)moreLength;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -219,10 +226,11 @@ ndGenerateNameQueryRequest(
     )
 {
     NQ_BYTE*               questionName;   /* pointer to the target question name */
-    CMNetBiosQuestion*  questionBody;   /* question entry trailer */
+    CMNetBiosQuestion*     questionBody;   /* question entry trailer */
     NQ_COUNT               shift;          /* various shifts in the message */
+    NQ_INT                 result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "msgHdr:%p name:%s", msgHdr, name);
 
     /* fill in the frame buffer header */
 
@@ -239,19 +247,20 @@ ndGenerateNameQueryRequest(
     if (shift <= 0)
     {
         sySetLastError(CM_NBERR_NOTNETBIOSNAME);
-        TRCERR("Unable to encode name");
-        TRC1P("Illegal name: %s", name);
-        TRCE();
-        return -1;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to encode name");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Illegal name: %s", name);
+        goto Exit;
     }
 
     questionBody = (CMNetBiosQuestion*) (questionName + shift);
 
-    cmPutSUint16(questionBody->questionType,   syHton16(CM_NB_RTYPE_NB));      /* type */;
-    cmPutSUint16(questionBody->questionClass, syHton16(CM_NB_RCLASS_IN));     /* class */;
+    cmPutSUint16(questionBody->questionType,   syHton16(CM_NB_RTYPE_NB));      /* type */
+    cmPutSUint16(questionBody->questionClass, syHton16(CM_NB_RCLASS_IN));      /* class */
+    result = (NQ_INT)((NQ_BYTE*)(questionBody + 1) - (NQ_BYTE*)msgHdr);
 
-    TRCE();
-    return (NQ_INT)((NQ_BYTE*)(questionBody + 1) - (NQ_BYTE*)msgHdr);
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 #endif /* UD_ND_INCLUDENBDAEMON */

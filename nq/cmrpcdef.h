@@ -78,7 +78,7 @@ SY_PACK_ATTR CMRpcDcerpcSyntaxId;
 typedef SY_PACK_PREFIX struct
 {
     NQ_SUINT16 contextId;                /* ID of this context */
-    NQ_SBYTE numTransferSyntaxes;        /* number of trasfer syntaxes following this record */
+    NQ_SBYTE numTransferSyntaxes;        /* number of transfer syntaxes following this record */
     CMRpcDcerpcSyntaxId abstractSyntax;  /* transfer-independent syntax */
 }
 SY_PACK_ATTR CMRpcDcerpcCtxList;
@@ -168,6 +168,7 @@ SY_PACK_ATTR CMRpcDcerpcFault;
 
 /* Status values */
 /* generic: */
+#define CM_RP_FAULTREVISIONMISMATCH 0x0000051a
 #define CM_RP_FAULTVERSIONMISMATCH  0x1c000008
 #define CM_RP_FAULTREJECT           0x1c000009
 #define CM_RP_FAULTBADACTID         0x1c00000a
@@ -183,6 +184,7 @@ SY_PACK_ATTR CMRpcDcerpcFault;
 #define CM_RP_FAULTNOLEVEL          0xc0000003
 #define CM_RP_FAULTNDR              0x000006f7
 #define CM_RP_FAULTUNSUPPORTED      0xc0000032
+#define CM_RP_FAULMOREDATA          0x000000ea
 #define CM_RP_FILENOTFOUND          0x00000002
 #define CM_RP_OUTOFMEMORY           0x00000008
 #define CM_RP_INVALIDFID            0x00000006
@@ -213,15 +215,19 @@ SY_PACK_ATTR CMRpcDcerpcFault;
 #define CM_RP_FAULTTXOPENFAILED        0x1c000022
 #define CM_RP_FAULTCODESETCONVERROR    0x1c000023
 #define CM_RP_FAULTNOCLIENTSTUB        0x1c000025
+#define CM_RP_FAULTTIMEOUT		       0x000005b4
 #define CM_RP_FAULTNONEMAPPED          0xc0000073
 #define CM_RP_FAULTSOMENOTMAPPED       0x00000107
 #define CM_RP_FAULTINVALIDPRINTERNAME  0x00000709
 #define CM_RP_INSUFFICIENTBUFFER       0x0000007a
 #define CM_RP_UNKNOWNLEVEL             0x0000007C
+#define CM_RP_FAULTALREADYSHARED       0x00000846
+#define CM_RP_FAULTINTERNALERROR       0x0000085c
 #define CM_RP_FAULTNAMENOTFOUND        0x00000906
 #define CM_RP_FAULTSESSIONNOTFOUND     0x00000908
 #define CM_RP_FAULTINVALIDPARAMETER    0x00000057
 #define CM_RP_SERVER_UNAVAILABLE       0x000006ba
+#define CM_RP_ENDENUMRPC		       0x16c9a0d6
 
 
 /* Auth PDU */
@@ -470,6 +476,12 @@ cmRpcParseUint32(
     );
 
 void
+cmRpcParseUint64(
+    CMRpcPacketDescriptor *pDesc,
+    NQ_UINT64 *pRes
+    );
+
+void
 cmRpcParseUnicode(
     CMRpcPacketDescriptor *pDesc,
     CMRpcUnicodeString *pRes,
@@ -538,7 +550,7 @@ void cmRpcPackTimeAsUTC(
     NQ_TIME time
     );
 
-void
+NQ_UINT32
 cmRpcPackUnicode(
     CMRpcPacketDescriptor *pDesc,
     const NQ_WCHAR *str,
@@ -566,6 +578,12 @@ cmRpcPackSkip(
     );
 
 void
+cmRpcPackZeroes(
+    CMRpcPacketDescriptor *pDesc,
+    NQ_UINT32 num
+    );
+
+void
 cmRpcAllignZero(
     CMRpcPacketDescriptor *pDesc,
     NQ_UINT16 align
@@ -588,14 +606,15 @@ NQ_UINT32 cmRpcPackAsciiAsUnicode(
     NQ_INT flags
     );
 
-NQ_UINT32 cmRpcPackTcharAsUnicode(
+
+NQ_UINT32 cmRpcPackWcharAsUnicode(
     CMRpcPacketDescriptor * desc,
-    const NQ_TCHAR * source,
+    const NQ_WCHAR * source,
     NQ_INT flags
     );
 
 NQ_UINT32 cmRpcTcharAsUnicodeLength(
-    const NQ_TCHAR* source
+    const NQ_WCHAR* source
     );
 
 #endif  /* _CMRPCDEF_H_ */

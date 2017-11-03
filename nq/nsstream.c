@@ -56,21 +56,74 @@ nsSkipHeader(
     )
 {
     SocketSlot* pSock;                      /* actual pointer to a socket slot */
+    NQ_BYTE* pResult = NULL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_TOOL, "socket:%p buf:%p", socket, buf);
 
     pSock = (SocketSlot*)socket;
 
     if (pSock != NULL && !pSock->isNetBios) /* socket is not NetBIOS */
     {
-        TRC("Not a NetBIOS socket");
+        LOGMSG(CM_TRC_LEVEL_MESS_SOME, "Not a NetBIOS socket");
+        pResult = buf;
+        goto Exit;
+    }
+    pResult = buf + sizeof(CMNetBiosSessionMessage);
 
-        TRCE();
-        return buf;
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_TOOL, "result:%p", pResult);
+    return pResult;
+}
+
+/*
+ *====================================================================
+ * PURPOSE: Write to a stream
+ *--------------------------------------------------------------------
+ * PARAMS:  IN buffer to send (including space for header)
+ *          IN packetlen length of the NBT packet
+ *          IN dataCount data length - may include the entire packet data or
+ *                       just headers without payload
+ *
+ *
+ * RETURNS: TRUE or FALSE
+ * NOTES:
+ *====================================================================
+ */
+
+NQ_COUNT
+nsPrepareNBBuffer(
+    NQ_BYTE *buf,	            /* buffer to use */
+    NQ_UINT packetLen,          /* packet length */
+    NQ_UINT dataCount           /* data length (may the entire packet data or just headers with no payload) */
+    )
+{
+	NQ_COUNT res = 0;
+    CMNetBiosSessionMessage* msgHdr;    /* casted pointer to the outgoing message */
+
+    LOGFB(CM_TRC_LEVEL_FUNC_TOOL, "buf:%p packetLen:%u dataCount:%u" , buf, packetLen, dataCount);
+
+
+    if (packetLen <= 0)
+    {
+        sySetLastError(CM_NBERR_INVALIDPARAMETER);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Invalid data length");
+        goto Exit;
     }
 
-    TRCE();
-    return buf + sizeof(CMNetBiosSessionMessage);
+    msgHdr = (CMNetBiosSessionMessage*) buf;    /* cast the pointer */
+
+    /* create a session message */
+
+    msgHdr->type = CM_NB_SESSIONMESSAGE;
+    msgHdr->flags = (NQ_BYTE)(packetLen / 0x10000);
+    packetLen = packetLen % 0x10000;
+    /* possible transaction of the 17th bit - extension */
+    cmPutSUint16(msgHdr->length, (NQ_UINT16)syHton16((NQ_UINT16)packetLen));
+    res = (NQ_COUNT)(dataCount + sizeof(CMNetBiosSessionMessage));
+
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_TOOL, "result:%d", res);
+	return res;
 }
 
 /*
@@ -79,8 +132,8 @@ nsSkipHeader(
  *--------------------------------------------------------------------
  * PARAMS:  IN socket descriptor
  *          IN buffer to send (including space for header)
- *          IN packetlen length of the NBT packet
- *          IN dataCount data length - may incldue the entire packet data or 
+ *          IN packetlen length of the packet
+ *          IN dataCount data length - may include the entire packet data or
  *                       just headers without payload
  *          IN callback function releasing the buffer
  *
@@ -100,96 +153,63 @@ nsSendFromBuffer(
     )
 {
     SocketSlot* pSock;                  /* actual pointer to a socket slot */
-    CMNetBiosSessionMessage* msgHdr;    /* casted pointer to the outgoing message */
     NQ_INT msgLen;                      /* this message length */
+    NQ_INT dataSent;
+    NQ_UINT dataToSend, offset;
+    NQ_INT result = NQ_FAIL;
 
-    TRCB();
-
-    pSock = (SocketSlot*)socketHandle;
+    LOGFB(CM_TRC_LEVEL_FUNC_TOOL, "socketHandle:%p buf:%p packetLen:%u dataCount:%u release:%p", socketHandle, buf, packetLen, dataCount, release);
 
     if (packetLen <= 0)
     {
         sySetLastError(CM_NBERR_INVALIDPARAMETER);
-        if (release != NULL)
-        {
-            (*release)(buf);
-        }
-        TRCERR("Invalid data length");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Invalid data length");
+        goto Error;
     }
 
+    pSock = (SocketSlot*)socketHandle;
     if (pSock == NULL || !syIsValidSocket(pSock->socket))
     {
         sySetLastError(CM_NBERR_INVALIDPARAMETER);
-        if (release != NULL)
-        {
-            (*release)(buf);
-        }
-        TRCERR("Illegal socket descriptor");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal socket descriptor");
+        goto Error;
     }
-
-    if (!pSock->isNetBios) /* socket is not NetBIOS */
-    {
-        TRC("Not a NetBIOS socket");
-
-        msgLen = sySendSocket(
-            pSock->socket,
-            buf,
-            dataCount
-            );
-
-        if (release != NULL)
-        {
-            (*release)(buf);
-        }
-
-        TRCE();
-        return msgLen;
-    }
-
-    msgHdr = (CMNetBiosSessionMessage*) buf;    /* cast the pointer */
-
-    /* create a session message */
-
-    msgHdr->type = CM_NB_SESSIONMESSAGE;
-    msgHdr->flags = (NQ_BYTE) (packetLen >> 16)
-                    & CM_NB_SESSIONLENGTHEXTENSION; /* extension bit is set if
-                                                       length does not fit in 16 bits */ 
-    cmPutSUint16(msgHdr->length, syHton16((NQ_UINT16)packetLen));  /* possible trancation of the 17th bit -
-                                                       extension */
-
-    msgLen = (NQ_INT)(dataCount + sizeof(CMNetBiosSessionMessage));
 
     /* send the message */
 
 #ifdef UD_NS_ASYNCSEND
     if (release == NULL)
     {
-        msgLen = sySendSocket(
+    	msgLen = sySendSocket(
             pSock->socket,
-            (NQ_BYTE*)msgHdr,
-            (NQ_UINT)msgLen
+            buf,
+           dataCountn
         );
     }
     else
     {
-        msgLen = sySendSocketAsync(
+    	msgLen = sySendSocketAsync(
             pSock->socket,
-            (NQ_BYTE*)msgHdr,
-            (NQ_UINT)msgLen,
+            buf,
+			dataCountn,
             release
         );
     }
 #else
-    msgLen = sySendSocket(
-        pSock->socket,
-        (NQ_BYTE*)msgHdr,
-        (NQ_UINT)msgLen
-    );
-    if (release != NULL)
+    if (pSock->isAccepted)
+    	syMutexTake(&pSock->guard);
+
+    for (dataSent = 0, offset = 0, dataToSend = dataCount; dataToSend > 0; dataToSend -= (NQ_UINT)dataSent, offset += (NQ_UINT)dataSent)
+    {
+        if (NQ_FAIL == (dataSent = sySendSocket(pSock->socket, buf + offset, dataToSend)))
+            break;
+    }
+    msgLen = (NQ_INT)(dataCount - dataToSend);
+
+    if (pSock->isAccepted)
+    	syMutexGive(&pSock->guard);
+
+    if (NULL != release)
     {
         (*release)(buf);        /* immediately release the buffer */
     }
@@ -197,16 +217,22 @@ nsSendFromBuffer(
 
     if (msgLen == NQ_FAIL) /* error */
     {
-        TRCERR("Error while sending message");
-
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error while sending message");
+        goto Exit;
     }
 
-    msgLen -= (NQ_INT)sizeof(CMNetBiosSessionMessage);
+    result = msgLen;
+    goto Exit;
 
-    TRCE();
-    return msgLen;
+Error:
+    if (NULL != release)
+    {
+        (*release)(buf);
+    }
+
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_TOOL, "result:%d", result);
+    return result;
 }
 
 /*
@@ -214,7 +240,7 @@ nsSendFromBuffer(
  * PURPOSE: Prepare reading from an NBT stream
  *--------------------------------------------------------------------
  * PARAMS:  IN socket descriptor
- *          OUT pointer to the receive descriptot
+ *          OUT pointer to the receive descriptor
  *
  * RETURNS: Number of bytes available for receive in the NBT packet
  *
@@ -233,8 +259,9 @@ nsStartRecvIntoBuffer(
     NQ_UINT32 packetLen;                    /* packet length, including the extension (E) bit */
     CMNetBiosSessionMessage buffer;			/* to read NBT header */
     NQ_BYTE * pBuf;                         /* pointer into this buffer */
+    NQ_INT result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_TOOL, "socket: %p, descr: %p", socket, descr);
 
     pSock = (SocketSlot*)socket;
 
@@ -243,8 +270,7 @@ nsStartRecvIntoBuffer(
     {
         sySetLastError(CM_NBERR_INVALIDPARAMETER);
         LOGERR(CM_TRC_LEVEL_ERROR, "Illegal socket descriptor");
-        TRCE();
-        return NQ_FAIL;
+        goto Exit;
     }
 #endif
 
@@ -262,14 +288,12 @@ nsStartRecvIntoBuffer(
         {
             if (res == 0)
             {
-                TRCERR("0 bytes read (header)");
-                TRCE();
-                return NQ_FAIL;
+                LOGERR(CM_TRC_LEVEL_ERROR, "0 bytes read (header)");
+                goto Exit;
             }
-            
+
             LOGERR(CM_TRC_LEVEL_ERROR, "Error during reading header");
-            TRCE();
-            return NQ_FAIL;
+            goto Exit;
         }
 
         if (buffer.type == CM_NB_SESSIONKEEPALIVE)
@@ -285,20 +309,105 @@ nsStartRecvIntoBuffer(
         {
         case CM_NB_SESSIONKEEPALIVE:
             /* discard */
-            TRCE();
-            return 0;
+            result = 0;
+            goto Exit;
         default:
-            LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected packet type %x", buffer.type);
-            TRCE();
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected packet type 0x%x", buffer.type);
+			goto Exit;
         }
     }
 
-    packetLen = syHton16(cmGetSUint16(buffer.length)) & 0xFFFF;
-    packetLen |= (((NQ_UINT32) buffer.flags) & CM_NB_SESSIONLENGTHEXTENSION) << 16;
+    packetLen = (NQ_UINT32)(syHton16(cmGetSUint16((NQ_UINT16)buffer.length)) & 0xFFFF);
+    packetLen += ((NQ_UINT32) buffer.flags) * 0x10000;
+	if (packetLen == 0)
+	{
+		LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected zero length");
+		goto Exit;
+	}
+/*    packetLen |= (((NQ_UINT32) buffer.flags) & CM_NB_SESSIONLENGTHEXTENSION) << 16; */
     descr->remaining = (NQ_COUNT)packetLen;
+    result = (NQ_INT)packetLen;
 
-    TRCE();
-    return (NQ_INT)packetLen;
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_TOOL, "result: %d", result);
+    return result;
+}
+
+/*
+ *====================================================================
+ * PURPOSE: Prepare reading from an Rpc over Tcp stream
+ *--------------------------------------------------------------------
+ * PARAMS:  IN socket descriptor
+ *          OUT pointer to the receive descriptot
+ *
+ * RETURNS: Number of bytes available for receive in the Rpc packet
+ *
+ * NOTES:   This function should be called prior to nsRecvFRomBuffer
+ *====================================================================
+ */
+
+NQ_INT
+nsStartRecvIntoRpcBuffer(
+	NSSocketHandle socket,
+	NSRecvDescr * descr,
+	NQ_BYTE * pBuf
+    )
+{
+    SocketSlot* pSock;                      /* actual pointer to a socket slot */
+    NQ_INT bytesToRead;                     /* number of bytes to receive */
+    NQ_UINT16 packetLen;                    /* packet length */
+    NQ_INT result = NQ_FAIL;
+    NQ_INT res = 0;
+
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "socket: %p, descr: %p", socket, descr);
+
+    pSock = (SocketSlot*)socket;
+
+#if SY_DEBUGMODE
+    if (pSock==NULL || !syIsValidSocket(pSock->socket))
+    {
+        sySetLastError(CM_NBERR_INVALIDPARAMETER);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal socket descriptor");
+        goto Exit;
+    }
+#endif
+
+    descr->socket = pSock;
+    bytesToRead = 10;
+
+    while (bytesToRead > 0)
+    {
+        res = syRecvSocket(pSock->socket, &pBuf[res], (NQ_COUNT)bytesToRead);
+
+        /* if no bytes received this means that the remote end died */
+        if (res == 0 || res == NQ_FAIL)
+        {
+            if (res == 0)
+            {
+                LOGERR(CM_TRC_LEVEL_ERROR, "0 bytes read (header)");
+                goto Exit;
+            }
+
+            LOGERR(CM_TRC_LEVEL_ERROR, "Error during reading header");
+            goto Exit;
+        }
+
+        bytesToRead -= res;
+    }
+
+
+    packetLen = *(NQ_UINT16 *)&pBuf[8];
+	if (packetLen == 0)
+	{
+		LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected zero length");
+		goto Exit;
+	}
+    descr->remaining = (NQ_COUNT)packetLen;
+    result = (NQ_INT)packetLen;
+
+    Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result: %d", result);
+    return result;
 }
 
 /*
@@ -322,11 +431,13 @@ nsEndRecvIntoBuffer(
     SocketSlot* pSock;                      /* actual pointer to a socket slot */
     NQ_INT bytesRead;                       /* number of bytes received */
     NQ_UINT32 lenToRead;                    /* data length we can read, may be less on buffer limits */
-    NQ_INT result;          				/* result of the select operation */
+#ifndef CM_NQ_STORAGE
     SYSocketSet socketSet;  				/* set for reading from this socket */
+#endif
     static NQ_BYTE buffer[200];				/* buffer for discarded bytes */
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_TOOL, "descr: %p", descr);
 
     pSock = (SocketSlot*)descr->socket;
 
@@ -334,52 +445,56 @@ nsEndRecvIntoBuffer(
     if (pSock==NULL || !syIsValidSocket(pSock->socket))
     {
         sySetLastError(CM_NBERR_INVALIDPARAMETER);
-        TRCERR("Illefgal socket descriptor");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal socket descriptor");
+        goto Exit;
     }
 #endif
 
     if (descr->remaining != 0)
-    {       
+    { 
         while (descr->remaining > 0)
         {
+#ifndef CM_NQ_STORAGE
             syClearSocketSet(&socketSet);
             syAddSocketToSet(pSock->socket, &socketSet);
             result = sySelectSocket(&socketSet, 25);
             if (result == NQ_FAIL)                 /* error the select failed  */
             {
-                TRCERR("Error during select");
-                TRCE();
+                LOGERR(CM_TRC_LEVEL_ERROR, "Error during select");
+                LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
                 return NQ_FAIL;
             }
             if (result == 0)                /* timeout  */
             {
-                TRCE();
+                LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
                 return NQ_FAIL;
             }
+#endif
 
             lenToRead = (NQ_UINT32)(descr->remaining > sizeof(buffer) ? sizeof(buffer) : descr->remaining);
+#ifndef CM_NQ_STORAGE
             bytesRead = syRecvSocket(pSock->socket, buffer, (NQ_COUNT)lenToRead);
+#else
+            bytesRead = syRecvSocketWithTimeout(pSock->socket, buffer, (NQ_COUNT)lenToRead, 25);
+#endif
             if (bytesRead == 0 || bytesRead == NQ_FAIL)
             {
                 if (bytesRead == 0)
                 {
-                    TRCERR("0 bytes read (message body)");
-                    TRCE();
-                    return NQ_FAIL;
+                    LOGERR(CM_TRC_LEVEL_ERROR, "0 bytes read (message body)");
+                    goto Exit;
                 }
-                TRCERR("Error reading message body");
-                TRC1P(" error code: %d", syGetLastError());
-                TRCE();
-                return NQ_FAIL;
+                LOGERR(CM_TRC_LEVEL_ERROR, "Error reading message body, code: %d", syGetLastError());
+                goto Exit;
             }
             descr->remaining -= (NQ_COUNT)bytesRead;
         }
     }
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_TOOL, "result: %d", result);
+    return result;
 }
 
 /*
@@ -406,11 +521,13 @@ nsRecvIntoBuffer(
     SocketSlot* pSock;                      /* actual pointer to a socket slot */
     NQ_INT bytesRead;                       /* number of bytes received */
     NQ_INT totalBytesRead;                  /* number of bytes received */
-    NQ_INT result;          /* result of the select operation */
+#ifndef CM_NQ_STORAGE
     SYSocketSet socketSet;  /* set for reading from this socket */
+#endif
     NQ_INT dataToRead;
+    NQ_INT result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_TOOL, "descr: %p, buf: %p, len: %d", descr, buf, len);
 
     dataToRead = len < descr->remaining ? (NQ_INT)len : (NQ_INT)descr->remaining;
     pSock = (SocketSlot*)descr->socket;
@@ -418,14 +535,13 @@ nsRecvIntoBuffer(
     if (pSock == NULL || !syIsValidSocket(pSock->socket))
     {
         sySetLastError(CM_NBERR_INVALIDPARAMETER);
-        TRCERR("Illegal socket descriptor");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal socket descriptor");
+        goto Exit;
     }
 
     if (!pSock->isNetBios) /* socket is not NetBIOS */
     {
-        TRC("Not a NetBIOS socket");
+		LOGMSG(CM_TRC_LEVEL_MESS_SOME, "Not a NetBIOS socket");
 
         bytesRead = syRecvSocket(
             pSock->socket,
@@ -433,13 +549,17 @@ nsRecvIntoBuffer(
             (NQ_UINT)dataToRead
             );
 
-        TRCE();
-        return bytesRead;
+        result = bytesRead;
+        goto Exit;
     }
+
+    if (pSock->isAccepted)
+    	syMutexTake(&pSock->guard);
 
     totalBytesRead = 0;
     while (len > 0 && descr->remaining > 0)
     {
+#ifndef CM_NQ_STORAGE
         syClearSocketSet(&socketSet);
         syAddSocketToSet(pSock->socket, &socketSet);
 
@@ -448,13 +568,13 @@ nsRecvIntoBuffer(
         result = sySelectSocket(&socketSet, 25);
         if (result == NQ_FAIL)                 /* error the select failed  */
         {
-            TRCERR("Error during select");
-            TRCE();
+            LOGERR(CM_TRC_LEVEL_ERROR, "Error during select");
+            LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
             return NQ_FAIL;
         }
         if (result == 0)                /* timeout  */
         {
-            TRCE();
+            LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
             return NQ_FAIL;
         }
 
@@ -463,18 +583,20 @@ nsRecvIntoBuffer(
             buf,
             (NQ_UINT)dataToRead
             );
+#else
+    	bytesRead = syRecvSocketWithTimeout(pSock->socket, buf, (NQ_UINT)dataToRead, 25);
+#endif
         if (bytesRead == 0 || bytesRead == NQ_FAIL)
         {
+            if (pSock->isAccepted)
+            	syMutexGive(&pSock->guard);
             if (bytesRead == 0)
             {
-                TRCERR("0 bytes read (message body)");
-                TRCE();
-                return NQ_FAIL;
+                LOGERR(CM_TRC_LEVEL_ERROR, "0 bytes read (message body)");
+                goto Exit;
             }
-            TRCERR("Error reading message body");
-            TRC1P(" error code: %d", syGetLastError());
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Error reading message body, code: %d", syGetLastError());
+            goto Exit;
         }
 
         buf += bytesRead;
@@ -484,7 +606,13 @@ nsRecvIntoBuffer(
         descr->remaining -= (NQ_COUNT)bytesRead;
     }
 
-    TRCE();
-    return (NQ_INT)totalBytesRead;
+    if (pSock->isAccepted)
+    	syMutexGive(&pSock->guard);
+
+    result = (NQ_INT)totalBytesRead;
+
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_TOOL, "result: %d", result);
+    return result;
 }
 

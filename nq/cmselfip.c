@@ -41,18 +41,24 @@ static StaticData* staticData = &staticDataSrc;
 
 NQ_BOOL cmSelfipStart(void)
 {
+    NQ_BOOL result = FALSE;
+
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
     if (NULL == staticData)
     {
-        TRCERR("Unable to allocate SelfIp data");
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate SelfIp data");
+        sySetLastError(NQ_ERR_NOMEM);
+        goto Exit;
     }
 #endif /* SY_FORCEALLOCATION */
 
     cmListStart(&staticData->ips);
-    return TRUE;
+    result = TRUE;
+
+Exit:
+    return result;
 }
 
 void cmSelfipShutdown(void)
@@ -60,24 +66,31 @@ void cmSelfipShutdown(void)
     cmListShutdown(&staticData->ips);
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
-        syFree(staticData);
+        cmMemoryFree(staticData);
     staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
 }
 
 void cmSelfipIterate(void)
 {
+    NQ_BOOL result = FALSE;
+
     LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-    
+
     syMutexTake(&staticData->ips.guard);
 
     /* load IPs from system */
     {
-        NQ_UINT32 ip;              /* next IP address */
-        NQ_IPADDRESS6 ip6;         /* next IPv6 address */
-        NQ_UINT32 subnet;          /* next subnet mask */
-        NQ_UINT32 wins;            /* next WINS IP address */
-        NQ_INDEX idx;              /* index in the list of adapters */
+    	NQ_IPADDRESS4 ip;          	/* next IP address */
+        NQ_IPADDRESS6 ip6;         	/* next IPv6 address */
+        NQ_IPADDRESS4 subnet;       /* next subnet mask */
+        NQ_IPADDRESS4 bcast;        /* next bcast address */
+        NQ_IPADDRESS4 wins;        	/* next WINS IP address */
+        NQ_INDEX idx;              	/* index in the list of adapters */
+        NQ_INDEX osIdx = 0;			/* index in the OS */
+#ifdef CM_NQ_STORAGE
+        NQ_BOOL isRdma = FALSE;    	/* TRUE for an RDMA-capable adapter */
+#endif /* CM_NQ_STORAGE */
 
         /* empty the list */
         cmListRemoveAndDisposeAll(&staticData->ips);
@@ -85,61 +98,75 @@ void cmSelfipIterate(void)
 #ifdef UD_NQ_USETRANSPORTIPV6
         syMemset(ip6, 0, sizeof(ip6));
 #endif /* UD_NQ_USETRANSPORTIPV6 */
-        for (idx = 0; syGetAdapter(idx, &ip, &ip6, &subnet, &wins) == NQ_SUCCESS && idx < UD_NS_MAXADAPTERS; idx++)
+#ifdef CM_NQ_STORAGE
+        for (idx = 0; syGetAdapter(idx,	&osIdx, &isRdma, &ip, &ip6, &subnet, &bcast, &wins) == NQ_SUCCESS && idx < UD_NS_MAXADAPTERS; idx++)
+#else
+        for (idx = 0; syGetAdapter(idx, &osIdx, &ip, &ip6, &subnet, &bcast, &wins) == NQ_SUCCESS && idx < UD_NS_MAXADAPTERS; idx++)
+#endif /* CM_NQ_STORAGE */
         {
-            SelfIp * pSelf;                     /* pointer to next IP entry */
+            SelfIp * pSelf = NULL; /* pointer to next IP entry */
 
-            LOGMSG(CM_TRC_LEVEL_FUNC_COMMON, "Adapter found, ip=0x%08lx subnet=0x%08lx wins=0x%08lx", ip, subnet, wins);
+            LOGMSG(CM_TRC_LEVEL_FUNC_COMMON, "Adapter found, ip=0x%08lx subnet=0x%08lx bcast=0x%08lx wins=0x%08lx", ip, subnet, bcast, wins);
 
             if (ip != CM_IPADDR_ZERO4)
             {
-                pSelf = (SelfIp *)cmListItemCreateAndAdd(&staticData->ips, sizeof(SelfIp), NULL, NULL, FALSE);
+            	pSelf = (SelfIp *)cmListItemCreateAndAdd(&staticData->ips, sizeof(SelfIp), NULL, NULL, CM_LISTITEM_NOLOCK);
                 if (NULL == pSelf)
                 {
-                    syMutexGive(&staticData->ips.guard);
                     LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
-                    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                    return;
+                    goto Exit;
                 }
                 CM_IPADDR_ASSIGN4(pSelf->selfIp.ip, ip);
-                pSelf->selfIp.bcast = (ip & subnet) | (0xFFFFFFFF & ~subnet);
+                pSelf->selfIp.bcast = bcast;
                 pSelf->selfIp.subnet = subnet;
+#ifdef CM_NQ_STORAGE
+                pSelf->selfIp.osIndex = osIdx;
+                pSelf->selfIp.rdmaCapable = isRdma;
+#endif /* CM_NQ_STORAGE */
             }
 #ifdef UD_NQ_USETRANSPORTIPV6
             if (ip6[0] != 0)
             {
-                pSelf = (SelfIp *)cmListItemCreateAndAdd(&staticData->ips, sizeof(SelfIp), NULL, NULL , FALSE);
+                pSelf = (SelfIp *)cmListItemCreateAndAdd(&staticData->ips, sizeof(SelfIp), NULL, NULL, CM_LISTITEM_NOLOCK);
                 if (NULL == pSelf)
                 {
-                    syMutexGive(&staticData->ips.guard);
                     LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
-                    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                    return;
+                    goto Exit;
                 }
                 CM_IPADDR_ASSIGN6(pSelf->selfIp.ip, ip6);
                 pSelf->selfIp.bcast = 0L;
+                pSelf->selfIp.subnet = subnet;
+#ifdef CM_NQ_STORAGE
+                pSelf->selfIp.osIndex = osIdx;
+                pSelf->selfIp.rdmaCapable = FALSE;
+#endif /* CM_NQ_STORAGE */
             }
             syMemset(ip6, 0, sizeof(ip6));
 #endif /* UD_NQ_USETRANSPORTIPV6 */
         }
     }
-    syMutexGive(&staticData->ips.guard);
-    cmListIteratorStart(&staticData->ips, &staticData->iterator);
+    result = TRUE;
 
+Exit:
+    syMutexGive(&staticData->ips.guard);
+    if (TRUE == result)
+        cmListIteratorStart(&staticData->ips, &staticData->iterator);
     LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 const CMSelfIp * cmSelfipNext(void)
 {
+    const CMSelfIp * pResult = NULL;
+
     if (cmListIteratorHasNext(&staticData->iterator))
     {
         const SelfIp * selfIp = (const SelfIp *)cmListIteratorNext(&staticData->iterator);
-        return &selfIp->selfIp;
+        pResult = &selfIp->selfIp;
     }
-    return NULL;
+    return pResult;
 }
 
 void cmSelfipTerminate(void)
 {
-  cmListIteratorTerminate(&staticData->iterator);  
+    cmListIteratorTerminate(&staticData->iterator);  
 }

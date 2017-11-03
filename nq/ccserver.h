@@ -16,6 +16,7 @@
 #ifndef _CCSERVER_H_
 #define _CCSERVER_H_
 
+#include "cmfscifs.h"
 #include "cmapi.h"
 #include "nsapi.h"
 #include "cccifs.h"
@@ -24,12 +25,12 @@
 
 /* -- Capabilities -- */
 
-/* Set when server chooses message signing. */
-#define CC_CAP_MESSAGESIGNING 1
-/* Set when server supports DFS. */
-#define CC_CAP_DFS 2
-/* Set when server supports passthrough information levels. */
-#define CC_CAP_INFOPASSTHRU 4
+
+#define CC_CAP_MESSAGESIGNING   1   /* Set when server chooses message signing. */
+#define CC_CAP_DFS              2   /* Set when server supports DFS. */
+#define CC_CAP_INFOPASSTHRU     4   /* Set when server supports passthrough information levels. */
+#define CC_CAP_LARGEMTU         8   /* Set when server supports multi-credit operations. */
+
 	
 /* Description
    This structure describes a remote server.
@@ -52,6 +53,7 @@ typedef struct _ccserver
 	NQ_COUNT numIps;			/* Number of IP addresses in the array above.*/
 	CCTransport transport;		/* Transport object. */ 
 	const CCCifsSmb * smb;		/* Pointer to SMB dialect descriptor. */
+	const CCCifsSmb * negoSmb;	/* Pointer to SMB dialect for negotiation only. */
 	void * smbContext;			/* Pointer to a block of dialect-dependent data. */
 	CMList users;				/* List of logons to this server. */
 	NQ_UINT32 capabilities;		/* Server capabilities and other flags. */
@@ -61,9 +63,7 @@ typedef struct _ccserver
 	NQ_BOOL useSigning;			/* Potentially use signing. TRUE when requests should be signed
 								   and responses should be checked. This does not concern
 								   capabilities. Signing will be in effect only when other
-								   conditions are true. See <link ccServerUseSignatures@CCServer *, ccServerUseSignatures()>. */
-    NQ_BOOL isLoggedIn;         /* <i>TRUE</i> when non anonymous user logged in - <i>FALSE<i> otherwise. */								   
-	NQ_INT credits;			    /* Number of outstanding requests granted by server so far */
+								   conditions are true. See <link ccServerUseSignatures@CCServer *, ccServerUseSignatures()>. */							   
 	CMBlob firstSecurityBlob;	/* this is a blob obtained on Negotiate response. When server (or client 
 								   does not support extended security, this will be NULL blob. */
 	NQ_BOOL useExtendedSecurity;/* <i>TRUE</i> to negotiate extended security - <i>FALSE<i> to hide it. */
@@ -72,11 +72,35 @@ typedef struct _ccserver
     CMList async;               /* Outstanding async operation contexts. CCServer keeps track of 
                                    all outstanding contexts, so that on server release it will release lost ones. */
     CMList expectedResponses;   /* List of async matches , used to free them when connection is broken etc. */
+	CMList waitingNotifyResponses; /* save notify responses if file ID wasn't found. try again for new created files */
     CMItem * masterUser;        /* Master user pointer - the one that will be used for signing (SMB1 only). */  
-    NQ_BOOL     useName;        /* TRUE when you should use the server name to connect*/
-    NQ_BOOL     isReconnecting; /* TRUE if server is already reconnecting , used to stop recursion on reconnect*/
-    NQ_BOOL     userSecurity;   /* TRUE if security is set by user , FALSE if by share*/
-    NQ_BOOL     isTemporary;    /* TRUE if used for temporary purpose (like ccRap functions), FALSE otherwise */
+    NQ_BOOL useName;            /* TRUE when you should use the server name to connect*/
+    NQ_BOOL isReconnecting;     /* TRUE if server is already reconnecting , used to stop recursion on reconnect*/
+    NQ_BOOL userSecurity;       /* TRUE if security is set by user , FALSE if by share*/
+    NQ_BOOL isTemporary;        /* TRUE if used for temporary purpose (like ccRap functions), FALSE otherwise */
+    NQ_BOOL negoAscii;          /* TRUE if server doesn't support Unicode strings in negotiate*/
+	NQ_BOOL useAscii;           /* TRUE if server doesn't support Unicode strings */
+	NQ_BOOL	connectionBroke;    /* TRUE if the connection was just broken */
+	NQ_BOOL isAesGcm;           /* AES-128-CCM or AES_128_GCM */
+	NQ_BOOL isNegotiationValidated;	/* true when negotiation has already been validated. */
+    NQ_INT credits;			    /* Number of outstanding requests granted by server so far */
+    SYMutex *creditGuard;
+#ifdef UD_NQ_INCLUDESMB2
+    /* below parameters are taken directly from negotiate fields to validate on validate negotiate */
+    NQ_UINT32 clientGuidPartial;/* we save the MSB part of client GUID - currently rest of GUID is zeroes. */
+    NQ_UINT32 serverCapabilites;
+    NQ_BYTE serverGUID[16];		/* save server GUID for validate negotiate */
+    NQ_UINT16 serverSecurityMode;
+    NQ_UINT16 serverDialectRevision;
+    NQ_UINT16 clientDialectRevision[CCCIFS_SMB_NUM_DIALECTS]; /* list of active smb dialects */
+#endif /* UD_NQ_INCLUDESMB2 */
+#ifdef UD_NQ_INCLUDESMB311
+	NQ_BOOL isPreauthIntegOn;	/* is pre-authentication integrity validation on*/
+	NQ_BYTE preauthIntegHashVal[SMB3_PREAUTH_INTEG_HASH_LENGTH]; /* array to hold hash results of negotiate packets */
+#endif /* UD_NQ_INCLUDESMB311 */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    CMCaptureHeader captureHdr; /* structure for internal capture */
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 } 
 CCServer; /* Remote server. */
 
@@ -205,15 +229,16 @@ void ccServerIterateUsers(CCServer * server, CMIterator * iterator);
    Place the current thread into the wait queue on the server semaphore.
    Parameters
    server : Server pointer.
+   credits : Number of credits used.
    Returns
    TRUE if the thread was posted, FALSE on timeout. */
-NQ_BOOL ccServerWaitForCredits(CCServer * server);
+NQ_BOOL ccServerWaitForCredits(CCServer * server, NQ_COUNT credits);
 
 /* Description
    Continue the latest waiting thread. On an empty queue - do nothing.
    Parameters
    server : Server pointer.
-   credits : number of credits granted
+   credits : Number of credits granted.
    Returns
    None. */
 void ccServerPostCredits(CCServer * server, NQ_COUNT credits);

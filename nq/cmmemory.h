@@ -203,7 +203,7 @@ void cmMemoryFreeDebug(const void * block, const NQ_CHAR *function, const NQ_UIN
    blockDealloc :  Number of blocks deallocated so far.
    Returns
    None.               */
-void cmMemoryStatistics(NQ_COUNT * memAlloc, NQ_COUNT * memDealloc, NQ_COUNT * blockAlloc, NQ_COUNT * blockDealloc);
+void cmMemoryStatistics(NQ_UINT32 * memAlloc, NQ_UINT32 * memDealloc, NQ_UINT32 * blockAlloc, NQ_UINT32 * blockDealloc);
 
 /* Description
    This function prints memory usage statistics.

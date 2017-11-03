@@ -31,8 +31,9 @@ csBreakCheck(
 
 NQ_BOOL 
 csBreakComplete(
-    CSLateResponseContext * pContext,
-    void * pHeaderOut
+    CSFile *pFile,
+    void * pHeaderOut,
+    NQ_UINT32 headerInFlags
     );
 
 

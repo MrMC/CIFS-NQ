@@ -39,7 +39,9 @@
 #include "cclsarpc.h"
 #include "ccapi.h"
 #endif /*UD_CS_INCLUDEPASSTHROUGH*/
-
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+#include "nssocket.h"
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 #ifdef UD_NQ_INCLUDECIFSSERVER
 
 /* This code implements the main loop of the server
@@ -81,6 +83,7 @@ static NQ_BOOL changeEncryptLevel(CMBufferReader * reader, CMBufferWriter * writ
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
 static NQ_BOOL changeMsgSign(CMBufferReader * reader, CMBufferWriter * writer);
 #endif /*UD_CS_MESSAGESIGNINGPOLICY*/
+static NQ_BOOL enumFiles(CMBufferReader * reader, CMBufferWriter * writer);
 
 static const ControlCommand controlCommands[] = 
 {
@@ -98,8 +101,9 @@ static const ControlCommand controlCommands[] =
     { CS_CONTROL_ENUMCLIENTS , enumClients},
     { CS_CONTROL_CHANGEENCRYPTION , changeEncryptLevel},
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
-    { CS_CONTROL_CHANGEMSGSIGN , changeMsgSign}
+    { CS_CONTROL_CHANGEMSGSIGN , changeMsgSign},
 #endif /*UD_CS_MESSAGESIGNINGPOLICY*/
+    { CS_CONTROL_ENUMFILES , enumFiles},
 };
 
 typedef struct
@@ -110,9 +114,9 @@ typedef struct
     CMSdDomainSid domainSid;            /* SID of the configured domain */
 #endif /* UD_CS_INCLUDESECURITYDESCRIPTORS && UD_CS_INCLUDEPASSTHROUGH */
 #ifdef UD_NQ_USETRANSPORTNETBIOS
-    NQ_TIME nextAnnouncementInterval;   /* next interval between announcements, this value wil
+    NQ_UINT32 nextAnnouncementInterval;   /* next interval between announcements, this value wil
                                            raise up to CM_FS_MINHOSTANNOUNCEMENTINTERVAL */
-    NQ_TIME lastTimeout;                /* time of the last timeout */
+    NQ_UINT32 lastTimeout;                /* time of the last timeout */
     NSSocketHandle serverSocketNB;      /* server NetBIOS TCP socket */
 #endif /* UD_NQ_USETRANSPORTNETBIOS */
 #ifdef UD_NQ_USETRANSPORTIPV4
@@ -125,15 +129,15 @@ typedef struct
     CSSocketDescriptor clientSockets[UD_FS_NUMSERVERSESSIONS];     /* list of client sockets */
     SYMutex dbGuard;                    /* mutex for access to the database */
 #ifdef UD_CS_INCLUDEPASSTHROUGH
-    NQ_WCHAR domain[CM_BUFFERLENGTH(NQ_WCHAR, CM_NQ_HOSTNAMESIZE + 1)];
+    NQ_WCHAR domain[CM_BUFFERLENGTH(NQ_WCHAR, CM_NQ_HOSTNAMESIZE)];
                                         /* buffer for client domain name in TCHAR */
-    NQ_WCHAR pdcName[CM_BUFFERLENGTH(NQ_WCHAR, CM_NQ_HOSTNAMESIZE + 1)];
+    NQ_WCHAR pdcName[CM_BUFFERLENGTH(NQ_WCHAR, CM_NQ_HOSTNAMESIZE)];
                                         /* buffer for PDC name in TCHAR */
     NQ_BOOL pdcNameFlag;                /* flag for this name */
 #endif /* UD_CS_INCLUDEPASSTHROUGH */
-    NQ_TCHAR nameT[CM_BUFFERLENGTH(NQ_TCHAR, 256)]; /* buffer for username in TCHAR */
-    NQ_TCHAR fullNameT[CM_BUFFERLENGTH(NQ_TCHAR, 256)];   /* buffer for full name in TCHAR */
-    NQ_TCHAR descriptionT[CM_BUFFERLENGTH(NQ_TCHAR, 256)];/* buffer for description in TCHAR */
+    NQ_WCHAR nameT[CM_BUFFERLENGTH(NQ_WCHAR, 256)]; /* buffer for username in TCHAR */
+    NQ_WCHAR fullNameT[CM_BUFFERLENGTH(NQ_WCHAR, 256)];   /* buffer for full name in TCHAR */
+    NQ_WCHAR descriptionT[CM_BUFFERLENGTH(NQ_WCHAR, 256)];/* buffer for description in TCHAR */
 }
 StaticData;
 
@@ -162,7 +166,7 @@ static NQ_BOOL
 acceptSocket(
     NSSocketHandle serverSocket,
     NQ_BOOL isNetBios,
-    NQ_TIME time
+	NQ_UINT32 time
     );
 
 /* pause server for performing changes in the database */
@@ -219,10 +223,9 @@ csStart(
     TRCB();
 
     TRC("CIFS is starting up");
-
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(*staticData));
     if (NULL == staticData)
     {
         TRCERR("Unable to allocate server data");
@@ -273,7 +276,7 @@ serverCycle(
 {
     NQ_INT ret;                 /* value returned from various calls */
     NQ_UINT idx;                /* index in the table of client sockets */
-    NQ_TIME curTime;            /* current system time */
+    NQ_UINT32 curTime;          /* current system time */
     
     TRCB();
 
@@ -298,7 +301,7 @@ serverCycle(
 
     syMutexCreate(&staticData->dbGuard);
 #ifdef UD_NQ_USETRANSPORTNETBIOS
-    staticData->lastTimeout = (NQ_TIME)syGetTime();
+    staticData->lastTimeout = (NQ_UINT32)syGetTimeInSec();
 #endif
     /* clean up section is essential when this task is re-entered after csStop():
         - zero sockets
@@ -323,14 +326,13 @@ serverCycle(
 	{
 		if (NQ_FAIL == nsInit(TRUE))        /* we are initializing a task - not a driver */
 		{
-			syMutexDelete(&staticData->dbGuard);    
+			syMutexDelete(&staticData->dbGuard);
 			udCifsServerClosed();
 			TRC("ns initialization failed");
 			TRCE();
 			return NQ_FAIL;
 		}
 	}
-
     if (NQ_FAIL == csInitDatabase(&pauseServer, &resumeServer))
     {
         releaseResources();
@@ -362,20 +364,18 @@ serverCycle(
         TRCERR("Failed to start file enumeration tools");
         TRCE();
         return NQ_FAIL;
-    }
-#ifdef UD_CS_INCLUDEPASSTHROUGH    
+    }  
     if (!csAuthInit())
     {
         releaseResources();
-        TRCERR("Pass through authentication failed to initialize");
+        TRCERR("Authentication failed to initialiaze");
         TRCE();
         return NQ_FAIL;
     }
-#endif /* UD_CS_INCLUDEPASSTHROUGH */
     if (NQ_FAIL == csDispatchInit())
     {
         releaseResources();
-        TRC("Dispatcher failed to initialize");
+        TRCERR("Dispatcher failed to initialiaze");
         TRCE();
         return NQ_FAIL;
     }
@@ -393,7 +393,7 @@ serverCycle(
     if (NQ_FAIL == csNotifyInit())
     {
         releaseResources();
-        TRCERR("Notify failed to initialize");
+        TRCERR("Notify failed to initialiaze");
         TRCE();
         return NQ_FAIL;
     }
@@ -412,7 +412,7 @@ serverCycle(
             return NQ_FAIL;
         }
         
-#ifdef UD_NQ_USETRANSPORTNETBIOS
+    #ifdef UD_NQ_USETRANSPORTNETBIOS
         if (udGetTransportPriority(NS_TRANSPORT_NETBIOS) &&
             (staticData->serverSocketNB = csPrepareSocket(NS_SOCKET_STREAM, NS_TRANSPORT_NETBIOS)) == NULL)
         {
@@ -421,7 +421,7 @@ serverCycle(
             TRCE();
             return NQ_FAIL;
         }
-#endif /* UD_NQ_USETRANSPORTNETBIOS */
+    #endif /* UD_NQ_USETRANSPORTNETBIOS */
 
 #ifdef UD_NQ_USETRANSPORTIPV4
         if (udGetTransportPriority(NS_TRANSPORT_IPV4) &&
@@ -458,7 +458,7 @@ serverCycle(
         }
 #endif /* UD_NQ_USETRANSPORTNETBIOS */
     }
-
+	
 #ifdef UD_CS_INCLUDEPASSTHROUGH
     /* resolve this domain SID on DC */
     if (!cmNetBiosGetDomainAuth()->isGroup)
@@ -471,7 +471,7 @@ serverCycle(
 
             if (NULL != pdcName)
             {
-            	CCLsaPolicyInfoDomain	domainInfo;
+				CCLsaPolicyInfoDomain	domainInfo;
 #ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
                 NQ_HANDLE sam;                      /* pipe handle for SAMR */
                 NQ_STATUS status;                   /* operation status */
@@ -480,8 +480,10 @@ serverCycle(
                 staticData->pdcNameFlag = TRUE;
                 cmAnsiToUnicode(staticData->pdcName, pdcName);
                 cmAnsiToUnicode(staticData->domain, cmNetBiosGetDomainAuth()->name);
+				
 #ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
                 sam = ccDcerpcConnect(staticData->pdcName, NULL, ccSamGetPipe(), FALSE);
+
                 if (NULL == sam)
                 {
                     TRCERR("Unable to open SAMR on PDC");
@@ -576,7 +578,7 @@ serverCycle(
 
         udServerDataIn();
 
-        curTime = (NQ_TIME)syGetTime();
+        curTime = (NQ_UINT32)syGetTimeInSec();
 #ifdef UD_NQ_USETRANSPORTNETBIOS
         /* Check for timeout and calculate the time to announce the server*/
 
@@ -784,7 +786,7 @@ prepareUdpServerSocket(
     )
 {
     NSSocketHandle socket; 
-    NQ_INT 	i;
+    NQ_COUNT i;
     NQ_UINT transArr[] = {
 #ifdef UD_NQ_USETRANSPORTIPV6
        NS_TRANSPORT_IPV6,
@@ -906,7 +908,7 @@ closeServerSockets(
 
 #if SY_DEBUGMODE
 
-static void
+void
 csDumpSockets(
     )
 {
@@ -984,7 +986,7 @@ static NQ_BOOL
 acceptSocket(
     NSSocketHandle serverSocket,
     NQ_BOOL isNetBios,
-    NQ_TIME time
+	NQ_UINT32 time
     )
 {
     NSSocketHandle newSocket;           /* an accepted socket */
@@ -1020,7 +1022,7 @@ acceptSocket(
     if (idx == UD_FS_NUMSERVERSESSIONS)
     {
 #ifdef UD_CS_REFUSEONSESSIONTABLEOVERFLOW
-    #ifdef UD_NQ_INCLUDEEVENTLOG
+#ifdef UD_NQ_INCLUDEEVENTLOG
         udEventLog(UD_LOG_MODULE_CS,
             UD_LOG_CLASS_CONNECTION,
             UD_LOG_CONNECTION_CONNECT,
@@ -1028,20 +1030,20 @@ acceptSocket(
             &ip,
             (NQ_UINT32)SMB_STATUS_INSUFFICIENT_RESOURCES,
             NULL);
-    #endif
+#endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR(" Server Session Table Overflow - Refusing Connection");
         nsClose(newSocket);
         return FALSE;
 #else
         NQ_UINT stepIdx = 0;        /* Index of the oldest inactive session so far */ 
-        NQ_TIME stepTime = (NQ_TIME)-1;  /* Last activity time of the */  
+        NQ_UINT32 stepTime = (NQ_UINT32)-1;  /* Last activity time of the */
 
         /* no more connections may be accepted - 
          * close the connection with the latest activity 
          */
         for (idx = 0; idx < UD_FS_NUMSERVERSESSIONS; idx++)
         {
-            if (stepTime == -1 || stepTime > staticData->clientSockets[idx].lastActivityTime)
+            if (stepTime == (NQ_UINT32)-1 || stepTime > staticData->clientSockets[idx].lastActivityTime)
             {
                 stepTime = staticData->clientSockets[idx].lastActivityTime;
                 stepIdx = idx;
@@ -1072,6 +1074,22 @@ acceptSocket(
     staticData->clientSockets[idx].requestTimeout = time;
     staticData->clientSockets[idx].requestExpected = isNetBios;
 #endif /* UD_NQ_USETRANSPORTNETBIOS */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    {
+    	NQ_IPADDRESS 	serverIp;
+    	NQ_PORT			serverPort;
+    	SocketSlot *	serverSock = (SocketSlot *)serverSocket;
+    	SocketSlot * clientSock = (SocketSlot *)newSocket;
+
+    	syGetSocketPortAndIP(serverSock->socket , &serverIp , &serverPort);
+    	staticData->clientSockets[idx].captureHdr.dstIP = clientSock->remoteIP;
+    	staticData->clientSockets[idx].captureHdr.dstPort = clientSock->port;
+    	staticData->clientSockets[idx].captureHdr.srcIP = serverIp;
+    	staticData->clientSockets[idx].captureHdr.srcPort = serverPort; 
+    	staticData->clientSockets[idx].captureHdr.receiving = TRUE;
+
+    }
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
     return TRUE;
 }
 
@@ -1093,9 +1111,8 @@ releaseResources(
     )
 {
     csFnamesExit();
-#ifdef UD_CS_INCLUDEPASSTHROUGH   
-    csAuthShutdown();
-#endif /* UD_CS_INCLUDEPASSTHROUGH */    
+ 
+    csAuthShutdown();   
     csNotifyExit();
     csDispatchExit();
 #ifdef UD_NQ_INCLUDESMB2
@@ -1109,8 +1126,8 @@ releaseResources(
 #endif /* UD_CS_INCLUDERPC */
     csCloseDatabase();
     syMutexDelete(&staticData->dbGuard);
-	if (!staticData->restart)
-		nsExit(TRUE);
+    if (!staticData->restart)
+    	nsExit(TRUE);
     udCifsServerClosed(); 
 }
 
@@ -1137,7 +1154,7 @@ doControl(
     NQ_UINT32 code;             /* command code */
     CMBufferReader reader;      /* command parser */
     CMBufferReader writer;      /* command packer */
-    NQ_INT i;                   /* just a counter */
+    NQ_COUNT i;                 /* just a counter */
     NQ_INT comLen;              /* command length */
     NQ_BOOL res = FALSE;        /* command result */
     
@@ -1300,6 +1317,79 @@ csStop(
     return;
 }
 
+/*
+ *====================================================================
+ * PURPOSE: get data for all open files and directories.
+ *--------------------------------------------------------------------
+ * PARAMS:  in - file index
+ *			out - file data
+ *
+ * RETURNS: TRUE - this file index exists.
+ * 			FALSE - file index doesn't exist *
+ *
+ * NOTES: 	call this function in a loop which continues as long as TRUE value is returned.
+ * 			Be sure to advance index by one per call.
+ * 			If a file is opened or closed during the loop, the results might not reflect the exact open files situation.
+ *====================================================================
+ */
+
+NQ_BOOL nqEnumerateOpenFilesW(NQ_UINT index, FileDataW_t *fileData)
+{
+    const CSFile 	*pFile;       /* pointer to share slot */
+    CSUser			*pUser;
+    CSSession		*pSession;
+    const NQ_WCHAR	*fileName;
+    NQ_CHAR IP[CM_IPADDR_MAXLEN];
+    NQ_BOOL result = TRUE;
+
+    TRCB();
+
+    /* perform */
+    pFile = csGetFileByIndex(index);
+    if (pFile != NULL)
+    {
+		pSession = csGetSessionById(pFile->session);
+		pUser = csGetUserBySession(pSession);
+		fileName = csGetFileName(pFile->fid);
+
+		cmIpToAscii(IP , &pSession->ip);
+		cmAnsiToUnicode(fileData->IP, IP);
+
+		syWStrcpy(fileData->fileNamePath, fileName);
+		syWStrcpy(fileData->userName, pUser->name);
+		fileData->isDirectory = pFile->isDirectory;
+
+		goto Exit;
+    }
+
+    result = FALSE;
+
+Exit:
+    TRCE();
+    return result;
+}
+
+NQ_BOOL nqEnumerateOpenFilesA(NQ_UINT index, FileDataA_t *fileData)
+{
+	FileDataW_t fileDataW;
+
+	TRCB();
+
+	if (nqEnumerateOpenFilesW(index, &fileDataW))
+	{
+		cmUnicodeToAnsi(fileData->IP,fileDataW.IP);
+		cmUnicodeToAnsi(fileData->userName,fileDataW.userName);
+		cmUnicodeToAnsi(fileData->fileNamePath,fileDataW.fileNamePath);
+		fileData->isDirectory = fileDataW.isDirectory;
+
+		TRCE();
+		return TRUE;
+	}
+
+	TRCE();
+	return FALSE;
+}
+
 /* 
  * command processors 
  */
@@ -1320,28 +1410,28 @@ static NQ_BOOL restartServer(CMBufferReader * reader, CMBufferWriter * writer)
 
 static NQ_BOOL addShare(CMBufferReader * reader, CMBufferWriter * writer)
 {
-    const NQ_TCHAR * name;      /* share name */
-    const NQ_TCHAR * path;      /* share mapping */
-    const NQ_TCHAR * comment;   /* share comment */
+    const NQ_WCHAR * name;      /* share name */
+    const NQ_WCHAR * path;      /* share mapping */
+    const NQ_WCHAR * comment;   /* share comment */
     NQ_BOOL isPrinter;          /* TRUE for printer */
     NQ_UINT16 len;              /* string length */
     NQ_STATUS res;              /* result status */
     
     /* parse the command */
     cmBufferReadUint16(reader, &len);
-    name = (const NQ_TCHAR*)cmBufferReaderGetPosition(reader);
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    name = (const NQ_WCHAR*)cmBufferReaderGetPosition(reader);
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     cmBufferReadUint16(reader, &len);
-    path = (const NQ_TCHAR*)cmBufferReaderGetPosition(reader);
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    path = (const NQ_WCHAR*)cmBufferReaderGetPosition(reader);
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     cmBufferReadUint16(reader, &len);
     isPrinter = len == 1? TRUE : FALSE;
     cmBufferReadUint16(reader, &len);
-    comment = (const NQ_TCHAR*)cmBufferReaderGetPosition(reader);
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    comment = (const NQ_WCHAR*)cmBufferReaderGetPosition(reader);
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     
     /* perform */
-    res = nqAddShare(name, path, isPrinter, comment, NULL);
+    res = nqAddShareW(name, path, isPrinter, comment, NULL);
 
     /* pack response */
     cmBufferWriteUint32(writer, res == NQ_SUCCESS? NQ_SUCCESS : NQ_ERR_ERROR);
@@ -1351,17 +1441,17 @@ static NQ_BOOL addShare(CMBufferReader * reader, CMBufferWriter * writer)
 
 static NQ_BOOL removeShare(CMBufferReader * reader, CMBufferWriter * writer)
 {
-    const NQ_TCHAR * name;      /* share name */
+    const NQ_WCHAR * name;      /* share name */
     NQ_UINT16 len;              /* string length */
     NQ_STATUS res;              /* result status */
     
     /* parse the command */
     cmBufferReadUint16(reader, &len);
-    name = (const NQ_TCHAR*)cmBufferReaderGetPosition(reader);
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    name = (const NQ_WCHAR*)cmBufferReaderGetPosition(reader);
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     
     /* perform */
-    res = nqRemoveShare(name);
+    res = nqRemoveShareW(name);
 
     /* pack response */
     cmBufferWriteUint32(writer, res == NQ_SUCCESS? NQ_SUCCESS : NQ_ERR_ERROR);
@@ -1387,13 +1477,13 @@ static NQ_BOOL enumShares(CMBufferReader * reader, CMBufferWriter * writer)
     cmBufferWriteUint32(writer, res);
     if (res == NQ_SUCCESS)
     {
-        cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(share->name));
-        cmBufferWriteTString(writer, share->name);
-        cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(share->map));
-        cmBufferWriteTString(writer, share->map);
+        cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(share->name));
+        cmBufferWriteUnicode(writer, share->name);
+        cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(share->map));
+        cmBufferWriteUnicode(writer, share->map);
         cmBufferWriteUint16(writer, share->isPrintQueue ? 1 : 0);
-        cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(share->description));
-        cmBufferWriteTString(writer, share->description);
+        cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(share->description));
+        cmBufferWriteUnicode(writer, share->description);
     }
     TRCE();
     return TRUE;
@@ -1403,10 +1493,10 @@ static NQ_BOOL enumShares(CMBufferReader * reader, CMBufferWriter * writer)
 
 static NQ_BOOL addUser(CMBufferReader * reader, CMBufferWriter * writer)
 {
-    const NQ_TCHAR* name;       /* logon name */
-    const NQ_TCHAR* fullName;   /* full name */
-    const NQ_TCHAR* description;/* user descripton */
-    const NQ_TCHAR* password;   /* password */
+    const NQ_WCHAR* name;       /* logon name */
+    const NQ_WCHAR* fullName;   /* full name */
+    const NQ_WCHAR* description;/* user descripton */
+    const NQ_WCHAR* password;   /* password */
     NQ_BOOL isAdmin;            /* TRUE for Admistrator rights */
     NQ_UINT16 len;              /* string length */
     NQ_STATUS res;              /* result status */
@@ -1416,17 +1506,17 @@ static NQ_BOOL addUser(CMBufferReader * reader, CMBufferWriter * writer)
     
     /* parse the command */
     cmBufferReadUint16(reader, &len);
-    name = (const NQ_TCHAR*)cmBufferReaderGetPosition(reader);
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    name = (const NQ_WCHAR*)cmBufferReaderGetPosition(reader);
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     cmBufferReadUint16(reader, &len);
-    fullName = (const NQ_TCHAR*)cmBufferReaderGetPosition(reader);
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    fullName = (const NQ_WCHAR*)cmBufferReaderGetPosition(reader);
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     cmBufferReadUint16(reader, &len);
-    description = (const NQ_TCHAR*)cmBufferReaderGetPosition(reader);
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    description = (const NQ_WCHAR*)cmBufferReaderGetPosition(reader);
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     cmBufferReadUint16(reader, &len);
-    password = (const NQ_TCHAR*)cmBufferReaderGetPosition(reader);
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    password = (const NQ_WCHAR*)cmBufferReaderGetPosition(reader);
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     cmBufferReadUint16(reader, &len);
     isAdmin = len == 1? TRUE : FALSE;
     
@@ -1438,7 +1528,7 @@ static NQ_BOOL addUser(CMBufferReader * reader, CMBufferWriter * writer)
     }
     if (res)
     {
-        cmTcharToUnicode(passwordW, password);
+        syWStrcpy(passwordW, password);
         res = udSetUserInfo(rid, name, fullName, description, passwordW);
     }
     if (res)
@@ -1454,7 +1544,7 @@ static NQ_BOOL addUser(CMBufferReader * reader, CMBufferWriter * writer)
 
 static NQ_BOOL removeUser(CMBufferReader * reader, CMBufferWriter * writer)
 {
-    const NQ_TCHAR * name;      /* user name */
+    const NQ_WCHAR * name;      /* user name */
     NQ_UINT16 len;              /* string length */
     NQ_STATUS res;              /* result status */
     NQ_UINT32 rid;              /* user RID */
@@ -1462,8 +1552,8 @@ static NQ_BOOL removeUser(CMBufferReader * reader, CMBufferWriter * writer)
     
     /* parse the command */
     cmBufferReadUint16(reader, &len);
-    name = (const NQ_TCHAR*)cmBufferReaderGetPosition(reader);
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    name = (const NQ_WCHAR*)cmBufferReaderGetPosition(reader);
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     
     /* perform */
     res = udGetUserRidByName(name, &rid);
@@ -1493,7 +1583,7 @@ static NQ_BOOL removeUser(CMBufferReader * reader, CMBufferWriter * writer)
 
 static NQ_BOOL cleanUserCons(CMBufferReader * reader, CMBufferWriter * writer)
 {
-    const NQ_TCHAR * name;      /* user name */
+    const NQ_WCHAR * name;      /* user name */
     NQ_UINT16 len;              /* string length */
     NQ_STATUS res;              /* result status */
     NQ_UINT16 isDomainUser;     /* user type */
@@ -1501,11 +1591,11 @@ static NQ_BOOL cleanUserCons(CMBufferReader * reader, CMBufferWriter * writer)
     /* parse the command */
     cmBufferReadUint16(reader, &isDomainUser);
     cmBufferReadUint16(reader, &len);
-    name = (const NQ_TCHAR*)cmBufferReaderGetPosition(reader);
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    name = (const NQ_WCHAR*)cmBufferReaderGetPosition(reader);
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
 
     /* perform */
-    res = nqCleanUserServerConnections(name, isDomainUser);
+    res = nqCleanUserServerConnectionsW(name, isDomainUser);
     
     /* pack response */
     cmBufferWriteUint32(writer, res == NQ_SUCCESS ? NQ_SUCCESS : NQ_ERR_ERROR);
@@ -1526,12 +1616,12 @@ static NQ_BOOL enumUsers(CMBufferReader * reader, CMBufferWriter * writer)
     {
         /* pack response */
         cmBufferWriteUint32(writer, NQ_SUCCESS);
-        cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(staticData->nameT));
-        cmBufferWriteTString(writer, staticData->nameT);
-        cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(staticData->fullNameT));
-        cmBufferWriteTString(writer, staticData->fullNameT);
-        cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(staticData->descriptionT));
-        cmBufferWriteTString(writer, staticData->descriptionT);
+        cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(staticData->nameT));
+        cmBufferWriteUnicode(writer, staticData->nameT);
+        cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(staticData->fullNameT));
+        cmBufferWriteUnicode(writer, staticData->fullNameT);
+        cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(staticData->descriptionT));
+        cmBufferWriteUnicode(writer, staticData->descriptionT);
         cmBufferWriteUint16(writer, ((NQ_INT)rid) < 0 ? 1 : 0);
     }
     else
@@ -1578,7 +1668,7 @@ static NQ_BOOL enumClients(CMBufferReader * reader, CMBufferWriter * writer)
 				cmBufferWriteUint32(writer, NQ_SUCCESS);
 				cmBufferWriteUint16(writer , (NQ_UINT16)syWStrlen(ipW));
 				cmBufferWriteUnicode(writer , ipW);
-				cmBufferWriteUint16(writer , pSession->smb2);
+				cmBufferWriteUint16(writer , (NQ_UINT16)pSession->dialect);
 				cmMemoryFree(ip);
 				cmMemoryFree(ipW);
 				return TRUE;
@@ -1591,6 +1681,54 @@ static NQ_BOOL enumClients(CMBufferReader * reader, CMBufferWriter * writer)
 	cmBufferWriteUint32(writer, NQ_ERR_ERROR);
 
 	return TRUE;
+}
+
+static NQ_BOOL enumFiles(CMBufferReader * reader, CMBufferWriter * writer)
+{
+    NQ_UINT16 		index;            /* index */
+    const CSFile * 	pFile;       /* pointer to share slot */
+    CSUser	*		pUser;
+    CSSession	*	pSession;
+    const NQ_WCHAR	*	fileName;
+    NQ_CHAR * ip;
+
+    TRCB();
+
+    /* parse the command */
+    cmBufferReadUint16(reader, &index);
+
+    /* perform */
+    pFile = csGetFileByIndex(index);
+    if (pFile != NULL)
+    {
+		pSession = csGetSessionById(pFile->session);
+		pUser = csGetUserBySession(pSession);
+		fileName = csGetFileName(pFile->fid);
+		/* pack response */
+		cmBufferWriteUint32(writer, NQ_SUCCESS);
+
+		ip = (NQ_CHAR *)cmMemoryAllocate(CM_IPADDR_MAXLEN* sizeof(NQ_CHAR));
+		if (ip == NULL)
+		{
+			return FALSE;
+		}
+
+		cmIpToAscii(ip , &pSession->ip);
+		cmBufferWriteUint16(writer , (NQ_UINT16)syStrlen(ip));
+		cmBufferWriteBytes(writer, (NQ_BYTE *)ip , (NQ_COUNT)syStrlen(ip) + 1);
+		cmMemoryFree(ip);
+		cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(fileName));
+		cmBufferWriteUnicode(writer, fileName);
+		cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(pUser->name));
+		cmBufferWriteUnicode(writer, pUser->name);
+		cmBufferWriteUint16(writer, (NQ_UINT16)pFile->isDirectory);
+
+		TRCE();
+	    return TRUE;
+    }
+    cmBufferWriteUint32(writer, NQ_ERR_ERROR);
+    TRCE();
+    return TRUE;
 }
 
 static NQ_BOOL changeEncryptLevel(CMBufferReader * reader, CMBufferWriter * writer)
@@ -1618,5 +1756,22 @@ static NQ_BOOL changeMsgSign(CMBufferReader * reader, CMBufferWriter * writer)
 	return TRUE;
 }
 #endif /*UD_CS_MESSAGESIGNINGPOLICY*/
+
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+CSSocketDescriptor * csGetClientSocketDescriptorBySocket(NSSocketHandle socket)
+{
+	NQ_INT 	i;
+
+    if (socket == NULL)
+    	return NULL;
+
+    for (i = 0; i < UD_FS_NUMSERVERSESSIONS ; i++)
+    {
+    	if (staticData->clientSockets[i].socket == socket)
+    		return (CSSocketDescriptor *)&staticData->clientSockets[i];
+    }
+    return NULL;
+}
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 #endif /* UD_NQ_INCLUDECIFSSERVER */
 

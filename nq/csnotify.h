@@ -41,7 +41,7 @@ csNotifyExit(
 
 void
 csNotifyImmediatelly(
-    const NQ_TCHAR* fileName,       /* full path to a file */
+    const NQ_WCHAR* fileName,       /* full path to a file */
     NQ_UINT32 action,               /* action taken */
     NQ_UINT32 filter                /* filter */
     );

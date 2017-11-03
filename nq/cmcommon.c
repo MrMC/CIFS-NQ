@@ -76,11 +76,24 @@ cmAsciiToIp(
 }
 
 NQ_STATUS
+cmWcharToIp(
+    NQ_WCHAR *wchar,
+    NQ_IPADDRESS *ip
+)
+{
+    static NQ_CHAR ascii[256];
+    cmUnicodeToAnsi(ascii, wchar);
+
+    return cmAsciiToIp(ascii, ip);
+}
+
+NQ_STATUS
 cmIpToAscii(
     NQ_CHAR *ascii,
     const NQ_IPADDRESS *ip
    )
 {
+	*ascii = '\0';
 #ifdef UD_NQ_USETRANSPORTIPV6
     switch (CM_IPADDR_VERSION(*ip))
     {
@@ -93,7 +106,7 @@ cmIpToAscii(
             return cmIpToAscii6(ascii, ip);
 
         default:
-            TRC1P("Invalid ip version: %d", ip->version);
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Invalid ip version: %d", ip->version);
             *ascii = '\0';  /* cleanup */
             return NQ_FAIL;
     }
@@ -111,7 +124,7 @@ cmIPDump(
     cmIpToAscii(temp, ip);
     return temp;
 #else
-    return "";
+    return (NQ_CHAR*)"";
 #endif
 }
 
@@ -169,9 +182,10 @@ cmAsciiToIp4(
     NQ_BYTE *tmp = result;
     NQ_INT counter, digit, num;
     NQ_IPADDRESS4 *resultIp;
+    NQ_STATUS res = NQ_FAIL;
 
     if (!str || *str == '.')
-        return NQ_FAIL;
+        goto Exit;
 
     counter = num = 0;
 
@@ -184,7 +198,7 @@ cmAsciiToIp4(
             counter++;
             str++;
             if (counter > 3 || *str == 0 || *str == '.')
-                return NQ_FAIL;
+                goto Exit;
 
             continue;
         }
@@ -192,24 +206,26 @@ cmAsciiToIp4(
         digit = parseDigit(*str++);
 
         if (digit < 0 || digit > 9)
-            return NQ_FAIL;
+            goto Exit;
 
         num = num * 10 + digit;
 
         if (num > 255)
-            return NQ_FAIL;
+            goto Exit;
     }
 
     *tmp = (NQ_BYTE)num;
     counter++;
     if (counter < 4)
-        return NQ_FAIL;
+        goto Exit;
 
     /* result is already in BIG ENDIAN, no need to convert to the network order */
     resultIp = (NQ_IPADDRESS4*)result;
     CM_IPADDR_ASSIGN4(*ip, *resultIp);
+    res = NQ_SUCCESS;
 
-    return NQ_SUCCESS;
+Exit:
+    return res;
 }
 
 static
@@ -232,6 +248,20 @@ cmIpToAscii4(
     return NQ_SUCCESS;
 }
 
+NQ_BOOL cmIsIPv6Literal(NQ_WCHAR *name)
+{
+	NQ_WCHAR ipv6LiteralName[] = {cmWChar('.'), cmWChar('i'), cmWChar('p'), cmWChar('v'), cmWChar('6'), cmWChar('-'), cmWChar('l'),
+			cmWChar('i'), cmWChar('t'), cmWChar('e'), cmWChar('r'), cmWChar('a'), cmWChar('l'), cmWChar('.'), cmWChar('n'),
+			cmWChar('e'), cmWChar('t'), cmWChar('\0')};
+	NQ_BOOL res = FALSE;
+
+	/* check whether address is ipv6-literal.net */
+	if (cmWStrincmp(name + syWStrlen(name) - syWStrlen(ipv6LiteralName), ipv6LiteralName, (NQ_COUNT)(syWStrlen(ipv6LiteralName))) == 0)
+		res = TRUE;
+
+	return res;
+}
+
 #ifdef UD_NQ_USETRANSPORTIPV6
 
 #define NQ_IPADDRESS6_WORDS sizeof(NQ_IPADDRESS6)/2
@@ -246,19 +276,21 @@ cmAsciiToIp6(
     NQ_IPADDRESS6 result = { 0, 0, 0, 0, 0, 0, 0, 0 };
     NQ_IPADDRESS ip4;
     NQ_UINT16 *tmp;
-    NQ_CHAR *last;
+    NQ_CHAR *last, *input;
     NQ_BOOL mixed;
     NQ_INT zeros, zeroslen, counter, num, limit, digit, i;
     NQ_CHAR ipv6LiteralName[] = ".IPV6-LITERAL.NET";
+    NQ_STATUS res = NQ_FAIL;
+    NQ_CHAR temp[40];
 
     /* check whether address is ipv6-literal.net */
+    input = str;
     if (syStrlen(str) > syStrlen(ipv6LiteralName) && 
         cmAStrincmp(str + syStrlen(str) - syStrlen(ipv6LiteralName), ipv6LiteralName, (NQ_COUNT)(syStrlen(ipv6LiteralName))) == 0)
     {
-        NQ_STATIC NQ_CHAR temp[40];
         NQ_CHAR *p;
         NQ_COUNT i;
-        
+
         for (i = 0, p = str; *p != '.'; p++, i++)
         {
             switch (*p)
@@ -276,63 +308,63 @@ cmAsciiToIp6(
             }
         }
         temp[i] = '\0';
-        str = temp;
+        input = temp;
     }
 
     tmp = result;
     last = NULL;
     zeros = -1;
     counter = num = 0;
-    mixed = syStrchr(str, '.') != NULL;
+    mixed = syStrchr(input, '.') != NULL;
     limit = mixed ? 7 : 8 ;
 
-    while (*str)
+    while (*input)
     {
-        if (*str == ':' && str[1] == ':')
+        if (*input == ':' && input[1] == ':')
         {
-            last = ++str;
+            last = ++input;
 
             if (zeros >= 0)
-                return NQ_FAIL;
+                goto Exit;
 
             zeros = counter + 1;
         }
 
-        if (*str == ':')
+        if (*input == ':')
         {
-            last = str;
+            last = input;
             *tmp++ = syHton16((NQ_UINT16)num);
             num = 0;
             counter++;
-            str++;
-            if (counter > (limit - 1) || *str == 0)
-                return NQ_FAIL;
+            input++;
+            if (counter > (limit - 1) || *input == 0)
+                goto Exit;
 
             continue;
         }
 
-        if (*str == '.' || *str == '%')
+        if (*input == '.' || *input == '%')
             break;
 
-        digit = parseDigit(*str++);
+        digit = parseDigit(*input++);
 
         if (digit < 0)
-            return NQ_FAIL;
+            goto Exit;
 
         num = (num << 4) + digit;
 
         if (num > 0xffff)
-            return NQ_FAIL;
+            goto Exit;
     }
 
     *tmp++ = syHton16((NQ_UINT16)num);
     counter++;
 
     if (counter < limit && zeros < 0)
-        return NQ_FAIL;
+        goto Exit;
 
     if (counter == limit && zeros >= 0)
-        return NQ_FAIL;
+        goto Exit;
 
     if (zeros >= 0 )
     {
@@ -348,14 +380,16 @@ cmAsciiToIp6(
     if (mixed)
     {
         if (cmAsciiToIp4(last + 1, &ip4) == NQ_FAIL)
-            return NQ_FAIL;
+            goto Exit;
 
         syMemcpy(&result[6], &ip4.addr.v4, sizeof(NQ_IPADDRESS4));
     }
 
     CM_IPADDR_ASSIGN6(*ip, *(NQ_IPADDRESS6*)result);
+    res = NQ_SUCCESS;
 
-    return NQ_SUCCESS;
+Exit:
+    return res;
 }
 
 static
@@ -373,9 +407,9 @@ cmIpToAscii6(
     *ascii = 0;
     zeros = -1;
     zeroslen = 1;
-    for (i = 0; i < NQ_IPADDRESS6_WORDS; i = j + 1)
+    for (i = 0; i < (NQ_INT)NQ_IPADDRESS6_WORDS; i = j + 1)
     {
-        for (j = i; j < NQ_IPADDRESS6_WORDS && !ip6[j]; j++);
+        for (j = i; j < (NQ_INT)NQ_IPADDRESS6_WORDS && !ip6[j]; j++);
 
         if ((j - i) > zeroslen)
         {
@@ -384,7 +418,7 @@ cmIpToAscii6(
         }
     }
 
-    for (i = 0; i < NQ_IPADDRESS6_WORDS;)
+    for (i = 0; i < (NQ_INT)NQ_IPADDRESS6_WORDS;)
     {
         if (i == zeros)
         {
@@ -394,7 +428,7 @@ cmIpToAscii6(
         }
 
         sySprintf(str, "%x", syNtoh16(ip6[i]));
-        if (++i < NQ_IPADDRESS6_WORDS)
+        if (++i < (NQ_INT)NQ_IPADDRESS6_WORDS)
             syStrcat(str, ":");
 
         syStrcat(ascii, str);

@@ -51,7 +51,8 @@ typedef struct
 NQ_BOOL                         /* TRUE on match */
 cmAsn1ParseCompareOid(
     CMBufferReader * ds,  		/* packet descriptor pointed on OID */
-    const CMAsn1Oid *oid        /* OID to compare */
+    const CMAsn1Oid *oid,       /* OID to compare */
+    NQ_BOOL toRevertOnMismatch  /* whether to revert descriptor on error or no match */
     );
 
 /* parse tag and tag length and continue to tag data */

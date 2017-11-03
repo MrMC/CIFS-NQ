@@ -18,7 +18,6 @@
 #include "cmsmb2.h"
 #include "csdataba.h"
 #include "csutils.h"
-#include "cs2disp.h"
 
 #if defined(UD_NQ_INCLUDECIFSSERVER) && defined(UD_NQ_INCLUDESMB2)
 
@@ -42,6 +41,8 @@
 #define SMB2_SHARE_FLAG_ALLOW_NAMESPACE_CACHING         0x00000400  /* Clients are allowed to cache the namespace of the specified share. */
 #define SMB2_SHARE_FLAG_ACCESS_BASED_DIRECTORY_ENUM     0x00000800  /* The server will filter directory entries based on the access permissions of the client. */
 
+#define SMB2_SHARE_FLAG_ENCRYPT_DATA					0x00008000
+
 /* todo: temporary */
 #define SMB2_DEFAULT_SHARE_ACCESS_MASK                  0x001f01ff
 
@@ -62,13 +63,14 @@
  * NOTES:   This function is called on SMB2 Tree Connect command.
  *====================================================================
  */
-NQ_UINT32 csSmb2OnTreeConnect(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *reader, CSSession *connection, CSUser *session, CSTree *tree, CMBufferWriter *writer)
+NQ_UINT32 csSmb2OnTreeConnect(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *reader, CSSession *pSession, CSUser *pUser, CSTree *tree, CMBufferWriter *writer)
 {
     CSShare* pShare;                      /* pointer to share */
     NQ_UINT16 pathOffset;                 /* offset to path in request */  
     NQ_UINT16 pathLength;                 /* path length in request */
-    NQ_STATIC NQ_TCHAR tcharPath[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN)];  /* buffer for full share path */
-    NQ_TCHAR *pShareName;                 /* pointer share component of the path */
+    NQ_STATIC NQ_WCHAR tcharPath[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];  /* buffer for full share path */
+    NQ_WCHAR *pShareName;                 /* pointer share component of the path */
+    NQ_UINT32 shareFlags = 0;
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDShareAccessEvent eventInfo;               /* share event information */
 #endif /* UD_NQ_INCLUDEEVENTLOG */
@@ -81,13 +83,13 @@ NQ_UINT32 csSmb2OnTreeConnect(CMSmb2Header *in, CMSmb2Header *out, CMBufferReade
     cmBufferReadUint16(reader, &pathLength);
     
     /* find share component in the requested path */
-    cmUnicodeToTcharN(tcharPath, (NQ_WCHAR*)reader->current, (NQ_UINT)(pathLength / sizeof(NQ_WCHAR)));
-    *(tcharPath + pathLength / sizeof(NQ_TCHAR)) = cmTChar('\0');
-    pShareName = cmTStrrchr(tcharPath, cmTChar('\\'));
+    syWStrncpy(tcharPath, (NQ_WCHAR*)reader->current, (NQ_UINT)(pathLength / sizeof(NQ_WCHAR)));
+    *(tcharPath + pathLength / sizeof(NQ_WCHAR)) = cmWChar('\0');
+    pShareName = syWStrrchr(tcharPath, cmWChar('\\'));
     if (pShareName == NULL)
         pShareName = tcharPath;
     ++pShareName;    
-    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "requested share: %s", cmTDump(pShareName));
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "requested share: %s", cmWDump(pShareName));
 
     /* find share descriptor for the requested share */
     pShare = csGetShareByName(pShareName);
@@ -97,10 +99,10 @@ NQ_UINT32 csSmb2OnTreeConnect(CMSmb2Header *in, CMSmb2Header *out, CMBufferReade
         LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
         return SMB_STATUS_BAD_NETWORK_NAME;
     }
-    TRC("share mapped to %s %s", cmTDump(pShare->map), pShare->ipcFlag ? "(IPC)" : "");
+    TRC("share mapped to %s %s", cmWDump(pShare->map), pShare->ipcFlag ? "(IPC)" : "");
 
 #ifdef UD_NQ_INCLUDEEVENTLOG
-    eventInfo.rid = csGetUserRid(session);
+    eventInfo.rid = csGetUserRid(pUser);
     eventInfo.shareName = pShareName;
     eventInfo.ipc = pShare->ipcFlag;
     eventInfo.printQueue = pShare->isPrintQueue;
@@ -114,9 +116,9 @@ NQ_UINT32 csSmb2OnTreeConnect(CMSmb2Header *in, CMSmb2Header *out, CMBufferReade
 #endif
 
     /* allow access to hidden ($) share for admins only */
-    if (pShare->isHidden && (session->isAnonymous || 
+    if (pShare->isHidden && (pUser->isAnonymous ||
 #ifdef UD_CS_INCLUDESECURITYDESCRIPTORS   
-            !cmSdHasAccess(&session->token, pShare->sd.data, SMB_DESIREDACCESS_READDATA)))
+            !cmSdHasAccess(&pUser->token, pShare->sd.data, SMB_DESIREDACCESS_READDATA)))
 #else
             FALSE))
 #endif        
@@ -141,9 +143,17 @@ NQ_UINT32 csSmb2OnTreeConnect(CMSmb2Header *in, CMSmb2Header *out, CMBufferReade
         LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
         return SMB_STATUS_BAD_NETWORK_NAME;
     }
+#if defined(UD_NQ_INCLUDESMB3) && !defined(UD_CS_ALLOW_NONENCRYPTED_ACCESS_TO_ENCRYPTED_SHARE)
+    if (pShare->isEncrypted && (pSession->dialect < CS_DIALECT_SMB30))
+    {
+    	LOGERR(CM_TRC_LEVEL_ERROR, "share requires encrypted access and the current connection can't encrypt");
+		LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+		return SMB_STATUS_ACCESS_DENIED;
+	}
+#endif /* defined(UD_NQ_INCLUDESMB3) && !defined(UD_CS_ALLOW_NONENCRYPTED_ACCESS_TO_ENCRYPTED_SHARE) */
 
     /* find a free entry in the tree table */
-    tree = csGetNewTree(session);
+    tree = csGetNewTree(pUser);
     if (tree == NULL)
     {
 #ifdef UD_NQ_INCLUDEEVENTLOG
@@ -151,8 +161,8 @@ NQ_UINT32 csSmb2OnTreeConnect(CMSmb2Header *in, CMSmb2Header *out, CMBufferReade
             UD_LOG_MODULE_CS,
             UD_LOG_CLASS_SHARE,
             UD_LOG_SHARE_CONNECT,
-            session->name,
-            session->ip,
+            pUser->name,
+            pUser->ip,
             (NQ_UINT32)SMB_STATUS_INSUFFICIENT_RESOURCES,
             (const NQ_BYTE*)&eventInfo
         );
@@ -175,18 +185,25 @@ NQ_UINT32 csSmb2OnTreeConnect(CMSmb2Header *in, CMSmb2Header *out, CMBufferReade
         UD_LOG_MODULE_CS,
         UD_LOG_CLASS_SHARE,
         UD_LOG_SHARE_CONNECT,
-        session->name,
-        session->ip,
+        pUser->name,
+        pUser->ip,
         0,
         (const NQ_BYTE*)&eventInfo
         );
 #endif
+    shareFlags = pShare->ipcFlag || pShare->isPrintQueue ? SMB2_SHARE_FLAG_NO_CACHING : SMB2_SHARE_FLAG_MANUAL_CACHING;
+#ifdef UD_NQ_INCLUDESMB3
+    if (pShare->isEncrypted)
+    {
+    	shareFlags |= ((pSession->dialect >= CS_DIALECT_SMB30) && !pShare->ipcFlag) ? SMB2_SHARE_FLAG_ENCRYPT_DATA : 0;
+    }
+#endif /* UD_NQ_INCLUDESMB3 */
     /* write the response */
     out->tid = tree->tid;                                              /* set tid in the response header */
     cmBufferWriteUint16(writer, SMB2_TREE_CONNECT_RESPONSE_DATASIZE);  /* constant response size */
     cmBufferWriteByte(writer, pShare->ipcFlag ? SMB2_SHARE_TYPE_PIPE : (pShare->isPrintQueue ? SMB2_SHARE_TYPE_PRINT : SMB2_SHARE_TYPE_DISK)); /* share type */    
     cmBufferWriteByte(writer, 0);                                      /* reserved (0)  */
-    cmBufferWriteUint32(writer, pShare->ipcFlag || pShare->isPrintQueue ? SMB2_SHARE_FLAG_NO_CACHING : SMB2_SHARE_FLAG_MANUAL_CACHING); /* share flags */
+    cmBufferWriteUint32(writer, shareFlags); /* share flags */
     cmBufferWriteUint32(writer, 0);                                    /* share capabilities (not DFS) */
     cmBufferWriteUint32(writer, SMB2_DEFAULT_SHARE_ACCESS_MASK);       /* share access mask */  
 
@@ -217,7 +234,7 @@ void csDoTreeDisconnect(CSTree *tree);
  */
 NQ_UINT32 csSmb2OnTreeDisconnect(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *reader, CSSession *connection, CSUser *session, CSTree *tree, CMBufferWriter *writer)
 {
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "tid: %d", tree->tid);
 
     /* disconnect the tree */
     csDoTreeDisconnect(tree);

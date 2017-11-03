@@ -26,45 +26,47 @@
 
 /* -- Constants -- */
 #define READ_ACCESSMASK \
-	CCFILE_ACCESSMASK_SPECIAL | \
-	SMB_DESIREDACCESS_READDATA | \
-	SMB_DESIREDACCESS_READATTRIBUTES | \
-	SMB_DESIREDACCESS_READCONTROL
+    CCFILE_ACCESSMASK_SPECIAL | \
+    SMB_DESIREDACCESS_READDATA | \
+    SMB_DESIREDACCESS_READATTRIBUTES | \
+    SMB_DESIREDACCESS_READCONTROL
 #define WRITE_ACCESSMASK \
-	CCFILE_ACCESSMASK_SPECIAL | \
-	SMB_DESIREDACCESS_WRITEOWNER | \
-	SMB_DESIREDACCESS_WRITEATTRIBUTES | \
-	SMB_DESIREDACCESS_WRITEDAC | \
-	SMB_DESIREDACCESS_READATTRIBUTES | \
-	SMB_DESIREDACCESS_READCONTROL
+    CCFILE_ACCESSMASK_SPECIAL | \
+    SMB_DESIREDACCESS_WRITEOWNER | \
+    SMB_DESIREDACCESS_WRITEATTRIBUTES | \
+    SMB_DESIREDACCESS_WRITEDAC | \
+    SMB_DESIREDACCESS_READATTRIBUTES | \
+    SMB_DESIREDACCESS_READCONTROL
 
 /* -- Static functions and data -- */
 
-static NQ_WCHAR * pDCName;	/* pointer to domain name */
+static NQ_WCHAR * pDCName;    /* pointer to domain name */
 
-/* fill user token for the user authenticated to a given file */ 
+/* fill user token for the user authenticated to a given file */
 static NQ_STATUS lookupUserToken(CMSdAccessToken * token,  const NQ_WCHAR * fileName)
 {
     NQ_STATUS status;                       /* generic status */
     NQ_HANDLE lsa;                          /* pipe handle for LSA */
-    CCMount * pMount;						/* mount point */
-    const NQ_WCHAR * userName;				/* user name */
-    const NQ_WCHAR * domainName;			/* domain name */
-    NQ_WCHAR * homeDomain;					/* pointer to the client's home domain */
-    
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-    	
+    CCMount * pMount = NULL;                /* mount point */
+    const NQ_WCHAR * userName = NULL;       /* user name */
+    const NQ_WCHAR * domainName = NULL;     /* domain name */
+    NQ_CHAR * dcNameA = NULL;               /* home domain name in ASCII */
+    NQ_WCHAR * homeDomain = NULL;           /* pointer to the client's home domain */
+    NQ_STATUS result = NQ_ERR_BADPARAM;     /* return value */
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "token:%p file:%s", token, cmWDump(fileName));
+
     /* find user token. try 1) remote host 2) DC */
     pMount = ccMountFind(fileName);
     if (NULL == pMount)
-	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_BADPATH;
-	}
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Cannot find mount point ");
+        goto Exit;
+    }
 
     userName = pMount->share->user->credentials->user;
     domainName = pMount->share->user->credentials->domain.name;
-    
+
     /* 1) try local user */
     lsa = ccDcerpcConnect(pMount->server->item.name, pMount->share->user->credentials, ccLsaGetPipe(), TRUE);
     if (NULL != lsa)
@@ -73,8 +75,8 @@ static NQ_STATUS lookupUserToken(CMSdAccessToken * token,  const NQ_WCHAR * file
         if (status == NQ_SUCCESS)
         {
             ccDcerpcDisconnect(lsa);
-    		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-            return status;
+            result = status;
+            goto Exit;
         }
         else
         {
@@ -82,105 +84,106 @@ static NQ_STATUS lookupUserToken(CMSdAccessToken * token,  const NQ_WCHAR * file
             ccDcerpcDisconnect(lsa);
             if (status == NQ_SUCCESS)
             {
-        		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                return status;
+                result = status;
+                goto Exit;
             }
         }
     }
-    
+
     LOGERR(CM_TRC_LEVEL_ERROR, "Unable to resolve user on host");
-    
+
     /* 2) try domain user */
     if (NULL == pDCName)
     {
-    	NQ_CHAR * dcNameA;	/* home domain name in ASCII */
-    	
-    	dcNameA = cmMemoryAllocate(CM_BUFFERLENGTH(NQ_CHAR, CM_NQ_HOSTNAMESIZE + 1));
+        dcNameA = (NQ_CHAR *)cmMemoryAllocate(CM_BUFFERLENGTH(NQ_CHAR, CM_NQ_HOSTNAMESIZE));
         if (NULL == dcNameA)
-    	{
-    		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    		return NQ_ERR_OUTOFMEMORY;
-    	}
+        {
+            LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+            result = NQ_ERR_OUTOFMEMORY;
+            goto Exit;
+        }
         if (NQ_SUCCESS != cmGetDCName(dcNameA, NULL))
         {
-            cmMemoryFree(dcNameA);
             LOGERR(CM_TRC_LEVEL_ERROR, "Cannot acquire DC name");
-    		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-            return NQ_ERR_BADPARAM;
+            result = NQ_ERR_BADPARAM;
+            goto Exit;
+
         }
         pDCName = cmMemoryCloneAString(dcNameA);
-        cmMemoryFree(dcNameA);
         if (NULL == pDCName)
-    	{
-    		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    		return NQ_ERR_OUTOFMEMORY;
-    	}
+        {
+            result = NQ_ERR_OUTOFMEMORY;
+            goto Exit;
+        }
     }
     lsa = ccDcerpcConnect(pDCName, NULL, ccLsaGetPipe(), TRUE);
     if (NULL == lsa)
     {
-    	LOGERR(CM_TRC_LEVEL_ERROR, "Unable to open LSA on PDC");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_ERR_BADPARAM;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to open LSA on PDC");
+        result = NQ_ERR_BADPARAM;
+        goto Exit;
     }
-	homeDomain = cmMemoryCloneAString(cmNetBiosGetDomain()->name);
-	if (NULL == homeDomain)
-	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
-	}
+    homeDomain = cmMemoryCloneAString(cmNetBiosGetDomain()->name);
+    if (NULL == homeDomain)
+    {
+        result = NQ_ERR_OUTOFMEMORY;
+        goto Exit;
+    }
     status = ccLsaGetUserToken(lsa, userName, homeDomain, token);
-    cmMemoryFree(homeDomain);
     ccDcerpcDisconnect(lsa);
     if (NQ_SUCCESS != status)
     {
-    	LOGERR(CM_TRC_LEVEL_ERROR, "Unable to resolve user on domain");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_ERR_BADPARAM;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to resolve user on domain");
+        result = NQ_ERR_BADPARAM;
+        goto Exit;
     }
+    result = NQ_SUCCESS;
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return NQ_SUCCESS;
+Exit:
+    cmMemoryFree(dcNameA);
+    cmMemoryFree(homeDomain);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /* withdraw file SD */
 static NQ_STATUS queryFileSecurityDescriptor(NQ_HANDLE handle, CMSdSecurityDescriptor * sd)
 {
-    NQ_STATUS status;                       /* generic status */
-    CCFile * pFile = (CCFile *)handle;		/* casted pointer */
+    NQ_STATUS status = NQ_FAIL;               /* generic status */
+    CCFile * pFile = (CCFile *)handle;        /* casted pointer */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "handle: %p sd:%p", handle, sd);
 
-	status = pFile->share->user->server->smb->doQuerySecurityDescriptor(pFile, sd);
-	if (NQ_SUCCESS != status)
-	{
-		sySetLastError((NQ_UINT32)status);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return status;
-	}
-	
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return 0;
+    status = pFile->share->user->server->smb->doQuerySecurityDescriptor(pFile, sd);
+    if (NQ_SUCCESS != status)
+    {
+        sySetLastError((NQ_UINT32)status);
+        goto Exit;
+    }
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", status);
+    return status;
 }
 
 /* change file SD */
 static NQ_STATUS setFileSecurityDescriptor(NQ_HANDLE handle, const CMSdSecurityDescriptor * sd)
 {
     NQ_STATUS status;                       /* generic status */
-    CCFile * pFile = (CCFile *)handle;		/* casted pointer */
+    CCFile * pFile = (CCFile *)handle;        /* casted pointer */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "handle: %p sd:%p", handle, sd);
 
-	status = pFile->share->user->server->smb->doSetSecurityDescriptor(pFile, sd);
-	if (NQ_SUCCESS != status)
-	{
-		sySetLastError((NQ_UINT32)status);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return status;
-	}
-	
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return 0;
+    status = pFile->share->user->server->smb->doSetSecurityDescriptor(pFile, sd);
+    if (NQ_SUCCESS != status)
+    {
+        sySetLastError((NQ_UINT32)status);
+        goto Exit;
+    }
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", status);
+    return status;
 }
 
 
@@ -188,26 +191,26 @@ static NQ_STATUS setFileSecurityDescriptor(NQ_HANDLE handle, const CMSdSecurityD
 
 NQ_BOOL ccSdescrStart(void)
 {
-	pDCName = NULL;
-	return TRUE;
+    pDCName = NULL;
+    return TRUE;
 }
 
 void ccSdescrShutdown(void)
 {
-	if (NULL != pDCName)
-		cmMemoryFree(pDCName);
+    if (NULL != pDCName)
+        cmMemoryFree(pDCName);
 }
 
 NQ_BOOL ccSetExclusiveAccessToFileA(NQ_CHAR * fileName, NQ_BOOL makeExclusive)
 {
-    NQ_BOOL result = FALSE;	/* Unicode result */
-    NQ_WCHAR * fileNameW;	/* the same in Unicode */
+    NQ_BOOL result = FALSE;  /* Unicode result */
+    NQ_WCHAR * fileNameW;    /* the same in Unicode */
 
     fileNameW = cmMemoryCloneAString(fileName);
     if (NULL != fileNameW)
     {
-    	result = ccSetExclusiveAccessToFileW(fileNameW, makeExclusive);
-    	cmMemoryFree(fileNameW);
+        result = ccSetExclusiveAccessToFileW(fileNameW, makeExclusive);
+        cmMemoryFree(fileNameW);
     }
 
     return result;
@@ -215,39 +218,37 @@ NQ_BOOL ccSetExclusiveAccessToFileA(NQ_CHAR * fileName, NQ_BOOL makeExclusive)
 
 NQ_BOOL ccSetExclusiveAccessToFileW(NQ_WCHAR * fileName, NQ_BOOL makeExclusive)
 {
-    NQ_STATUS status;            	/* generic status */
-    CMSdSecurityDescriptor * pSd;   /* pointer to security descriptor in packet */
-    NQ_HANDLE fileHandle = NULL;    /* for open file */
-    NQ_BOOL result;                 /* call result */
-    CMSdAccessToken * pToken;       /* pointer to user token */
+    NQ_STATUS status;                      /* generic status */
+    CMSdSecurityDescriptor * pSd = NULL;   /* pointer to security descriptor in packet */
+    NQ_HANDLE fileHandle = NULL;           /* for open file */
+    NQ_BOOL result;                        /* call result */
+    CMSdAccessToken * pToken = NULL;       /* pointer to user token */
+    NQ_BOOL res = FALSE;                   /* return value */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%s make:%s", cmWDump(fileName), makeExclusive ? "TRUE" : "FALSE");
 
     /* lookup access token for the current user */
-	pToken = cmMemoryAllocate(sizeof(CMSdAccessToken));
-	if (NULL == pToken)
+    pToken = (CMSdAccessToken *)cmMemoryAllocate(sizeof(CMSdAccessToken));
+    if (NULL == pToken)
     {
-		sySetLastError(NQ_ERR_OUTOFMEMORY);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+        sySetLastError(NQ_ERR_OUTOFMEMORY);
+        goto Exit;
     }
     status = lookupUserToken(pToken, fileName);
-    if (0 != status)
+    if (NQ_SUCCESS != status)
     {
-		cmMemoryFree(pToken);
-		sySetLastError((NQ_UINT32)status);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
+        sySetLastError((NQ_UINT32)status);
+        goto Exit;
     }
 
     /* create security descriptor */
-    pSd = cmMemoryAllocate(sizeof(CMSdSecurityDescriptor));
-	if (NULL == pSd)
+    pSd = (CMSdSecurityDescriptor *)cmMemoryAllocate(sizeof(CMSdSecurityDescriptor));
+    if (NULL == pSd)
     {
-		cmMemoryFree(pToken);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_OUTOFMEMORY);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return FALSE;
+        goto Exit;
     }
     if (makeExclusive)
     {
@@ -262,105 +263,94 @@ NQ_BOOL ccSetExclusiveAccessToFileW(NQ_WCHAR * fileName, NQ_BOOL makeExclusive)
         pSeparator = cmWStrrchr(fileName, cmWChar('\\'));
         if (NULL == pSeparator)
         {
-       		cmMemoryFree(pToken);
-     		cmMemoryFree(pSd);
-            TRCERR("Illegal file name");
-            TRCE();
+            LOGERR(CM_TRC_LEVEL_ERROR, "Illegal file name");
             sySetLastError(NQ_ERR_BADPARAM);
-            return FALSE;
+            goto Exit;
         }
         saved = *pSeparator;
         *pSeparator = cmWChar('\0');
         fileHandle = ccCreateFileW(
-    					fileName,
-    					READ_ACCESSMASK, 
-    					FILE_SM_DENY_NONE,
-        				0,
-        				FALSE,
-        				SMB_ATTR_DIRECTORY,
-        				FILE_CA_FAIL,
-        				FILE_OA_OPEN
-        				);
+                        fileName,
+                        READ_ACCESSMASK,
+                        FILE_SM_DENY_NONE,
+                        0,
+                        FALSE,
+                        SMB_ATTR_DIRECTORY,
+                        FILE_CA_FAIL,
+                        FILE_OA_OPEN
+                        );
         *pSeparator = saved;
         if (NULL == fileHandle)
         {
-        	cmMemoryFree(pSd);
-    		cmMemoryFree(pToken);
             LOGERR(CM_TRC_LEVEL_ERROR, "Cannot open file");
             sySetLastError(NQ_ERR_BADPARAM);
-        	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-            return FALSE;
+            goto Exit;
         }
         status = queryFileSecurityDescriptor(fileHandle, pSd);
         ccCloseHandle(fileHandle);
-        if (status != 0)
+        if (status != NQ_SUCCESS)
         {
-    		cmMemoryFree(pToken);
-    		cmMemoryFree(pSd);
-        	LOGERR(CM_TRC_LEVEL_ERROR, "Unable to acquire security descriptor");
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to acquire security descriptor");
             sySetLastError((NQ_UINT32)status);
-        	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-            return FALSE;
+            goto Exit;
         }
         result = TRUE;
+        res = result;
     }
 
-    cmMemoryFree(pToken);
-    
     if (!result)
     {
-   		cmMemoryFree(pSd);
-    	LOGERR(CM_TRC_LEVEL_ERROR, "Unable to create security descriptor");
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to create security descriptor");
         sySetLastError(NQ_ERR_BADPARAM);
-    	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return FALSE;
+        goto Exit;
     }
 
     /* open file */
     fileHandle = ccCreateFileW(
-					fileName,
-					WRITE_ACCESSMASK, 
-					FILE_SM_DENY_NONE,
-    				0,
-    				FALSE,
-    				0,
-    				FILE_CA_FAIL,
-    				FILE_OA_OPEN
-    				);
+                    fileName,
+                    WRITE_ACCESSMASK,
+                    FILE_SM_DENY_NONE,
+                    0,
+                    FALSE,
+                    0,
+                    FILE_CA_FAIL,
+                    FILE_OA_OPEN
+                    );
     if (NULL == fileHandle)
     {
-		cmMemoryFree(pSd);
-    	LOGERR(CM_TRC_LEVEL_ERROR, "Unable to acquire security descriptor");
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to acquire security descriptor");
         sySetLastError(NQ_ERR_BADPARAM);
-    	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return FALSE;
+        goto Exit;
     }
 
     status = setFileSecurityDescriptor(fileHandle, pSd);
     ccCloseHandle(fileHandle);
-	cmMemoryFree(pSd);
-    if (status != 0)
+    if (status != NQ_SUCCESS)
     {
-    	LOGERR(CM_TRC_LEVEL_ERROR, "Unable to acquire security descriptor");
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to acquire security descriptor");
         sySetLastError((NQ_UINT32)status);
-    	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return FALSE;
+        goto Exit;
     }
 
-    TRCE();
-    return TRUE;
+    res = TRUE;
+
+Exit:
+    cmMemoryFree(pToken);
+    cmMemoryFree(pSd);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", res ? "TRUE" : "FALSE");
+    return res;
 }
 
 NQ_BOOL ccIsExclusiveAccessToFileA(NQ_CHAR *fileName)
 {
-    NQ_BOOL result = FALSE;	/* Unicode result */
-    NQ_WCHAR * fileNameW;	/* the same in Unicode */
+    NQ_BOOL result = FALSE;    /* Unicode result */
+    NQ_WCHAR * fileNameW;      /* the same in Unicode */
 
     fileNameW = cmMemoryCloneAString(fileName);
     if (NULL != fileNameW)
     {
-    	result = ccIsExclusiveAccessToFileW(fileNameW);
-    	cmMemoryFree(fileNameW);
+        result = ccIsExclusiveAccessToFileW(fileNameW);
+        cmMemoryFree(fileNameW);
     }
 
     return result;
@@ -368,76 +358,68 @@ NQ_BOOL ccIsExclusiveAccessToFileA(NQ_CHAR *fileName)
 
 NQ_BOOL ccIsExclusiveAccessToFileW(NQ_WCHAR * fileName)
 {
-    NQ_STATUS status;                       /* generic status */
-    NQ_HANDLE fileHandle;                   /* for open file */
-    NQ_BOOL result;                         /* call result */
-    CMSdAccessToken * pToken;           	/* pointer to user token */
-    CMSdSecurityDescriptor * pSd;       	/* pointer to security descriptor in packet */
+    NQ_STATUS status;                      /* generic status */
+    NQ_HANDLE fileHandle;                  /* for open file */
+    NQ_BOOL result = FALSE;                /* call result */
+    CMSdAccessToken * pToken = NULL;       /* pointer to user token */
+    CMSdSecurityDescriptor * pSd = NULL;   /* pointer to security descriptor in packet */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "dile:%s", cmWDump(fileName));
 
     /* lookup access token for the current user */
-	pToken = cmMemoryAllocate(sizeof(CMSdAccessToken));
-	if (NULL == pToken)
+    pToken = (CMSdAccessToken *)cmMemoryAllocate(sizeof(CMSdAccessToken));
+    if (NULL == pToken)
     {
-		sySetLastError(NQ_ERR_OUTOFMEMORY);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+        sySetLastError(NQ_ERR_OUTOFMEMORY);
+        goto Exit;
     }
     status = lookupUserToken(pToken, fileName);
     if (NQ_SUCCESS != status)
     {
-		cmMemoryFree(pToken);
-		sySetLastError((NQ_UINT32)status);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
+        sySetLastError((NQ_UINT32)status);
+        goto Exit;
     }
 
     /* query security descriptor */
     fileHandle = ccCreateFileW(
-					fileName,
-					READ_ACCESSMASK, 
-					FILE_SM_DENY_NONE,
-    				0,
-    				FALSE,
-    				0,
-    				FILE_CA_FAIL,
-    				FILE_OA_OPEN
-    				);
+                    fileName,
+                    READ_ACCESSMASK,
+                    FILE_SM_DENY_NONE,
+                    0,
+                    FALSE,
+                    0,
+                    FILE_CA_FAIL,
+                    FILE_OA_OPEN
+                    );
     if (NULL == fileHandle)
     {
-		cmMemoryFree(pToken);
         LOGERR(CM_TRC_LEVEL_ERROR, "Cannot open file");
         sySetLastError(NQ_ERR_BADPARAM);
-    	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return FALSE;
+        goto Exit;
     }
-    pSd = cmMemoryAllocate(sizeof(CMSdSecurityDescriptor));
-	if (NULL == pSd)
+    pSd = (CMSdSecurityDescriptor *)cmMemoryAllocate(sizeof(CMSdSecurityDescriptor));
+    if (NULL == pSd)
     {
-		cmMemoryFree(pToken);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_OUTOFMEMORY);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return FALSE;
+        goto Exit;
     }
     status = queryFileSecurityDescriptor(fileHandle, pSd);
     ccCloseHandle(fileHandle);
-    if (status != 0)
+    if (NQ_SUCCESS != status)
     {
-		cmMemoryFree(pToken);
-		cmMemoryFree(pSd);
-    	LOGERR(CM_TRC_LEVEL_ERROR, "Unable to acquire security descriptor");
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to acquire security descriptor");
         sySetLastError((NQ_UINT32)status);
-    	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return FALSE;
+        goto Exit;
     }
 
     result = cmSdIsExclusiveSecurityDescriptor(pToken, pSd);
 
-	cmMemoryFree(pToken);
-	cmMemoryFree(pSd);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+Exit:
+    cmMemoryFree(pToken);
+    cmMemoryFree(pSd);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
     return result;
 }
 
@@ -445,7 +427,7 @@ NQ_BOOL ccIsExclusiveAccessToFileW(NQ_WCHAR * fileName)
 
 NQ_BOOL ccSdescrStart(void)
 {
-	return TRUE;
+    return TRUE;
 }
 
 void ccSdescrShutdown(void)
@@ -453,4 +435,3 @@ void ccSdescrShutdown(void)
 }
 
 #endif /* defined(UD_NQ_INCLUDECIFSCLIENT) && defined(UD_CC_INCLUDESECURITYDESCRIPTORS) */
-

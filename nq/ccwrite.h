@@ -34,4 +34,6 @@ NQ_BOOL ccWriteStart(void);
  */
 void ccWriteShutdown(void);
 
+NQ_BOOL ccPendingCondWait(CMThreadCond * cond, NQ_UINT32 timeout , void * context);
+
 #endif /* _CCWRITE_H_ */

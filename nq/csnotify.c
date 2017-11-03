@@ -51,7 +51,7 @@
 
 typedef struct
 {
-    NQ_BYTE notifyResponse[CM_NB_DATAGRAMBUFFERSIZE - sizeof(CMCifsHeader)];/* buffer for notify reponse */
+    NQ_BYTE notifyResponse[CM_NB_DATAGRAMBUFFERSIZE - sizeof(CMCifsHeader)];/* buffer for notify response */
     NQ_BYTE* pFirstFileInfo;                 /* pointer in this buffer to the first file
                                                    information structure */
     NQ_BYTE* pNextFileInfo;                  /* pointer in this buffer to the next file
@@ -59,10 +59,10 @@ typedef struct
     NQ_BYTE* pPrevFileInfo;                  /* pointer in this buffer to the previous file
                                                    information structure */
     NQ_BOOL headerSet;                       /* singleton flag for setting up the response header */
-    NQ_TCHAR notifyPath[UD_FS_FILENAMELEN + 1];  /* full path to the directory to notify */
-    NQ_BOOL pathSet;                         /* singleton flag for seting up the path */
+    NQ_WCHAR notifyPath[UD_FS_FILENAMELEN + 1];  /* full path to the directory to notify */
+    NQ_BOOL pathSet;                         /* singleton flag for setting up the path */
     NQ_UINT32 completionFilter;              /* value to match the request (the same for all entries) */
-    NQ_BOOL notifyPending;                   /* TRUE when notofy information is ready to be sent */
+    NQ_BOOL notifyPending;                   /* TRUE when notify information is ready to be sent */
     NQ_UINT32 action;                        /* action to notify */
 }
 StaticData;
@@ -94,7 +94,7 @@ csNotifyInit(
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(*staticData));
     if (NULL == staticData)
     {
         TRCE();
@@ -331,7 +331,7 @@ csNtTransactionNotifyChange(
 }
 
 /*====================================================================
- * PURPOSE: Initalize the list of notify
+ * PURPOSE: Initialize the list of notify
  *--------------------------------------------------------------------
  * PARAMS:  IN completion filter as required by CIFS
  *
@@ -399,7 +399,7 @@ csNotifyEnd(
 
 static void
 csNotifyFile(
-    const NQ_TCHAR* fileName,
+    const NQ_WCHAR* fileName,
     NQ_UINT32 action,
     NQ_BOOL notifyParent
     )
@@ -412,21 +412,21 @@ csNotifyFile(
 
     if (!staticData->pathSet)
     {
-        NQ_TCHAR* pSeparator;
+        NQ_WCHAR* pSeparator;
 
         staticData->pathSet = TRUE;
-        cmTStrncpy(staticData->notifyPath, fileName, sizeof(staticData->notifyPath)/sizeof(NQ_TCHAR));
+        syWStrncpy(staticData->notifyPath, fileName, sizeof(staticData->notifyPath)/sizeof(NQ_WCHAR));
         if (notifyParent)
         {
-            pSeparator = cmTStrrchr(staticData->notifyPath, cmTChar(SY_PATHSEPARATOR));
+            pSeparator = syWStrrchr(staticData->notifyPath, cmWChar(SY_PATHSEPARATOR));
             if (pSeparator == NULL)
             {
                 TRCERR("Illegal path");
-                TRC1P("  path %s", cmTDump(staticData->notifyPath));
+                TRC1P("  path %s", cmWDump(staticData->notifyPath));
             }
             else
             {
-                *pSeparator = (NQ_TCHAR)0;
+                *pSeparator = (NQ_WCHAR)0;
             }
         }
         staticData->action = action;
@@ -435,14 +435,14 @@ csNotifyFile(
 #ifdef UD_NQ_INCLUDESMB2
     cs2NotifyFile(fileName, action, notifyParent);
 #endif
-    /* Windows tends to crash the explorer on a formaly valid NOTIFY CHANGE response with
+    /* Windows tends to crash the explorer on a formally valid NOTIFY CHANGE response with
        file information set. Therefore, we use instead an "enumerate directory" response
-       with an enpty NOTIFY CHANGE structure. The "proper" code below is saved for future use.
+       with an empty NOTIFY CHANGE structure. The "proper" code below is saved for future use.
        */
 #if 0
     /* calculate length of the file info and check space in the buffer */
 
-    pFileName = cmStrrchr(fileName, cmTChar(SY_PATHSEPARATOR));
+    pFileName = cmStrrchr(fileName, cmWChar(SY_PATHSEPARATOR));
     if (pFileName == NULL)
     {
         pFileName = fileName;
@@ -553,13 +553,13 @@ csNotifySend(
 
         /* match the directory with the notify path */
 
-        if (cmTStrncmp(staticData->notifyPath, pName->name, cmTStrlen(pName->name)) != 0)
+        if (syWStrncmp(staticData->notifyPath, pName->name, syWStrlen(pName->name)) != 0)
         {
             /* the directory name does not match the notify path or its beginning */
             continue;
         }
 
-        if (cmTStrlen(staticData->notifyPath) > cmTStrlen(pName->name))
+        if (syWStrlen(staticData->notifyPath) > syWStrlen(pName->name))
         {
             /* directory is above the notify path in the tree */
 
@@ -569,7 +569,7 @@ csNotifySend(
                 continue;
             }
 
-            if (*(staticData->notifyPath + cmTStrlen(pName->name)) != cmTChar(SY_PATHSEPARATOR))
+            if (*(staticData->notifyPath + syWStrlen(pName->name)) != cmWChar(SY_PATHSEPARATOR))
             {
                 /* directory is not an exact super-directory of the notify path */
                 continue;
@@ -590,7 +590,7 @@ csNotifySend(
 
 #ifdef UD_NQ_INCLUDESMB2
         pSess = csGetSessionById(nextDir->session);
-        if (NULL != pSess && !pSess->smb2)
+        if (NULL != pSess && pSess->dialect == CS_DIALECT_SMB1)
         {
 #endif /* UD_NQ_INCLUDESMB2 */
             csDispatchSetSocket(nextDir->notifyContext.socket);
@@ -623,7 +623,7 @@ csNotifySend(
 }
 
 /*====================================================================
- * PURPOSE: Immediatelly notify a single file
+ * PURPOSE: Immediately notify a single file
  *--------------------------------------------------------------------
  * PARAMS:  IN file name
  *          IN action taken
@@ -637,7 +637,7 @@ csNotifySend(
 
 void
 csNotifyImmediatelly(
-    const NQ_TCHAR* fileName,
+    const NQ_WCHAR* fileName,
     NQ_UINT32 action,
     NQ_UINT32 filter
     )

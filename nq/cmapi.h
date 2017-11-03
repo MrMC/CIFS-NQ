@@ -21,6 +21,7 @@
 #define _CMAPI_H_
 
 #include "udparams.h"       /* user defined compilation parameters */
+#include "udadjust.h"
 #include "syapi.h"          /* system-dependent */
 #include "cmcommon.h"       /* basic types */
 #include "cmparams.h"       /* parameters */
@@ -41,14 +42,19 @@
 #include "cmsdescr.h"       /* Security Descriptors */
 #include "cmvalida.h"       /* Validation of cross-dependencies */
 #include "cmtrace.h"        /* traces */
+#include "cmbufman.h"
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+#include "cmcapture.h"
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+#include "cmrepository.h"
 
 /* CM library initialization */
-
 NQ_STATUS
 cmInit(
     void
     );
 
+/* CM library shutdown */
 void
 cmExit(
     void
@@ -58,8 +64,12 @@ cmExit(
 #define NQ_RESOLVER_IPV6        6   /* The resolved address is IPV6. */
 #define NQ_RESOLVER_NONE        0   /* No address resolved. This value designates a resolution
                                        failure.                                                */
+
 #define NQ_RESOLVER_DNS         1   /* mechanism type is DNS. */
 #define NQ_RESOLVER_NETBIOS     2   /* mechanism type is NetBIOS. */
+#define NQ_RESOLVER_EXTERNAL_METHOD 5 /* mechanism type not known. external method set by the user.*/
+#define NQ_RESOLVER_DNS_DC      8   /* mechanism type is DNS DC. */
+#define NQ_RESOLVER_NETBIOS_DC  10  /* mechanism type is NetBIOS DC. */
 
 /* This structure defines code page parameters. */
 typedef struct
@@ -84,7 +94,86 @@ typedef struct
 }
 CMCodepage;     
 
-/** ------------- function prototypes */
+/* Description
+   A descriptor of one resolver method. Use this structure to
+   register a resolution method using the <link cmResolverRegisterExternalMethod@CMResolverRegisteredMethodDescription *, cmResolverRegisterExternalMethod Function> */
+typedef struct
+{
+	 /* This parameter may have one of the following values:
+	      1. Activate registered method before all other methods.
+	      2. Activate registered method after the existing NQ unicast
+	         methods and before existing NQ multicast methods. In this
+	         case registered method will be activated only if existing NQ
+	         unicast methods failed to resolve name or IP
+	      3. Activate registered method only if all other methods
+	         failed.                                                      */
+	NQ_INT activationPriority;
+	/* Timeout in seconds to use with this method */
+	NQ_UINT32 timeout;
+    /* IP of the server to perform resolution with. This value is
+       only sued by Unicast methods.                              */
+    NQ_IPADDRESS *serverIP;
+    /* Routine for composing and sending a name resolution request
+       Parameters:
+        socket :    Socket handle to use for sending
+        name :      Name to resolve
+        context :   Pointer to a method-specific context. This value may be NULL on the first call.
+        serverIp :  Pointer to the IP of the server to query or NULL for multicast
+       Return:
+       NQ_SUCCESS   request sent
+       n            A positive number refers to number of requests that were sent.
+       NQ_ERR_<*>   error
+     */
+    NQ_STATUS (* requestByName)(SYSocketHandle socket, const NQ_WCHAR * name, void * context, const NQ_IPADDRESS * serverIp);
+    /* Routine for receiving and parsing a name resolution response
+       Parameters
+       socket :    Socket handle to use for sending
+       pAddressArray : Address of the pointer which this call sets to an array of
+                        resolved IP addresses. It is caller's responsibility to release this array.
+                        On error, this pointer remains untouched.
+       numIps :    Pointer to the number of resolved IPs.
+       pContext :  Double pointer to a method-specific context. Method may dispose
+                    context and create a new one.
+       Return:
+       NQ_SUCCESS           name successfully resolved
+       NQ_ERR_MOREDATA      more exchange expected
+       NQ_ERR_NOACCESS      more comprehensive method with the same code should be used
+       NQ_ERR_<*>           error
+     */
+    NQ_STATUS (* responseByName)(SYSocketHandle socket, NQ_IPADDRESS ** pAddressArray, NQ_INT * numIps, void ** pContext);
+    /* Routine for composing and sending an IP resolution request
+       Parameters:
+        socket :    Socket handle to use for sending
+        ip :        Pointer to the IP address to resolve.
+        context :   Pointer to a method-specific context. This value may be NULL on the first call.
+        serverIp :  Pointer to  the IP of the server to query or NULL for multicast
+       Return:
+       NQ_SUCCESS   request sent
+       n            A positive number refers to number of requests that were sent.
+       NQ_ERR_<*>   error
+     */
+    NQ_STATUS (* requestByIp)(SYSocketHandle socket, const NQ_IPADDRESS * ip, void * context, const NQ_IPADDRESS * serverIp);
+    /* Routine for receiving and parsing a name resolution response
+
+       Parameters
+        socket :    Socket handle to use for sending
+        pName :     Double pointer to the resolved name. On success, this variable will
+                    point to a newly allocated name. Its is caller's responsibility to release it later.
+        pContext :  Double pointer to a method-specific context. Method may dispose
+                    context and create a new one.
+
+       Return:
+       NQ_SUCCESS           name successfully resolved
+       NQ_ERR_MOREDATA      more exchange expected
+       NQ_ERR_NOACCESS      more comprehensive method with the same code should be used
+       NQ_ERR_<*>           error
+     */
+    NQ_STATUS (* responseByIp)(SYSocketHandle socket, const NQ_WCHAR ** pName, void ** pContext);
+}
+CMResolverRegisteredMethodDescription;
+
+/* function prototypes */
+/***********************/
 
 /* Description
    This function installs code page for another language.
@@ -100,7 +189,7 @@ CMCodepage;
    This function may be used for one the following purposes:
      * Installing new code page.
      * Replacing one of previously installed code pages.
-     * Replacing one of pre&#45;compiled code pages (see NQ
+     * Replacing one of precompiled code pages (see NQ
        Integration And Porting Guide in <link References, Referenced Documents>).
    Parameters
    codePage :  Pointer to codepage descriptor
@@ -127,6 +216,252 @@ NQ_BOOL cmCodepageAdd(const CMCodepage * codePage);
    be NQ_ERR_NOTFOUND when this codepage does not exist.                                  */
 NQ_BOOL cmCodepageRemove(const CMCodepage * codePage);
 
+/* Description
+   This function prototype designates an abstract cryptographic
+   hash algorithm. It is used to replace internal NQ encryption
+   with an external one.
+   Parameters
+   dataIn :   Pointer to the data to encrypt.
+   dataOut :  Pointer to the buffer for encrypted.
+   length :   Length of the incoming data and also the length of
+              the encrypted data.
+   Returns
+   None.                                                         */
+typedef void (* CMAbstractHasher)(const NQ_BYTE * dataIn, NQ_BYTE * dataOut, NQ_COUNT length);
+
+/* Description
+   This function prototype designates an abstract cryptographic
+   algorithm using a cryptographic key. It is used to replace
+   \internal NQ encryption with an external one.
+   Parameters
+   key :            Pointer to the encryption key descriptor.
+                    Some algorithms do not use this value.
+   key1 :           Pointer to the auxiliary key descriptor. This
+                    value may be NULL. Also the data pointer may
+                    be null as well as the blob length may be
+                    zero. In either of those cases the auxiliary
+                    key is ignored. Some algorithms may ignore
+                    this value anyway.
+   dataFragments :  A pointer to the array of data fragment
+                    descriptors. For encryption algorithms which
+                    allow encrypting multiple fragments, this
+                    array may contain more than one element. For
+                    other algorithms, only the first element is
+                    used. An element may be NULL. Also a data
+                    pointer in an element may be NULL as well as
+                    blob length may be zero. In either of those
+                    cases the respective fragment is ignored.
+   numFragments :   Number of data fragments (see above).
+   buffer :         Place holder for hash result.
+   bufferSize :     The expected length of the encrypted data
+   Returns
+   None.                                                          */
+typedef void (* CMAbstractCipher)(const CMBlob * key, const CMBlob * key1, const CMBlob dataFragments[], NQ_COUNT numFragments, NQ_BYTE * buffer, NQ_COUNT bufferSize);
+
+/* Description
+   This function prototype designates an abstract cryptographic
+   algorithm for both encryption and producing authentication
+   data (CCM) . It is used to replace internal NQ encryption
+   with an external one.
+   
+   This algorithm assumes that there are two blocks of data:
+     1. A prefix that is preserved as is
+     2. The messages itself that is to be encrypted
+   The authentication is a production of both blocks.
+   Parameters
+   key :      Pointer to the encryption key descriptor. Some
+              algorithms do not use this value.
+   key1 :     Pointer to the auxiliary key descriptor. This value
+              may be NULL. Also the data pointer may be null as
+              well as the blob length may be zero. In either of
+              those cases the auxiliary key is ignored. Some
+              algorithms may ignore this value anyway.
+   prefix :   A pointer to the message prefix descriptor. This
+              data participate in authentication but remains as
+              is, without encryption.
+   message :  Pointer to the message descriptor. This message
+              will be encrypted in\-place.
+   auth :     Pointer to the authentication data. It will be
+              filled as the result of the algorithm.
+   Returns
+   None.                                                          */
+
+typedef void (* CMAbstractHasher512)(const CMBlob * key, const CMBlob * key1, const CMBlob dataFragments[], NQ_COUNT numFragments, NQ_BYTE * buffer, NQ_COUNT bufferSize, NQ_BYTE *ctxBuff);
+
+/* Description
+   This function prototype designates an abstract cryptographic
+   algorithm for producing authentication data. It is used to 
+   replace internal NQ encryption with an external one.
+   The authentication (hash result) is a product of all data blocks.
+ 
+   Parameters
+   key :            Pointer to the encryption key descriptor.
+                    Some algorithms do not use this value.
+   key1 :           Pointer to the auxiliary key descriptor. This
+                    value may be NULL. Also the data pointer may
+                    be null as well as the blob length may be
+                    zero. In either of those cases the auxiliary
+                    key is ignored. Some algorithms may ignore
+                    this value anyway.
+   dataFragments :  A pointer to the array of data fragment
+                    descriptors. For encryption algorithms which
+                    allow encrypting multiple fragments, this
+                    array may contain more than one element. For
+                    other algorithms, only the first element is
+                    used. An element may be NULL. Also a data
+                    pointer in an element may be NULL as well as
+                    blob length may be zero. In either of those
+                    cases the respective fragment is ignored.
+   numFragments :   Number of data fragments (see above).
+   buffer :         Place holder for hash result.
+   bufferSize :     The expected length of the encrypted data  
+   ctxBuff :  Buffer for context data. if this buffer is null,
+   	   	   	  context buffer will be allocated in function.
+   Returns
+   None.                                                        */
+typedef void (* CMAbstractCcmEncryption)(const CMBlob * key, const CMBlob * key1, const CMBlob * prefix, CMBlob * message, NQ_BYTE * auth);
+
+/* Description
+   This function prototype designates an abstract cryptographic
+   algorithm for both decryption and authentication (CCM) . It
+   is used to replace internal NQ encryption with an external
+   one.
+   
+   This algorithm assumes that there are two blocks of data:
+     1. A prefix that is preserved as is
+     2. The messages itself that is to be encrypted
+   The authentication is a production of both blocks.
+   Parameters
+   key :      Pointer to the encryption key descriptor. Some
+              algorithms do not use this value.
+   key1 :     Pointer to the auxiliary key descriptor. This value
+              may be NULL. Also the data pointer may be null as
+              well as the blob length may be zero. In either of
+              those cases the auxiliary key is ignored. Some
+              algorithms may ignore this value anyway.
+   prefix :   A pointer to the message prefix descriptor. This
+              data participate in authentication but remains as
+              is, without encryption.
+   message :  Pointer to the message descriptor. This message
+              will be encrypted in\-place.
+   auth :     Pointer to the authentication data. This value is
+              be used to authenticate.
+   Returns
+   TRUE if authenticated, FALSE if not.                           */
+typedef NQ_BOOL (* CMAbstractCcmDecryption)(const CMBlob * key, const CMBlob * key1, const CMBlob * prefix, CMBlob * message, const NQ_BYTE * auth);
+
+
+/* Description
+   This function prototype designates an abstract cryptographic
+   algorithm for both encryption and producing authentication
+   data (GCM) . It is used to replace internal NQ encryption
+   with an external one.
+
+   This algorithm assumes that there are two blocks of data:
+     1. A prefix that is preserved as is
+     2. The messages itself that is to be encrypted
+   The authentication is a production of both blocks.
+   Parameters
+   key :      Pointer to the encryption key descriptor. Some
+              algorithms do not use this value.
+   key1 :     Pointer to the auxiliary key descriptor. This value
+              may be NULL. Also the data pointer may be null as
+              well as the blob length may be zero. In either of
+              those cases the auxiliary key is ignored. Some
+              algorithms may ignore this value anyway.
+   prefix :   A pointer to the message prefix descriptor. This
+              data participate in authentication but remains as
+              is, without encryption.
+   message :  Pointer to the message descriptor. This message
+              will be encrypted in\-place.
+   auth :     Pointer to the authentication data. It will be
+              filled with the result of the algorithm.
+   keyBuffer: Optional buffer for usage in key calculations.
+   	   	   	  If NULL a buffer will be allocated per function call.
+   	   	   	  size - AES_PRIV_SIZE
+   encMsgBuffer: Optional buffer for the message encryption which
+    		  is not done in place. If NULL a buffer will be
+   	   	   	  allocated per function call.
+    		  size: message size.
+   Returns
+   None.                                                          */
+typedef void (* CMAbstractGcmEncryption)(const CMBlob *key, const CMBlob *key1, const CMBlob *prefix, CMBlob *message, NQ_BYTE *auth, NQ_BYTE *keyBuffer, NQ_BYTE *encMsgBuffer);
+
+/* Description
+   This function prototype designates an abstract cryptographic
+   algorithm for both decryption and authentication (GCM). It
+   is used to replace internal NQ encryption with an external
+   one.
+
+   This algorithm assumes that there are two blocks of data:
+     1. A prefix that is preserved as is
+     2. The messages itself that is to be encrypted
+   The authentication is a production of both blocks.
+   Parameters
+   key :      Pointer to the encryption key descriptor. Some
+              algorithms do not use this value.
+   key1 :     Pointer to the auxiliary key descriptor. This value
+              may be NULL. Also the data pointer may be null as
+              well as the blob length may be zero. In either of
+              those cases the auxiliary key is ignored. Some
+              algorithms may ignore this value anyway.
+   prefix :   A pointer to the message prefix descriptor. This
+              data participate in authentication but remains as
+              is, without encryption.
+   message :  Pointer to the message descriptor. This message
+              will be encrypted in\-place.
+   auth :     Pointer to the authentication data. This value is
+              be used to authenticate.
+   keyBuffer: Optional buffer for usage in key calculations.
+   	   	   	  If NULL a buffer will be allocated per function call.
+   	   	   	  size - AES_PRIV_SIZE
+   msgBuffer: Optional buffer for the message decryption which
+    		  is not done in place. If NULL a buffer will be
+   	   	   	  allocated per function call.
+   	   	   	  Size - message size.
+   Returns
+   TRUE if authenticated, FALSE if not.                           */
+typedef NQ_BOOL (* CMAbstractGcmDecryption)(const CMBlob * key, const CMBlob *key1, const CMBlob *prefix, CMBlob *message, const NQ_BYTE *auth, NQ_BYTE *keyBuffer, NQ_BYTE *msgBuffer);
+
+
+/* Description
+   This structure designates a list of cryptographic algorithms
+   currently used by NQ. It is used to replace existing
+   cryptographic algorithms.
+   
+   If a particular cryptographic algorithm is NULL, it is not
+   replaced.                                                    */
+typedef struct
+{
+	CMAbstractHasher md4;			/* MD4 hasher */
+	CMAbstractCipher md5;			/* MD5 hasher */
+	CMAbstractCipher hmacmd5;		/* HMACMD5 crypter */
+	CMAbstractCipher sha256;		/* SHA-256 crypter */
+	CMAbstractCipher aes128cmac;	/* AES-CMAC crypter */
+	CMAbstractHasher512 sha512;		/* SHA-512 crypter */
+	CMAbstractCcmEncryption aes128ccmEncryption;	/* AES-CCM encryption algorithm */
+	CMAbstractCcmDecryption aes128ccmDecryption;	/* AES-CCM decryption algorithm */
+	CMAbstractGcmEncryption aes128gcmEncryption;	/* AES-GCM encryption algorithm */
+	CMAbstractGcmDecryption aes128gcmDecryption;	/* AES-GCM decryption algorithm */
+} 
+CMCrypterList;
+
+/* Description
+   This function replaces internal NQ cryptographic algorithms
+   with external ones.
+   Parameters
+   crypters :  A pointer to the list of internal ciphers. Only
+               non\-NULL values are applied.
+   Returns
+   None.                                                       */
+void cmSetExternalCrypters(const CMCrypterList * crypters);
+
+/* Description
+   This function reverts the list of cryptographic algorithms to
+   \internal algorithms only.
+   Returns
+   None.                                                         */
+void cmResetExternalCrypters(void);
 
 /* Description
    This function prototype designates a callback for resolving
@@ -218,7 +553,10 @@ typedef NQ_BOOL (*CMResolverIpToNameW)(NQ_WCHAR * name, const void * ip, NQ_INT 
                value can be NULL. In this case, NQ will fail
                external IP\-to\-name resolution.
    Returns
-   None.                                                          */
+   None.
+   Note
+   This function is deprecated. Use the <link cmResolverRegisterExternalMethod@CMResolverRegisteredMethodDescription *, cmResolverRegisterExternalMethod Function>
+   instead.                                                                                                                                                        */
 #ifdef UD_CM_UNICODEAPPLICATION
     #define cmResolverSetExternal cmResolverSetExternalW  
 #else
@@ -282,8 +620,36 @@ const NQ_WCHAR * cmResolverGetHostName(const NQ_IPADDRESS * ip);
    Pointer to an array of IP addresses or NULL on error. The
    size of array is placed into the variable pointed by <i>numIps</i>.
    Note
-   It is caller's responsibility to release this array.                */  
+   It is caller's responsibility to release this array. To release this array the caller need to call the <i>cmMemoryFree()</i> function. */
 const NQ_IPADDRESS * cmResolverGetHostIps(const NQ_WCHAR * host, NQ_INT * numIps);
+
+/* Description
+   This function resolves domain's DC and return its name.
+   
+   DC name is created in allocated memory so that it is
+   caller's responsibility to free this memory.
+   
+   NQ uses several unicast and multicast methods for this
+   resolution. First, it attempts all unicast methods
+   concurrently. Depending on compilation parameters those
+   methods may be:
+     * DNS queries to one or more DNS servers;
+     * NetBIOS query to one or more WINS.
+   If none of the above succeeded, NQ concurrently attempts
+   multicast methods as:
+     * NetBIOS broadcasts.
+   If those methods did not succeed, NQ calls external method if
+   this method has been installed in <link cmResolverSetExternal>()
+   call.
+   Parameters
+   domain :  Pointer to domain name.
+   numDCs :  Pointer to variable that on exit gets the number of
+             resolved DC names.
+   Returns
+   Pointer to newly created DC name or NULL on failure.
+   Note
+   It is caller's responsibility to release this name. To release the name call <i>cmMemoryFree()</i>             */
+const NQ_WCHAR * cmResolverGetDCName(const NQ_WCHAR * domain, NQ_INT * numDCs);
 
 /* Description
    Resolver uses different methods (mechanisms) to resolve host
@@ -315,6 +681,46 @@ const NQ_IPADDRESS * cmResolverGetHostIps(const NQ_WCHAR * host, NQ_INT * numIps
    Returns
    None.                                                                   */  
 void cmResolverEnableMethod(NQ_INT type, NQ_BOOL unicast, NQ_BOOL multicast);
+
+/* Description
+   Resolver uses DNS and NET BIOS to resolve host IP(s) by name
+   or to resolve host name by IP. This function enables adding
+   another resolution method. A method is defined using the <link CMResolverRegisteredMethodDescription, CMResolverRegisteredMethodDescription Structure>.
+   See structure description with different members. Not all
+   functions have to be defined, but notice following
+   guidelines:
+     1. Must define at least one request function - request by
+        name or request by IP
+     2. If a request function is defined, then the corresponding
+        response function must be defined as well.
+     3. If defined timeout value is too long it might cause a
+        delay in setup process.
+     4. Resolver methods are not executed all at once.
+        Registered method will be executed according to defined
+        priority. See the <link CMResolverRegisteredMethodDescription, CMResolverRegisteredMethodDescription Structure>.
+   Returns
+   TRUE - on registration success. FALSE otherwise.                                                                                                        */
+NQ_BOOL cmResolverRegisterExternalMethod(const CMResolverRegisteredMethodDescription * pMethod);
+
+/* Description
+   This function enables run time control on the order of
+   resolver methods execution. In resolver point of view three
+   groups of methods exist: unicast methods, multicast methods,
+   external methods. External methods are all methods that were
+   registered by the user. Each group of methods is executed
+   separately and if no reply is received the next group is
+   executed.
+   Parameters
+   requiredPriority :  This parameter takes the following values\:
+                       1. Execute external methods before all
+                          other methods.
+                       2. Execute external methods after unicast
+                          methods and before multicast methods.
+                       3. Execute external methods only if all
+                          other resolution methods failed.
+   Returns
+   <i>TRUE</i> - on success. <i>FALSE</i> otherwise.               */
+NQ_BOOL cmResolverUpdateExternalMethodsPriority(NQ_INT requiredPriority);
 
 /* Description
    After startup NQ uses the list of DNS servers as defined in
@@ -381,7 +787,7 @@ void cmNetBiosSetWinsW(const NQ_WCHAR * servers);   /* UNICODE version */
     #define cmDnsSetDomain cmDnsSetDomainA
 #endif
 NQ_STATUS cmDnsSetDomainA(const NQ_CHAR * domainName);   /* ASCII version */
-NQ_STATUS cmDnsSetDomainW(const NQ_WCHAR * domainName);/* UNICODE version */
+NQ_STATUS cmDnsSetDomainW(const NQ_WCHAR * domainName);  /* UNICODE version */
 
 /* Description
 	Conversion of Wide Characters string into Multi Byte.
@@ -408,5 +814,28 @@ cmMultiByteToWideChar(
     NQ_WCHAR* strWideChar,
     const NQ_CHAR *strMultiByte
     );
+
+/* Description
+	Get the number of available transports.
+	Parameters
+    None.
+    Returns
+	Number of available transports.                              */
+NQ_UINT
+cmGetNumOfAvailableTransports(
+    void
+    );
+
+/* Description
+	Get the list of transports by their priorities.
+	Parameters
+    pBuf: Pointer to array of transports following by zero
+    Returns
+	None.                              */
+void
+cmGetTransportPriorities(
+    NQ_UINT	*	pBuf
+    );
+
 
 #endif  /* _CMAPI_H_ */

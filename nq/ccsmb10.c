@@ -23,7 +23,7 @@
 #include "ccfile.h"
 #include "ccutils.h"
 #include "ccerrors.h"
-#include "ccconfig.h"
+#include "ccparams.h"
 #include "ccsearch.h"
 #include "ccinfo.h"
 #include "cmthread.h"
@@ -41,7 +41,7 @@
 #define FID(f)  ((NQ_UINT16 *)f->fid)
 #define PIDOFFSET 26 + 4    /* mid offset in the header */
 
-/* find message sequene number */
+/* find message sequence number */
 #define MSG_NUMBER(_p) ((_p.pid * 0x10000) + _p.mid)
 
 /* -- Structures -- */
@@ -52,7 +52,7 @@ typedef struct
 {
 	NQ_BYTE * buffer;		/* buffer pointer */
 	CMBufferWriter writer;	/* writer to use */
-	CMSmbHeader header;	/* header to use */
+	CMSmbHeader header;	    /* header to use */
 	CMBlob tail;			/* variable data (tail) */ 
 	NQ_UINT16 command;		/* command code */
 	NQ_BYTE * pByteCount;	/* pointer to the byte count field */
@@ -72,8 +72,14 @@ typedef struct
 	NQ_BYTE * pData;	    /* pointer to the start of T2/NT data */
     NQ_UINT32 dataCount;    /* number of T2/NT data bytes */
     NQ_COUNT tailLen;       /* payload length */
+    NQ_BOOL		useAscii;
+    NQ_BOOL wasReceived;
 } 
 Response;	/* SMB response descriptor */
+
+#define MATCHINFO_NONE  0x0000;
+#define MATCHINFO_WRITE 0x0001;
+#define MATCHINFO_READ  0x0002;
 
 typedef struct 
 {
@@ -83,7 +89,10 @@ typedef struct
 	NQ_UINT16 mid;			/* to match request and response */
 	NQ_UINT32 pid;			/* to match request and response */
 	CMThreadCond * cond;	/* condition to raise */
-	NQ_BYTE hdrBuf[SMB_HEADERSIZE];		/* header + struct size for signing check */
+	NQ_BYTE hdrBuf[SMB_HEADERSIZE];	/* header + struct size for signing check */
+	NQ_BOOL	isResponseAllocated;    /* whether response is allocated */
+    CMThread *thread;               /* pointer to thread */
+    NQ_UINT16	matchExtraInfo;		/* bitmap with extra match info according to defines above MATCHINFO_XXX */
 }
 Match;	/* Context between SMB and Transport with one instance per 
 		   an outstanding request. Used to match request (expected response) 
@@ -93,10 +102,11 @@ Match;	/* Context between SMB and Transport with one instance per
 typedef struct 
 {
 	Match match;					/* inherits from Match */
-    NQ_TIME timeCreated;            /* time request is created*/
-    NQ_TIME setTimeout;             /* timeout that was set when the request was created*/
+    NQ_UINT32 timeCreated;          /* time request is created*/
+    NQ_UINT32 setTimeout;           /* timeout that was set when the request was created*/
 	CCCifsWriteCallback callback; 	/* callback function to use */
-	void * context;					/* context for this callback */
+	void *context;					/* context for this callback */
+	void *hook;						/* hook to find this context when removed the an external function */
 }
 WriteMatch;	/* Context between SMB and Transport for Write. Used to match request (expected response) 
 		   with response */
@@ -104,10 +114,11 @@ WriteMatch;	/* Context between SMB and Transport for Write. Used to match reques
 typedef struct 
 {
 	Match match;					/* inherits from Match */
-    NQ_TIME timeCreated;            /* time request is created*/
-    NQ_TIME setTimeout;             /* timeout that was set when the request was created*/
+    NQ_UINT32 timeCreated;          /* time request is created*/
+    NQ_UINT32 setTimeout;           /* timeout that was set when the request was created*/
 	CCCifsReadCallback callback; 	/* callback function to use */
 	void * context;					/* context for this callback */
+	void *hook;						/* hook to find this context when removed the an external function */
 	NQ_BYTE * buffer;				/* buffer to read in */
 	NQ_UINT32 count;				/* number of bytes to read */
 }
@@ -139,7 +150,7 @@ typedef struct
 } 
 SearchContext;	/* SMB search context */	
 
-/* -- Forward defintions -- */
+/* -- Forward definitions -- */
 
 static void * allocateContext(CCServer * server);	
 static void freeContext(void * context, void * server);	
@@ -157,27 +168,42 @@ static NQ_STATUS doQueryDfsReferrals(CCShare * share, const NQ_WCHAR * path, CCC
 static NQ_STATUS doFindOpen(CCSearch * pSearch);
 static NQ_STATUS doFindMore(CCSearch * pSearch);
 static NQ_STATUS doFindClose(CCSearch * pSearch);
-static NQ_STATUS doWrite(CCFile * pFile, const NQ_BYTE * data, NQ_UINT bytesToWrite, CCCifsWriteCallback callback, void * context);
-static NQ_STATUS doRead(CCFile * pFile, const NQ_BYTE * data, NQ_UINT bytesToRead, CCCifsReadCallback callback, void * context);
+static NQ_STATUS doWrite(CCFile * pFile, const NQ_BYTE * data, NQ_UINT bytesToWrite, CCCifsWriteCallback callback, void * context, void *hook);
+static NQ_STATUS doRead(CCFile * pFile, const NQ_BYTE * data, NQ_UINT bytesToRead, CCCifsReadCallback callback, void * context, void * hook);
 #ifdef UD_CC_INCLUDESECURITYDESCRIPTORS
 static NQ_STATUS doQuerySecurityDescriptor(CCFile * pFile, CMSdSecurityDescriptor * sd);
 static NQ_STATUS doSetSecurityDescriptor(CCFile * pFile, const CMSdSecurityDescriptor * sd);
 #endif
 static NQ_STATUS doQueryFsInfo(CCShare * pShare, CCVolumeInfo * pInfo);
-static NQ_STATUS doQueryFileInfoByName(CCShare * pShare, const NQ_WCHAR * fileName, CCCifsParseFileInfoCallback callback, void * context);
-static NQ_STATUS doQueryFileInfoByHandle(CCFile * pFile, CCCifsParseFileInfoCallback callback, void * context);
+static NQ_STATUS doQueryFileInfoByName(CCShare * pShare, const NQ_WCHAR * fileName, CCFileInfo * pInfo);
+static NQ_STATUS doQueryFileInfoByHandle(CCFile * pFile, CCFileInfo * pInfo);
 static NQ_STATUS doSetFileAttributes(CCFile * pFile, NQ_UINT32 attributes);	
 static NQ_STATUS doSetFileSize(CCFile * pFile, NQ_UINT64 size);	
 static NQ_STATUS doSetFileTime(CCFile * pFile, NQ_UINT64 creationTime, NQ_UINT64 lastAccessTime, NQ_UINT64 lastWriteTime);	
 static NQ_STATUS doSetFileDeleteOnClose(CCFile * pFile);	
 static NQ_STATUS doRename(CCFile * pFile, const NQ_WCHAR * newName);	
 static NQ_STATUS doFlush(CCFile * pFile);	
-static NQ_STATUS doRapTransaction(CCShare * share, const CMBlob * inData, CMBlob * outData);
+static NQ_STATUS doRapTransaction(CCShare * share, const CMBlob * inData, CMBlob * outParams, CMBlob * outData);
 static NQ_STATUS doEcho(CCShare * pShare);
-
 
 static void writeCallback(CCServer * pServer, Match * pContext);
 static void readCallback(CCServer * pServer, Match * pContext);
+
+static NQ_STATUS sendRequest(CCServer * pServer, CCUser * pUser, Request * pRequest, Match * pMatch, NQ_BOOL (*callback)(CMItem * pItem));
+static NQ_STATUS sendReceive(CCServer * pServer, CCUser * pUser, Request * pRequest, Response * pResponse);
+static void anyResponseCallback(void * transport);
+
+static NQ_STATUS composeCreateFileRequest(Request * request, CCFile * pFile);
+static void parseCreateFileResponse(Response * response, CCFile * pFile);
+static NQ_STATUS composeCloseRequest(Request * request, CCFile * pFile);
+static void	composeQueryFileInfoByNameRequest(Request *request, NQ_BYTE * position, CCServer * pServer, const NQ_WCHAR * fileName, NQ_UINT16 level);
+static void	composeQueryFileInfoByHandleRequest(Request *request, NQ_BYTE * position, CCServer * pServer, NQ_UINT16 * pFid, NQ_UINT16 level);
+static void fileInfoResponseParser(CMBufferReader * pReader, CCFileInfo * pInfo, NQ_UINT16 level);
+static void keyDerivation(void * user);
+static void signalAllMatches(void * pTransport);
+static void handleWaitingNotifyResponse(void *pServer, void *pFile){return;};
+static NQ_BOOL validateNegotiate(void *pServ, void *_pUser, void *pShare);
+static NQ_BOOL removeReadWriteMatch(void * context, void* _pServer, NQ_BOOL isReadMatch);
 
 /* -- Static data */
 
@@ -185,8 +211,8 @@ static const NQ_WCHAR rpcPrefix[] = { cmWChar('\\'), 0 };  /* value to prefix RP
 
 static const CCCifsSmb dialect = 
 { 
-		"NT LM 0.12", 
-		CCCIFS_ILLEGALSMBREVISION, 
+        "NT LM 0.12",
+        CCCIFS_ILLEGALSMBREVISION,
 		32,
 		TRUE,
         rpcPrefix,
@@ -206,30 +232,38 @@ static const CCCifsSmb dialect =
 		(NQ_STATUS (*)(void *))doFindOpen,
 		(NQ_STATUS (*)(void *))doFindMore,
 		(NQ_STATUS (*)(void *))doFindClose,
-		(NQ_STATUS (*)(void *, const NQ_BYTE *, NQ_UINT, CCCifsWriteCallback, void *))doWrite,
-		(NQ_STATUS (*)(void *, const NQ_BYTE *, NQ_UINT, CCCifsReadCallback, void *))doRead,
+		(NQ_STATUS (*)(void *, const NQ_BYTE *, NQ_UINT, CCCifsWriteCallback, void *, void *))doWrite,
+		(NQ_STATUS (*)(void *, const NQ_BYTE *, NQ_UINT, CCCifsReadCallback, void *, void *))doRead,
 #ifdef UD_CC_INCLUDESECURITYDESCRIPTORS	
 		(NQ_STATUS (*)(void *, CMSdSecurityDescriptor *))doQuerySecurityDescriptor,
 		(NQ_STATUS (*)(void *, const CMSdSecurityDescriptor *))doSetSecurityDescriptor,
 #endif /* UD_CC_INCLUDESECURITYDESCRIPTORS */		
 		(NQ_STATUS (*)(void *, void *))doQueryFsInfo, 
-		(NQ_STATUS (*)(void *, const NQ_WCHAR *, CCCifsParseFileInfoCallback, void *))doQueryFileInfoByName, 
-		(NQ_STATUS (*)(void *, CCCifsParseFileInfoCallback, void *))doQueryFileInfoByHandle,
+		(NQ_STATUS (*)(void *, const NQ_WCHAR *, void *))doQueryFileInfoByName,
+		(NQ_STATUS (*)(void *, void *))doQueryFileInfoByHandle,
 		(NQ_STATUS (*)(void *, NQ_UINT32))doSetFileAttributes,
 		(NQ_STATUS (*)(void *, NQ_UINT64))doSetFileSize,
 		(NQ_STATUS (*)(void *, NQ_UINT64, NQ_UINT64, NQ_UINT64))doSetFileTime,
 		(NQ_STATUS (*)(void *))doSetFileDeleteOnClose,
 		(NQ_STATUS (*)(void *, const NQ_WCHAR *))doRename,
 		(NQ_STATUS (*)(void * pFile))doFlush,	
-        (NQ_STATUS (*)(void *, const CMBlob *, CMBlob *))doRapTransaction,
+		(NQ_STATUS(*)(void *, const CMBlob *, CMBlob *, CMBlob *))doRapTransaction,
         (NQ_STATUS (*)(void *))doEcho,
+        (NQ_STATUS (*)(void * pServer, void * pUser, void * pRequest, void * pMatch, NQ_BOOL (*callback)(CMItem * pItem)))sendRequest,
+        (NQ_STATUS (*)(void * pServer, void * pUser, void * pRequest, void * pResponse))sendReceive,
+        anyResponseCallback,
+        keyDerivation,
+        signalAllMatches,
+		handleWaitingNotifyResponse,
+		validateNegotiate,
+		removeReadWriteMatch,
         TRUE,
         FALSE
 };
 
 static const Command commandDescriptors[] = /* SMB descriptors */ {
 { 0, 0, 0, NULL },        			/* 0x00 SMB_COM_CREATE_DIRECTORY       */
-{ 0, 0, 0, NULL },        			/* 0x01 SMB_COM_DELETE_DIRECTORY       */
+{ 2000, 0, 0, NULL },        		/* 0x01 SMB_COM_DELETE_DIRECTORY       */
 { 0, 0, 0, NULL },        			/* 0x02 SMB_COM_OPEN                   */
 { 0, 0, 0, NULL },        			/* 0x03 SMB_COM_CREATE                 */
 { 100, 3, 0, NULL },       			/* 0x04 SMB_COM_CLOSE                  */
@@ -343,7 +377,7 @@ static const Command commandDescriptors[] = /* SMB descriptors */ {
 { 0, 0, 0, NULL },            		/* 0x70 SMB_COM_TREE_CONNECT           */
 { 300, 0, 0, NULL },         	    /* 0x71 SMB_COM_TREE_DISCONNECT        */
 { 300, 0, 17, NULL },               /* 0x72 SMB_COM_NEGOTIATE              */
-{ 0xFFFF, 0xFF, 3, NULL },   			/* 0x73 SMB_COM_SESSION_SETUP_ANDX     */
+{ 0xFFFF, 0xFF, 3, NULL },   		/* 0x73 SMB_COM_SESSION_SETUP_ANDX     */
 { 300, 2, 0, NULL },        		/* 0x74 SMB_COM_LOGOFF_ANDX            */
 { 2000, 4, 7, NULL },    		    /* 0x75 SMB_COM_TREE_CONNECT_ANDX      */
 { 0, 0, 0, NULL },                  /* 0x76 0x76                           */
@@ -420,13 +454,13 @@ static const Command commandDescriptors[] = /* SMB descriptors */ {
 { 0, 0, 0, NULL },                  /* 0xBD 0xBD                           */
 { 0, 0, 0, NULL },                  /* 0xBE 0xBE                           */
 { 0, 0, 0, NULL },                  /* 0xBF 0xBF                           */
-{ 0, 0, 0, NULL },                  /* 0xC0 SMB_COM_OPEN_PRINT_FILE        */
+{ 2000, 2, 1, NULL },               /* 0xC0 SMB_COM_OPEN_PRINT_FILE        */
 { 0, 0, 0, NULL },                  /* 0xC1 SMB_COM_WRITE_PRINT_FILE       */
-{ 0, 0, 0, NULL },                  /* 0xC2 SMB_COM_CLOSE_PRINT_FILE       */
+{ 100, 1, 0, NULL },                /* 0xC2 SMB_COM_CLOSE_PRINT_FILE       */
 { 0, 0, 0, NULL },                  /* 0xC3 SMB_COM_GET_PRINT_QUEUE        */
 }; /* end of the command set */
 
-static SYMutex soloGuard;           /* critical section guard for protetcing next variable */
+static SYMutex soloGuard;           /* critical section guard for protecting next variable */
 static NQ_BOOL soloMode = FALSE;    /* negotiation mode */
 
 /* -- API Functions */
@@ -455,11 +489,14 @@ static void * allocateContext(CCServer * server)
 	Context * pContext;
 	if (NULL == (pContext = (Context *)cmMemoryAllocate(sizeof(Context))))
 	{
-		return NULL;
+		LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+		goto Exit;
 	}
 	pContext->mid = 0;
 	pContext->pid = 0;
-    return pContext;
+
+Exit:
+	return pContext;
 }
 
 static void freeContext(void * context, void * server)
@@ -467,7 +504,6 @@ static void freeContext(void * context, void * server)
 	CCServer * pServer = (CCServer *)server;	/* casted pointer */
 	Context * pContext = (Context *)pServer->smbContext;
 	
-	ccTransportRemoveResponseCallback(&pServer->transport);
 	if (NULL != pContext)
 	{
 		cmMemoryFree(pContext);
@@ -493,8 +529,9 @@ static NQ_BOOL prepareSingleRequest(CCServer * pServer, Request * pRequest, NQ_B
 {
 	NQ_BYTE * pBuffer;		/* allocated request buffer */ 
 	NQ_COUNT bufferSize;	/* this buffer size */
+    NQ_BOOL result = FALSE; /* return value */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p request:%p command:0x%x", pServer, pRequest, command);
 
 	/* this call:
 	 * - allocates request buffer
@@ -505,8 +542,8 @@ static NQ_BOOL prepareSingleRequest(CCServer * pServer, Request * pRequest, NQ_B
 	pBuffer = cmBufManTake(bufferSize);
 	if (NULL == pBuffer)
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+		goto Exit;
 	}
 	cmBufferWriterInit(&pRequest->writer, pBuffer, bufferSize);
 	pRequest->buffer = pBuffer;
@@ -516,7 +553,7 @@ static NQ_BOOL prepareSingleRequest(CCServer * pServer, Request * pRequest, NQ_B
 	cmBufferWriterSkip(&pRequest->writer, 4);	/* NBT header */
 	cmSmbHeaderInitForRequest(&pRequest->header, &pRequest->writer, command);
 	pRequest->header.flags = 0x18;
-	pRequest->header.flags2 = (NQ_UINT16)(  SMB_FLAGS2_UNICODE
+	pRequest->header.flags2 = (NQ_UINT16)( pServer->useAscii ? 0 : SMB_FLAGS2_UNICODE
 								| SMB_FLAGS2_32_BIT_ERROR_CODES
 								| SMB_FLAGS2_IS_LONG_NAME
                                 | SMB_FLAGS2_KNOWS_LONG_NAMES
@@ -533,20 +570,27 @@ static NQ_BOOL prepareSingleRequest(CCServer * pServer, Request * pRequest, NQ_B
 	pRequest->header.tid = 0;
 	pRequest->header.uid = 0;
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return TRUE;
+    result = TRUE;
+
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+	return result;
 }
 
 static NQ_BOOL prepareSingleRequestByShare(Request * pRequest, const CCShare * pShare, NQ_UINT16 command)
 {
+	NQ_BOOL result = FALSE;
+
 	if (!prepareSingleRequest(pShare->user->server, pRequest, (NQ_BYTE)command))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
+		goto Exit;
 	}
 	pRequest->header.tid = (NQ_UINT16)pShare->tid;
 	pRequest->header.uid = (NQ_UINT16)pShare->user->uid.low;
-	return TRUE;
+	result = TRUE;
+
+Exit:
+	return result;
 }
 
 static void writeHeader(Request * pRequest)
@@ -631,7 +675,7 @@ static void writeTrans2(CCServer * pServer, Request * pRequest, NQ_UINT16 maxPar
     dataCount = (NQ_UINT16)(pEnd - pRequest->pData);
     cmBufferWriteUint16(&pRequest->writer, dataCount);                                  /* data count */
     cmBufferWriteUint16(&pRequest->writer, 
-        dataCount == 0? 0: (NQ_UINT16)(pRequest->pData - pRequest->header._start));                  /* data offset */
+    		(NQ_UINT16)(dataCount == 0? 0 : (pRequest->pData - pRequest->header._start)));           /* data offset */
     cmBufferWriterSetPosition(&pRequest->writer, pEnd);
 }
 
@@ -672,7 +716,7 @@ static void writeTrans(CCServer * pServer, Request * pRequest, NQ_UINT16 maxPara
     dataCount = (NQ_UINT16)(pEnd - pRequest->pData);
     cmBufferWriteUint16(&pRequest->writer, dataCount);                                  /* data count */
     cmBufferWriteUint16(&pRequest->writer, 
-        dataCount == 0? 0: (NQ_UINT16)(pRequest->pData - pRequest->header._start));                  /* data offset */
+    		(NQ_UINT16)(dataCount == 0? 0 : (pRequest->pData - pRequest->header._start)));           /* data offset */
     cmBufferWriterSetPosition(&pRequest->writer, pEnd);
 }
 
@@ -704,29 +748,52 @@ static void setTransParams(Response * pResponse)
 }
 
 
-static NQ_STATUS sendRequest(CCServer * pServer, CCUser * pUser, Request * pRequest, Match * pMatch)
+static NQ_STATUS sendRequest(CCServer * pServer, CCUser * pUser, Request * pRequest, Match * pMatch, NQ_BOOL (*callback)(CMItem * pItem))
 {
-	NQ_UINT32 packetLen;		/* packet length of both in and out packets */
-    Context * pContext;         /* server context */
-	CMBufferWriter writer;      /* to write down MID */
-	
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    NQ_UINT32 packetLen;           /* packet length of both in and out packets */
+    Context * pContext;            /* server context */
+    CMBufferWriter writer;         /* to write down MID */
+    CCUser * pMasterUser;          /* master (first) logged in user */
+    NQ_STATUS result = NQ_SUCCESS; /* return value */
+
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p user:%p request:%p match:%p", pServer, pUser, pRequest, pMatch);
 
 	if (pServer->smbContext == NULL)
 	{
-		LOGERR(CM_TRC_LEVEL_ERROR, " smbContext in CCServer ibject is missing");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_ERR_NOTCONNECTED;
+		LOGERR(CM_TRC_LEVEL_ERROR, " smbContext in CCServer object is missing");
+        result = NQ_ERR_NOTCONNECTED;
+        cmListItemDispose(&pMatch->item);
+        goto Exit;
 	}
 
-    packetLen = cmBufferWriterGetDataCount(&pRequest->writer) - 4;	/* NBT header */
-
-    if (!ccServerWaitForCredits(pServer))
+    if (!ccServerWaitForCredits(pServer, 1))
     {
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_ERR_TIMEOUT;
+        result = NQ_ERR_TIMEOUT;
+        cmListItemDispose(&pMatch->item);
+        goto Exit1;
     }
+
+    cmListItemTake(&pServer->item);
     ccTransportLock(&pServer->transport);
+
+    if (!pServer->transport.connected || !pUser->logged)
+	{
+		if (!pServer->transport.connected)
+		{
+			LOGERR(CM_TRC_LEVEL_ERROR, " transport isn't connected");
+			result = NQ_ERR_NOTCONNECTED;
+			goto Error;
+		}
+		if (!pUser->logged && pRequest->header.command != SMB_COM_SESSION_SETUP_ANDX)
+		{
+			LOGERR(CM_TRC_LEVEL_ERROR, "User: %s isn't logged, probably reconnect failed.", cmWDump(pUser->credentials->user));
+			result = NQ_ERR_NOTCONNECTED;
+			goto Error;
+		}
+	}
+
+    /* set response as not received */
+    pMatch->response->wasReceived = FALSE;
 
     /* write down MID */
     pContext = (Context *)pServer->smbContext;
@@ -737,222 +804,279 @@ static NQ_STATUS sendRequest(CCServer * pServer, CCUser * pUser, Request * pRequ
     {
         pContext->pid++;
     }
-    cmBufferWriterInit(&writer, pRequest->buffer + PIDOFFSET, packetLen);
+    packetLen = cmBufferWriterGetDataCount(&pRequest->writer) - 4;	/* NBT header */
+    cmBufferWriterInit(&writer, pRequest->buffer + PIDOFFSET, (NQ_COUNT)packetLen);
     cmBufferWriteUint16(&writer, (NQ_UINT16)(pRequest->header.pid));
     cmBufferWriterSkip(&writer, sizeof(NQ_UINT16));
     cmBufferWriteUint16(&writer, pRequest->header.mid);
     pMatch->mid = pRequest->header.mid;
     pMatch->pid = pRequest->header.pid;
 
+    /* add match to list only after mid was set */
+    cmListItemAdd(&pServer->expectedResponses, (CMItem *)pMatch, callback);
+
     /* compose signature */
-    if (ccServerUseSignatures(pServer) && NULL != pServer->masterUser && ccUserUseSignatures(pUser))
+    pMasterUser = (CCUser *)pServer->masterUser;
+    if (ccServerUseSignatures(pServer) && NULL != pMasterUser/* && ccUserUseSignatures(pUser)*/)
 	{
-        CCUser * pMasterUser = (CCUser *)pServer->masterUser;
-        if (NULL != pMasterUser && NULL != pMasterUser->macSessionKey.data)
+        if (NULL != pMasterUser->macSessionKey.data)
         {
+        	const NQ_BYTE *password = pMasterUser->sessionKey.data;
+        	NQ_COUNT passwordLen = pMasterUser->sessionKey.len;
+
 #ifdef UD_CC_INCLUDEEXTENDEDSECURITY
             if (pServer->useExtendedSecurity)
             {
-                cmSmbCalculateMessageSignature(
-                    pMasterUser->macSessionKey.data, 
-				    pMasterUser->macSessionKey.len, 
-                    MSG_NUMBER(pRequest->header),
-                    pRequest->buffer + 4,
-                    packetLen,
-    			    pRequest->tail.data,
-    			    pRequest->tail.len, 
-                    NULL,
-                    0,
-    			    pRequest->header._start + SMB_SECURITY_SIGNATURE_OFFSET
-                    );
+			    password = NULL;
+			    passwordLen = 0;
             }
-            else
 #endif /* UD_CC_INCLUDEEXTENDEDSECURITY */
-            {
-       cmSmbCalculateMessageSignature(
-				    pMasterUser->macSessionKey.data, 
-				    pMasterUser->macSessionKey.len, 
-                    MSG_NUMBER(pRequest->header),
-                    pRequest->buffer + 4,
-                    packetLen,
-    			    pRequest->tail.data,
-    			    pRequest->tail.len, 
-                    pMasterUser->sessionKey.data,
-                    pMasterUser->sessionKey.len,
-    			    pRequest->header._start + SMB_SECURITY_SIGNATURE_OFFSET
-                    );
-            }
+
+            cmSmbCalculateMessageSignature(
+                pMasterUser->macSessionKey.data,
+			    (NQ_UINT)pMasterUser->macSessionKey.len,
+                MSG_NUMBER(pRequest->header),
+                pRequest->buffer + 4,
+                (NQ_UINT)packetLen,
+			    pRequest->tail.data,
+			    (NQ_UINT)pRequest->tail.len,
+			    password,
+			    passwordLen,
+			    pRequest->header._start + SMB_SECURITY_SIGNATURE_OFFSET
+                );
         }
 	}
+
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    pServer->captureHdr.receiving = FALSE;
+    cmCapturePacketWriteStart(&pServer->captureHdr , (NQ_UINT)(packetLen + pRequest->tail.len));
+    cmCapturePacketWritePacket( pRequest->buffer + 4, (NQ_UINT)packetLen);
+    if (pRequest->tail.len > 0)
+    	cmCapturePacketWritePacket(pRequest->tail.data, pRequest->tail.len);
+    cmCapturePacketWriteEnd();
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Request: command=0x%x, mid=0/%u, uid=0x%x, signed:%d, pid=0x%x, tid=0x%x",
+        pRequest->header.command, pRequest->header.mid, pRequest->header.uid, (pRequest->header.flags2 & SMB_FLAGS2_SMB_SECURITY_SIGNATURES) > 0,
+        pRequest->header.pid, pRequest->header.tid);
+
 	if (!ccTransportSend(
 			&pServer->transport, 
 			pRequest->buffer, 
-			packetLen + pRequest->tail.len,
-			packetLen
+			(NQ_COUNT)(packetLen + pRequest->tail.len),
+			(NQ_COUNT)packetLen
 			)
 		)
 	{
-        ccTransportUnlock(&pServer->transport);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return (NQ_STATUS)syGetLastError();
+        result = (NQ_STATUS)syGetLastError();
+        LOGERR(CM_TRC_LEVEL_ERROR, "ccTransportSend() failed");
+        goto Exit2;
 	}
+
 	if (0 != pRequest->tail.len && 
 		!ccTransportSendTail(&pServer->transport, pRequest->tail.data, pRequest->tail.len)
 		)
 	{
-        ccTransportUnlock(&pServer->transport);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return (NQ_STATUS)syGetLastError();
+        result = (NQ_STATUS)syGetLastError();
+		LOGERR(CM_TRC_LEVEL_ERROR, "pRequest OR ccTransportSendTail()");
 	}
-    ccTransportUnlock(&pServer->transport);
+	goto Exit2;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return NQ_SUCCESS;
+Error:
+	cmListItemDispose(&pMatch->item);
+
+Exit2:
+	ccTransportUnlock(&pServer->transport);
+
+Exit1:
+	cmListItemGive(&pServer->item);
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 static NQ_STATUS sendReceive(CCServer * pServer, CCUser * pUser, Request * pRequest, Response * pResponse)
 {
-	NQ_STATUS res;				/* send result */
-    CMThread * pThread;         /* current thread */
-    Match * pMatch;             /* match structure pointer */
-    NQ_BOOL statusNT;           /* TRUE if status is NT , FALSE if it isnt*/
+	NQ_STATUS res = NQ_ERR_OUTOFMEMORY; /* send result */
+    CMThread * pThread;                 /* current thread */
+    Match * pMatch;                     /* match structure pointer */
+    NQ_BOOL statusNT;                   /* TRUE if status is NT , FALSE if it isn't*/
+    CCUser * pMasterUser;               /* master (first) logged in user */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p user:%p request:%p", pServer, pUser, pRequest, pResponse);
 
     pResponse->buffer = NULL;
     pThread = cmThreadGetCurrent();
-    pMatch = (Match *)cmThreadGetContext(pThread, sizeof(Match));
+    if (NULL == pThread)
+	{
+		LOGERR(CM_TRC_LEVEL_ERROR, ">>>No thread object.");
+		res = NQ_ERR_GETDATA;
+		goto Exit;
+	}
+    pMatch = (Match *)cmThreadGetContextAsStatItem(pThread, sizeof(Match));
     if (NULL == pMatch)
     {
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+        LOGERR(CM_TRC_LEVEL_ERROR, "sendRequest() failed:%d", res);
+        goto Exit;
     }
+    pMatch->thread = pThread;
 	pMatch->response = pResponse;
 	pMatch->cond = &pThread->syncCond;
     pMatch->server = pServer;
-	cmListItemAdd(&pServer->expectedResponses, (CMItem *)pMatch, NULL);
+    pMatch->isResponseAllocated = FALSE;
+    pMatch->matchExtraInfo = MATCHINFO_NONE;
+
 	cmThreadCondClear(pMatch->cond); /* Cleaning up the condition socket before sending*/
 	
-	res = sendRequest(pServer, pUser, pRequest, pMatch);
+	res = pServer->smb->sendRequest(pServer, pUser, pRequest, pMatch, NULL);
     if (NQ_SUCCESS != res)
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+        LOGERR(CM_TRC_LEVEL_ERROR, "sendRequest() failed:%d", res);
+        goto Exit;
 	}
-	
+
 	if (!cmThreadCondWait(pMatch->cond, ccConfigGetTimeout()))
 	{
-	    (pServer->transport.cleanupCallback)(pServer->transport.cleanupContext);
+		pServer->smb->signalAllMatch(&pServer->transport);
 		if ((!pServer->transport.connected || NULL == pResponse->buffer) 
             && pRequest->command != SMB_COM_NEGOTIATE && pRequest->command != SMB_COM_SESSION_SETUP_ANDX
            )
         {
             if (!ccServerReconnect(pServer))
             {
-                LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                return NQ_ERR_NOTCONNECTED;
+                res = NQ_ERR_NOTCONNECTED;
+                goto Exit;
             }
         }
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_TIMEOUT;
+        res = NQ_ERR_TIMEOUT;
+        goto Exit;
+	}
+
+	cmListItemTake((CMItem *) pServer);
+	pServer->useAscii = pMatch->response->useAscii;
+	cmListItemGive((CMItem *)pServer);
+
+	if (pServer->connectionBroke)
+	{
+		if (!ccServerReconnect(pServer))
+		{
+            res = NQ_ERR_NOTCONNECTED;
+            goto Exit;
+		}
+
+		cmListItemTake((CMItem *)pServer);
+		pServer->connectionBroke = FALSE;
+		cmListItemGive((CMItem *)pServer);
+        res = NQ_ERR_TIMEOUT;
+        goto Exit;
 	}
 
 	/* check connection */
     if (!pServer->transport.connected)
     {
-	    (pServer->transport.cleanupCallback)(pServer->transport.cleanupContext);
+    	pServer->smb->signalAllMatch(&pServer->transport);
         if (pRequest->command != SMB_COM_NEGOTIATE && pRequest->command != SMB_COM_SESSION_SETUP_ANDX)
         {
             if (ccServerReconnect(pServer))
             {
-		        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		        return NQ_ERR_TIMEOUT;              /* simulate timeout - causing retry */
+                /* simulate timeout - causing retry */
+                res = NQ_ERR_TIMEOUT;
+                goto Exit;
             }
         }
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_ERR_NOTCONNECTED;
+        res = NQ_ERR_NOTCONNECTED;
+        goto Exit;
     }
 
-    /* check signatures */
-	if (ccServerUseSignatures(pServer) && (pResponse->header.flags2 & SMB_FLAGS2_SMB_SECURITY_SIGNATURES) && pResponse->header.command != SMB_COM_SESSION_SETUP_ANDX && ccUserUseSignatures(pUser))
-	{
-		NQ_BYTE * pSignature = pMatch->hdrBuf + SMB_SECURITY_SIGNATURE_OFFSET;
-        CCUser * pMasterUser = (CCUser *)pServer->masterUser;
+    if (FALSE == pMatch->response->wasReceived)
+   	{
+   		if (NULL != pMatch->thread->element.item.guard)
+   		{
+   			syMutexDelete(pMatch->thread->element.item.guard);
+   			cmMemoryFree(pMatch->thread->element.item.guard);
+   			pMatch->thread->element.item.guard = NULL;
+   		}
+   		res = NQ_ERR_GETDATA;
+   		cmListItemRemove((CMItem *)pMatch);
+   		goto Exit;
+   	}
 
-        if (NULL != pMasterUser && NULL != pMasterUser->macSessionKey.data)
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Response: command=0x%x, mid=0/%u, uid=0x%x, status=0x%x, signed:%d, pid=0x%x, tid=0x%x",
+        pResponse->header.command, pResponse->header.mid, pResponse->header.uid, pResponse->header.status, (pResponse->header.flags2 & SMB_FLAGS2_SMB_SECURITY_SIGNATURES) > 0,
+        pResponse->header.pid, pResponse->header.tid);
+
+    /* check signatures */
+    pMasterUser = (CCUser *)pServer->masterUser;
+	if (ccServerUseSignatures(pServer) && (pResponse->header.flags2 & SMB_FLAGS2_SMB_SECURITY_SIGNATURES) && NULL != pMasterUser)
+	{
+        if (NULL != pMasterUser->macSessionKey.data)
         {
+        	NQ_BYTE * pSignature = pMatch->hdrBuf + SMB_SECURITY_SIGNATURE_OFFSET;
+        	const NQ_BYTE *password = pMasterUser->sessionKey.data;
+        	NQ_COUNT passwordLen = pMasterUser->sessionKey.len;
+
 #ifdef UD_CC_INCLUDEEXTENDEDSECURITY
             if (pServer->useExtendedSecurity)
             {
-                cmSmbCalculateMessageSignature(
-				    pMasterUser->macSessionKey.data, 
-				    pMasterUser->macSessionKey.len, 
-                    MSG_NUMBER(pRequest->header) + 1,
-    			    pMatch->hdrBuf,
-    			    SMB_HEADERSIZE,
-    			    pResponse->buffer, 
-    			    pResponse->tailLen, 
-                    NULL,
-                    0,
-    			    pSignature
-                    );
+			    password = NULL;
+			    passwordLen = 0;
             }
-            else
-    #endif /* UD_CC_INCLUDEEXTENDEDSECURITY */
-            {
-                cmSmbCalculateMessageSignature(
-				    pMasterUser->macSessionKey.data, 
-				    pMasterUser->macSessionKey.len, 
-                    MSG_NUMBER(pRequest->header) + 1,
-				    pMatch->hdrBuf,
-    			    SMB_HEADERSIZE,
-				    pResponse->buffer, 
-				    pResponse->tailLen, 
-				    pMasterUser->sessionKey.data,
-				    pMasterUser->sessionKey.len,
-				    pSignature
-                    );
-            }
+#endif /* UD_CC_INCLUDEEXTENDEDSECURITY */
+            cmSmbCalculateMessageSignature(
+			    pMasterUser->macSessionKey.data,
+			    pMasterUser->macSessionKey.len,
+                MSG_NUMBER(pRequest->header) + 1,
+			    pMatch->hdrBuf,
+			    SMB_HEADERSIZE,
+			    pResponse->buffer,
+			    pResponse->tailLen,
+			    password,
+			    passwordLen,
+			    pSignature
+                );
 		    if (0 != syMemcmp(pResponse->header.signature, pSignature, sizeof(pResponse->header.signature)))
 		    {
 		        LOGERR(CM_TRC_LEVEL_ERROR, "bad incoming signature");
-			    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-			    return NQ_ERR_SIGNATUREFAIL;
+			    res = NQ_ERR_SIGNATUREFAIL;
+			    goto Exit;
 		    }
         }
 	}
 	statusNT = (pResponse->header.flags2 & SMB_FLAGS2_32_BIT_ERROR_CODES);
-	sySetLastError((NQ_UINT32)ccErrorsStatusToNq((NQ_UINT32)pResponse->header.status, statusNT));
+	res = (NQ_STATUS)ccErrorsStatusToNq((NQ_UINT32)pResponse->header.status, statusNT);
+	sySetLastError(res);
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return (NQ_STATUS)ccErrorsStatusToNq((NQ_UINT32)pResponse->header.status, statusNT);
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS exchangeEmptyCommand(CCShare * pShare, NQ_UINT16 command)
 {
-	Request request;		/* request dscriptor */
-	Response response;		/* response descriptor */
-	CCServer * pServer;		/* server object pointer */
-	NQ_STATUS res;			/* exchange status */
+	Request request;                    /* request descriptor */
+	Response response;                  /* response descriptor */
+	CCServer * pServer;                 /* server object pointer */
+	NQ_STATUS res = NQ_ERR_OUTOFMEMORY; /* exchange status */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "share:%p command:0x%x", pShare, command);
 
 	pServer = pShare->user->server;
 	if (!prepareSingleRequestByShare(&request, pShare, command))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+        goto Exit;
 	}
 	
 	/* compose request */
 	writeHeader(&request);
 	cmBufferWriteUint16(&request.writer, 0);		/* reserved */
 	
-    res = sendReceive(pServer, pShare->user, &request, &response);
+    res = pServer->smb->sendReceive(pServer, pShare->user, &request, &response);
 	cmBufManGive(request.buffer);
 	cmBufManGive(response.buffer);
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
 	return res;
 }
 
@@ -965,65 +1089,58 @@ static void anyResponseCallback(void * transport)
 	CMBufferReader reader;						/* to parse header */
 	NQ_COUNT res;								/* bytes read */
 	NQ_BYTE buffer[SMB_HEADERSIZE];				/* we will read header */
-    const NQ_CHAR SIGNATURE[] = {(NQ_CHAR)0xff, 'S', 'M', 'B' }; /* SMB signature */
 	
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "transport:%p", transport);
+
+	pServer = (CCServer *)pTransport->context;
 	
-    pServer = (CCServer *)pTransport->context;
-	
-    if (!pTransport->connected) /* proceed disconnect */
-    {
-    	LOGERR(CM_TRC_LEVEL_ERROR, "Connection broken with %s", cmWDump(pServer->item.name));
+	if (!pTransport->connected) /* proceed disconnect */
+	{
+		LOGERR(CM_TRC_LEVEL_ERROR, "Connection broken with %s", cmWDump(pServer->item.name));
 
-        /* match with request */
-    	cmListIteratorStart(&pServer->expectedResponses, &iterator);
-	    while (cmListIteratorHasNext(&iterator))
-	    {
-		    Match * pMatch;
-    		
-		    pMatch = (Match *)cmListIteratorNext(&iterator);    
-		    if (pMatch->server == pServer) 
-		    {
-                /* signal the first match */
-			    cmListItemRemove((CMItem *)pMatch);
-    		    cmThreadCondSignal(pMatch->cond);
+		/* match with request */
+		cmListItemTake((CMItem *)pServer);
+		cmListIteratorStart(&pServer->expectedResponses, &iterator);
+		while (cmListIteratorHasNext(&iterator))
+		{
+			Match * pMatch;
 
-                /* remove others */
-	            while (cmListIteratorHasNext(&iterator))
-	            {
-		            pMatch = (Match *)cmListIteratorNext(&iterator);    
-		            if (pMatch->server == pServer) 
-		            {
-        			    cmListItemRemove((CMItem *)pMatch);
-                    }
-                }
-			    cmListIteratorTerminate(&iterator);
-			    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-			    return;
-		    }
-	    }
-	    cmListIteratorTerminate(&iterator);
+			pMatch = (Match *)cmListIteratorNext(&iterator);
+			if (pMatch->cond != NULL)
+				cmThreadCondSignal(pMatch->cond);
+			if (pMatch->isResponseAllocated)
+			{
+				cmMemoryFree(pMatch->response);
+				pMatch->response = NULL;
+			}
+		}
+		cmListIteratorTerminate(&iterator);
+		if (NULL != pTransport->cleanupCallback)
+			(*pTransport->cleanupCallback)(pTransport->cleanupContext);
+		cmListItemGive((CMItem *)pServer);
 
-    	LOGERR(CM_TRC_LEVEL_ERROR, "Response not matched. server: %s", cmWDump(pServer->item.name));
-	    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	    return;
-    }
+		LOGERR(CM_TRC_LEVEL_ERROR, "Response not matched. server: %s", cmWDump(pServer->item.name));
+		goto Exit;
+	}
 
     /* read & parse SMB header */
     res = ccTransportReceiveBytes(pTransport, buffer, sizeof(buffer));
-    if (NQ_FAIL == res)
+    if ((NQ_COUNT) NQ_FAIL == res)
     {
 	    ccTransportReceiveEnd(&pServer->transport);
-	    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	    return;
+		goto Exit;
     }
-    if (0 != syMemcmp(buffer, SIGNATURE, sizeof(SIGNATURE)))
+    if (0 != syMemcmp(buffer, cmSmbProtocolId, sizeof(cmSmbProtocolId)))
     {
 	    ccTransportReceiveEnd(&pServer->transport);
-	    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	    return;
+		goto Exit;
     }
 
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+	pServer->captureHdr.receiving = TRUE;
+	cmCapturePacketWriteStart(&pServer->captureHdr , SMB_HEADERSIZE + pServer->transport.recv.remaining);
+	cmCapturePacketWritePacket( buffer, SMB_HEADERSIZE);
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
     cmBufferReaderInit(&reader, buffer, res); /* starting from SMB header */
     cmSmbHeaderRead(&header, &reader);
 
@@ -1039,82 +1156,101 @@ static void anyResponseCallback(void * transport)
 			pMatch->response->header = header;              /* header start address will be wrong */
 			cmBufferReaderSkip(&reader, sizeof(NQ_UINT16)); /* word count */
 
+			pMatch->response->useAscii = !(header.flags2 & SMB_FLAGS2_UNICODE);  /* ascii */
+			if (NULL != pMatch->thread->element.item.guard)
+			{
+				syMutexDelete(pMatch->thread->element.item.guard);
+				cmMemoryFree(pMatch->thread->element.item.guard);
+				pMatch->thread->element.item.guard = NULL;
+			}
 			cmListItemRemove((CMItem *)pMatch);
-			if (pServer->useSigning && NULL != pMatch->hdrBuf)
+			if (pServer->useSigning)
 				syMemcpy(pMatch->hdrBuf, buffer, SMB_HEADERSIZE);
+            pMatch->thread->status = header.status;
             if (NULL != commandDescriptors[header.command].callback)
 			{
+            	pMatch->response->tailLen = pServer->transport.recv.remaining;
+				pMatch->response->wasReceived = TRUE;
 				commandDescriptors[header.command].callback(pServer, pMatch);
 			}
 			else
 			{	
-   	                if (pServer->transport.recv.remaining > 0)
-	                {
-                        Response * pResponse = pMatch->response;  /* associated response */
-		                pResponse->tailLen = pServer->transport.recv.remaining;
-		                pResponse->buffer = cmMemoryAllocate(pResponse->tailLen);
-		                if (NULL != pResponse->buffer)
+   	            if (pServer->transport.recv.remaining > 0)
+	            {
+                    Response * pResponse = pMatch->response;  /* associated response */
+		            pResponse->tailLen = pServer->transport.recv.remaining;
+		            pResponse->buffer = cmBufManTake(pResponse->tailLen);
+		            if (NULL != pResponse->buffer)
+		            {
+		                if (pResponse->tailLen == ccTransportReceiveBytes(&pServer->transport, pResponse->buffer, pResponse->tailLen))
 		                {
-		                    if (pResponse->tailLen == ccTransportReceiveBytes(&pServer->transport, pResponse->buffer, pResponse->tailLen))
-		                    {
-		                        cmBufferReaderInit(&pResponse->reader, pResponse->buffer, pResponse->tailLen);
-		                        pResponse->header._start = 	/* set virtual header start */
-			                        pResponse->buffer - 
-			                        SMB_HEADERSIZE;	/* shift back on header size     */
-                            }
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+							cmCapturePacketWritePacket( pResponse->buffer, pResponse->tailLen);
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+		                    cmBufferReaderInit(&pResponse->reader, pResponse->buffer, pResponse->tailLen);
+		                    pResponse->header._start = 	/* set virtual header start */
+			                    pResponse->buffer - 
+			                    SMB_HEADERSIZE;	/* shift back on header size     */
                         }
                     }
-	                ccTransportReceiveEnd(&pServer->transport);
-					cmThreadCondSignal(pMatch->cond);
+                }
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+				cmCapturePacketWriteEnd();
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+	            ccTransportReceiveEnd(&pServer->transport);
+	           	pMatch->response->wasReceived = TRUE;
+				cmThreadCondSignal(pMatch->cond);
 			}
         	ccServerPostCredits(pServer, 1);	/* count MPX */	
-			LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-			return;
+			goto Exit;
 		}
 	}
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+	cmCapturePacketWriteEnd();
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 	cmListIteratorTerminate(&iterator);
     ccTransportReceiveEnd(&pServer->transport);
+    ccServerPostCredits(pServer, 1);	/* post credits although response not matched. */
 	LOGERR(CM_TRC_LEVEL_ERROR, "Response not matched. Mid: %d server: %s", header.mid, cmWDump(pServer->item.name));
+
+Exit:
 	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+	return;
 }
 
 static NQ_STATUS doNegotiate(CCServer * pServer, CMBlob * inBlob)
 {
-	Request request;		/* request descriptor */
-	Response response;		/* response descriptor */
-	const CCCifsSmb ** dialects;	/* pointer to an array of supported dialects */
-	NQ_UINT16 numDialects;	/* number of dialects */
-	NQ_UINT16 tempUint16;	/* for parsing 2-byte values */
-	NQ_UINT32 tempUint32;	/* for parsing 4-byte values */
-	NQ_BYTE tempByte;		/* for parsing byte values */
-	NQ_COUNT packetLen;		/* packet length of both in and out packets */
-	NQ_STATUS res;			/* exchange status */
-	NQ_UINT16 actualDialects;	/* number of dialects to negotiate */
-	NQ_UINT16 dialectIndex;		/* dialect index in response */
-	NQ_INT i;				    /* just a counter */
-	NQ_UINT16 byteCount = 0;	/* to calculate bytes */	
-    NQ_UINT32 rawBuffSize;      /* buffer size for raw operations */
-    NQ_BOOL statusNT;           /* TRUE if error is NT False if it isnt */
+	Request request;				/* request descriptor */
+	Response response;				/* response descriptor */
+	const CCCifsSmb ** dialects = NULL;	/* pointer to an array of supported dialects */
+	NQ_UINT16 numDialects;			/* number of dialects */
+	NQ_UINT16 tempUint16;			/* for parsing 2-byte values */
+	NQ_UINT32 tempUint32;			/* for parsing 4-byte values */
+	NQ_BYTE tempByte;				/* for parsing byte values */
+	NQ_COUNT packetLen;				/* packet length of both in and out packets */
+	NQ_STATUS res;					/* exchange status */
+	NQ_UINT16 dialectIndex;			/* dialect index in response */
+	NQ_COUNT i;				    	/* just a counter */
+	NQ_UINT16 byteCount = 0;		/* to calculate bytes */
+    NQ_UINT32 rawBuffSize;      	/* buffer size for raw operations */
+    NQ_BOOL statusNT;           	/* TRUE if error is NT False if it isn't */
+	NQ_STATUS result = NQ_SUCCESS;  /* exchange status */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p blob:%p", pServer, inBlob);
+
+    /* for error handling */
+    request.buffer = NULL;
+    response.buffer = NULL;
 
 	if (!prepareSingleRequest(pServer, &request, SMB_COM_NEGOTIATE))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		result = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	
-	/* initialize correspondance with transports */
-	ccTransportSetResponseCallback(&pServer->transport, anyResponseCallback, pServer);
+	/* initialize correspondence with transports */
+	ccTransportSetResponseCallback(&pServer->transport, pServer->negoSmb->anyResponseCallback, pServer);
 	
-	numDialects = (NQ_UINT16)ccCifsGetDialects(&dialects);
-	for (i = 0, actualDialects = 0; i < numDialects; i++)
-	{
-		const CCCifsSmb * pDialect = dialects[i];
-		
-		if (pDialect->name != NULL)
-			actualDialects++;
-	}
 	/* compose request */
 	writeHeader(&request);
 	markByteCount(&request, 0);
@@ -1133,23 +1269,29 @@ static NQ_STATUS doNegotiate(CCServer * pServer, CMBlob * inBlob)
     {
 	    for (i = 0, byteCount = 0; i < numDialects; i++)
 	    {
-		    const CCCifsSmb * pDialect = dialects[i];
-		    if (pDialect->name != NULL)
+            if (dialects[i] != NULL && dialects[i]->name != NULL)
 		    {
 			    NQ_COUNT nameLen;	/* dialect name length */
-    			
-			    nameLen = (NQ_COUNT)syStrlen(pDialect->name);
+
+                nameLen = (NQ_COUNT)syStrlen(dialects[i]->name);
 			    cmBufferWriteByte(&request.writer, 2);
-			    cmBufferWriteBytes(&request.writer, (NQ_BYTE *)pDialect->name, nameLen);
+                cmBufferWriteBytes(&request.writer, (NQ_BYTE *)dialects[i]->name, nameLen);
 			    cmBufferWriteByte(&request.writer, 0);
 			    byteCount = (NQ_UINT16)(byteCount + (nameLen + 2));
 		    }
 	    }
     }
+
     writeByteCount(&request, 0);
 	
 	/* send and receive. Since no context was established yet - this is done inlined */
 	packetLen = cmBufferWriterGetDataCount(&request.writer) - 4;	/* NBT header */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+	pServer->captureHdr.receiving = FALSE;
+	cmCapturePacketWriteStart(&pServer->captureHdr ,packetLen );
+	cmCapturePacketWritePacket( request.buffer + 4, packetLen);
+	cmCapturePacketWriteEnd();
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
     ccTransportLock(&pServer->transport);
 	if (!ccTransportSendSync(
 			&pServer->transport, 
@@ -1160,37 +1302,45 @@ static NQ_STATUS doNegotiate(CCServer * pServer, CMBlob * inBlob)
 		)
 	{
         ccTransportUnlock(&pServer->transport);
-		cmBufManGive(request.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return (NQ_STATUS)syGetLastError();
+		result = (NQ_STATUS)syGetLastError();
+		goto Exit;
 	}
-	cmBufManGive(request.buffer);
+	sySetLastError(0); /* zero error code*/
 	response.buffer = ccTransportReceiveAll(&pServer->transport, &packetLen);
     ccTransportUnlock(&pServer->transport);
 	if (NULL == response.buffer)
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		if (syGetLastError() == NQ_ERR_OUTOFMEMORY)
+			result = NQ_ERR_OUTOFMEMORY;
+		else
+			result = NQ_ERR_LOGONFAILURE;
+		goto Exit;
 	}
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+	pServer->captureHdr.receiving = TRUE;
+	cmCapturePacketWriteStart(&pServer->captureHdr ,packetLen);
+	cmCapturePacketWritePacket( response.buffer, packetLen);
+	cmCapturePacketWriteEnd();
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 	if (0xFF != response.buffer[0])
 	{
 #ifdef UD_NQ_INCLUDESMB2
 		res = ccSmb20DoNegotiateResponse(pServer, response.buffer, packetLen, inBlob);
 		if (NQ_SUCCESS != res)
 		{
-			cmBufManGive(response.buffer);
-			LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-			return res;
+			result = res;
+			goto Exit;
 		}
 #else /* UD_NQ_INCLUDESMB2 */
         LOGERR(CM_TRC_LEVEL_ERROR, "SMB2 not supported");
-	    cmBufManGive(response.buffer);
-	    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	    return NQ_ERR_NOSUPPORT;
+	    result = NQ_ERR_NOSUPPORT;
+	    goto Exit;
 #endif /* UD_NQ_INCLUDESMB2 */
 	}
 	else
 	{
+		pServer->smb = pServer->negoSmb;
+
 		cmBufferReaderInit(&response.reader, response.buffer, packetLen); /* starting from SMB header */
 		cmSmbHeaderRead(&response.header, &response.reader);
 		res = (NQ_STATUS)response.header.status;
@@ -1199,10 +1349,11 @@ static NQ_STATUS doNegotiate(CCServer * pServer, CMBlob * inBlob)
         res = (NQ_STATUS)ccErrorsStatusToNq((NQ_UINT32)res, statusNT);
         if (NQ_SUCCESS != res)
         {
-            cmBufManGive(response.buffer);
-            LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-            return res;
+			result = NQ_ERR_NOSUPPORT;
+			goto Exit;
         }
+        pServer->useAscii = !(response.header.flags2 & SMB_FLAGS2_UNICODE);  /* ascii */
+        pServer->negoAscii = pServer->useAscii;
         cmBufferReadByte(&response.reader, &tempByte); /* word count */
 
         /* parse response */
@@ -1216,9 +1367,8 @@ static NQ_STATUS doNegotiate(CCServer * pServer, CMBlob * inBlob)
         }
         if (0 == (tempByte & 0x002))
         {
-            cmBufManGive(response.buffer);
-            LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-            return NQ_ERR_NOSUPPORT;
+			result = NQ_ERR_NOSUPPORT;
+			goto Exit;
         }
         cmBufferReadUint16(&response.reader, &tempUint16);          /* MPX count */
         pServer->credits = (NQ_UINT32)tempUint16;
@@ -1227,6 +1377,13 @@ static NQ_STATUS doNegotiate(CCServer * pServer, CMBlob * inBlob)
         if (pServer->maxTrans >= 0x20000)   /* fix for Leopard and Lion hopefully temporary bug of BE */
             pServer->maxTrans = 0xFFFF;
         cmBufferReadUint32(&response.reader, &rawBuffSize);	        /* max raw buffer size */
+        rawBuffSize = rawBuffSize != 0 ? rawBuffSize : pServer->maxTrans;
+        if (rawBuffSize == 0 || pServer->maxTrans == 0 )
+        {
+			result = NQ_ERR_BADPARAM;
+			goto Exit;
+        }
+
         pServer->maxRead  = pServer->maxTrans - 64;
         pServer->maxWrite = pServer->maxRead;
         cmBufferReaderSkip(&response.reader, sizeof(NQ_UINT32));	/* session key */
@@ -1239,7 +1396,6 @@ static NQ_STATUS doNegotiate(CCServer * pServer, CMBlob * inBlob)
 		{
 			pServer->capabilities |= CC_CAP_INFOPASSTHRU;
 		}
-		cmBufferReaderSkip(&response.reader, 2 * sizeof(NQ_UINT32) + sizeof(NQ_UINT16));	/* system time + time zone */
         if (0 == (pServer->capabilities & CC_CAP_MESSAGESIGNING))
         {
             if (SMB_CAP_LARGE_READX & tempUint32)
@@ -1251,40 +1407,43 @@ static NQ_STATUS doNegotiate(CCServer * pServer, CMBlob * inBlob)
                 pServer->maxWrite = rawBuffSize - 64;
             }
         }
-		cmBufferReadByte(&response.reader, &tempByte);					/* challenge length */
+        cmBufferReaderSkip(&response.reader, 2 * sizeof(NQ_UINT32) + sizeof(NQ_UINT16));	/* system time + time zone */
+        /* extended security */
+		cmBufferReadByte(&response.reader, &tempByte);	    /* challenge length */
 		cmBufferReadUint16(&response.reader, &byteCount);	/* byte count */
         if (0 == byteCount)
         {
-        	cmBufManGive(response.buffer);
-	
-	        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-            return NQ_ERR_NOSUPPORT;
+			result = NQ_ERR_NOSUPPORT;
+			goto Exit;
         }
-		if (0 == tempByte)	/* extended security */
-		{
-			cmBufferReaderSkip(&response.reader, 16);	/* server GUID */
-			inBlob->data = cmMemoryAllocate((NQ_UINT)(byteCount - 16));
+        if (SMB_CAP_EXTENDED_SECURITY & tempUint32)
+        {
+			cmBufferReaderSkip(&response.reader, 16);	    /* server GUID */
+			inBlob->data = (NQ_BYTE *)cmMemoryAllocate((NQ_UINT)(byteCount - 16));
+			inBlob->len = (NQ_COUNT)(byteCount - 16);
 		    if (NULL == inBlob->data && byteCount > 16)
 		    {
-			    cmBufManGive(response.buffer);
-			    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-			    return NQ_ERR_OUTOFMEMORY;
+				result = NQ_ERR_OUTOFMEMORY;
+				goto Exit;
 		    }
-		    inBlob->len = (NQ_COUNT)(byteCount - 16);
-		    cmBufferReadBytes(&response.reader, inBlob->data, inBlob->len);				/* challenge */	
+		    if (inBlob->len == 0)
+		    	inBlob->data = NULL;
+
+		    if (NULL != inBlob->data && inBlob->len > 0)
+		    	cmBufferReadBytes(&response.reader, inBlob->data, inBlob->len);	/* challenge */
 		}
 		else
 		{
             pServer->useExtendedSecurity = FALSE;
             pServer->firstSecurityBlob.len = tempByte;
-			pServer->firstSecurityBlob.data = cmMemoryAllocate((NQ_COUNT)tempByte);
-		    if (NULL == pServer->firstSecurityBlob.data)
+			pServer->firstSecurityBlob.data = (NQ_BYTE *)cmMemoryAllocate((NQ_COUNT)tempByte);
+		    if (NULL == pServer->firstSecurityBlob.data && tempByte > 0)
 		    {
-			    cmBufManGive(response.buffer);
-			    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-			    return NQ_ERR_OUTOFMEMORY;
+				result = NQ_ERR_OUTOFMEMORY;
+				goto Exit;
 		    }
-		    cmBufferReadBytes(&response.reader, pServer->firstSecurityBlob.data, pServer->firstSecurityBlob.len); /* encryption key */	
+		    if (tempByte > 0)
+		    	cmBufferReadBytes(&response.reader, pServer->firstSecurityBlob.data, pServer->firstSecurityBlob.len); /* encryption key */
 		}
 		
 		/* set dialect */
@@ -1292,20 +1451,35 @@ static NQ_STATUS doNegotiate(CCServer * pServer, CMBlob * inBlob)
 		{
 			const CCCifsSmb * pDialect = dialects[i];
 			
-			if (pDialect->name != NULL)
+			if (pDialect != NULL && pDialect->name != NULL)
             {
 				if (0 == dialectIndex--)
 				{
 					pServer->smb = dialects[i];
+					if (NULL == pServer->smbContext)
+					{
+						pServer->smbContext = pServer->smb->allocateContext(pServer);
+						if (NULL == pServer->smbContext)
+						{
+							sySetLastError(NQ_ERR_OUTOFMEMORY);
+							result = NQ_ERR_OUTOFMEMORY;
+							goto Exit;
+						}
+					}
 					break;
 				}
             }
 		}
 	}
+
+Exit:
+    if (NULL != dialects)
+        cmMemoryFree(dialects);
+
+	cmBufManGive(request.buffer);
 	cmBufManGive(response.buffer);
-	
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;	 
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+	return result;	 
 }
 
 static NQ_STATUS doSessionSetup(CCUser * pUser, const CMBlob * pass1, const CMBlob * pass2)
@@ -1315,31 +1489,35 @@ static NQ_STATUS doSessionSetup(CCUser * pUser, const CMBlob * pass1, const CMBl
 	NQ_STATUS res;			/* exchange status */
     CCServer * pServer;     /* server pointer */
     Context * pContext;     /* SMB context pointer */
-    const NQ_WCHAR * pDecorator;    /* pointer to @ sign in account name */
+    NQ_WCHAR * pDecorator;  /* pointer to @ sign in account name */
 	NQ_UINT16 tempUint16;   /* for parsing 16-bit values */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "user:%p pass1:xxx pass2:xxx", pUser);
+
+    /* for error handling */
+	request.buffer = NULL;
+	response.buffer = NULL;
 
     pServer = pUser->server;
 	
 	if (pServer->smbContext == NULL)
 	{
-		LOGERR(CM_TRC_LEVEL_ERROR, " smbContext in CCServer ibject is missing");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_ERR_NOTCONNECTED;
+		LOGERR(CM_TRC_LEVEL_ERROR, " smbContext in CCServer object is missing");
+		res = NQ_ERR_NOTCONNECTED;
+		goto Exit;
 	}
 	
     if (!prepareSingleRequest(pServer, &request, SMB_COM_SESSION_SETUP_ANDX))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_NOTCONNECTED;
+		goto Exit;
 	}
 
     if (pServer->capabilities & CC_CAP_MESSAGESIGNING)
         request.header.flags2 |= SMB_FLAGS2_SMB_SECURITY_SIGNATURES;
 
     pContext = (Context *)pServer->smbContext;
-    pContext->mid = 0;
+    pContext->mid = (NQ_UINT16)(pContext->mid <= 2 ? 0 : pContext->mid);
     pServer->useExtendedSecurity = FALSE;   /* deny extended security */
 	
 	/* compose request */
@@ -1350,10 +1528,10 @@ static NQ_STATUS doSessionSetup(CCUser * pUser, const CMBlob * pass1, const CMBl
     cmBufferWriteUint16(&request.writer, (NQ_UINT16)pUser->server->credits);       /* MaxMpxCount */
     cmBufferWriteUint16(&request.writer, pServer->vcNumber);            /* VcNumber */
     cmBufferWriteUint32(&request.writer, 0);                            /* SessionKey */
-    cmBufferWriteUint16(&request.writer, pass1->data == NULL? 0 : (NQ_UINT16)pass1->len);  /* OEMPasswordLen */
-    cmBufferWriteUint16(&request.writer, pass2->data == NULL? 0 : (NQ_UINT16)pass2->len);  /* UnicodePasswordLen */
+    cmBufferWriteUint16(&request.writer, (NQ_UINT16)(pass1->data == NULL? 0 : pass1->len));  /* OEMPasswordLen */
+    cmBufferWriteUint16(&request.writer, (NQ_UINT16)(pass2->data == NULL? 0 : pass2->len));  /* UnicodePasswordLen */
     cmBufferWriteUint32(&request.writer, 0);                            /* reserved */
-    cmBufferWriteUint32(&request.writer,                                /* capablities */
+    cmBufferWriteUint32(&request.writer,                                /* capabilities */
         SMB_CAP_LARGE_FILES |
         SMB_CAP_UNICODE |
         SMB_CAP_NT_SMBS |
@@ -1364,30 +1542,36 @@ static NQ_STATUS doSessionSetup(CCUser * pUser, const CMBlob * pass1, const CMBl
     markByteCount(&request, 0);
     cmBufferWriteBytes(&request.writer, pass1->data, pass1->data == NULL? 0 : pass1->len);       /* OEMPassword */
     cmBufferWriteBytes(&request.writer, pass2->data, pass2->data == NULL? 0 : pass2->len);       /* UnicodePassword */
-    cmBufferWriterAlign(&request.writer, request.header._start, 2);     /* pad */
+    if (!pServer->useAscii)
+    	cmBufferWriterAlign(&request.writer, request.header._start, 2);     /* pad */
     pDecorator = cmWStrchr(pUser->item.name, cmWChar('@'));
+    /* account */
     if (NULL != pDecorator)
     {
-        cmBufferWriteBytes(&request.writer, (NQ_BYTE *)pUser->item.name, (NQ_COUNT)((NQ_BYTE *)pDecorator - (NQ_BYTE *)pUser->item.name));                /* account */
-        cmBufferWriteUint16(&request.writer, 0);                        /* zero terminated */
+    	*pDecorator = cmWChar('\0');
+        cmBufferWriteString(&request.writer, pServer->useAscii, (NQ_BYTE *)pUser->item.name, TRUE, CM_BSF_WRITENULLTERM);
+        *pDecorator = cmWChar('@');
     }
     else
     {
-        cmBufferWriteUnicode(&request.writer, pUser->item.name);                /* account */
+        cmBufferWriteString(&request.writer, pServer->useAscii, (NQ_BYTE *)pUser->item.name, TRUE, CM_BSF_WRITENULLTERM);
     }
-    cmBufferWriteUnicode(&request.writer, pUser->credentials->domain.name);     /* domain */
-    cmBufferWriteAsciiAsUnicodeN(&request.writer, SY_OSNAME, 1000, CM_BSF_WRITENULLTERM);         /* OS */
-    cmBufferWriteAsciiAsUnicodeN(&request.writer, "NQ", 1000, CM_BSF_WRITENULLTERM);              /* native LAN manager */
+
+    /* domain */
+    cmBufferWriteString(&request.writer, pServer->useAscii, (NQ_BYTE *)pUser->credentials->domain.name, TRUE, CM_BSF_WRITENULLTERM);
+    cmBufferWriteString(&request.writer, pServer->useAscii, (NQ_BYTE *)SY_OSNAME, FALSE, CM_BSF_WRITENULLTERM); /* OS */
+#ifdef CM_NQSTORAGE
+    cmBufferWriteString(&request.writer, pServer->useAscii, (NQ_BYTE *)"NQStorage", FALSE, CM_BSF_WRITENULLTERM);     /* native LAN manager */
+#else /* CM_NQSTORAGE */
+    cmBufferWriteString(&request.writer, pServer->useAscii, (NQ_BYTE *)"NQE", FALSE, CM_BSF_WRITENULLTERM);     /* native LAN manager */
+#endif /* CM_NQSTORAGE */
     writeByteCount(&request, 0);
 
-    res = sendReceive(pServer, pUser, &request, &response);
-	cmBufManGive(request.buffer);
+    res = pServer->smb->sendReceive(pServer, pUser, &request, &response);
 	if (NQ_SUCCESS != res)
 	{
 	    cmU64Zero(&pUser->uid);
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		goto Exit;
 	}
 	/* parse response */
 	cmBufferReaderSkip(&response.reader, sizeof(NQ_BYTE) * 3 + sizeof(NQ_UINT16));	/* WordCount+AndXComand+AndXReserved+AndXOffset */	
@@ -1396,15 +1580,17 @@ static NQ_STATUS doSessionSetup(CCUser * pUser, const CMBlob * pass1, const CMBl
 		pUser->isGuest = TRUE;
     pUser->uid.high = 0;
     pUser->uid.low = (NQ_UINT32)response.header.uid;
-    if (NULL == pServer->masterUser && !pUser->isAnonymous)
+    if (NULL == pServer->masterUser && !pUser->isAnonymous && !pUser->isGuest)
     {
         pServer->masterUser = (CMItem *)pUser;
+        pContext->mid = 2;
     }
 
+Exit:
+	cmBufManGive(request.buffer);
 	cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return NQ_SUCCESS;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+    return res;
 }
 
 static NQ_STATUS doSessionSetupExtended(CCUser * pUser, const CMBlob * outBlob, CMBlob * inBlob)
@@ -1416,31 +1602,34 @@ static NQ_STATUS doSessionSetupExtended(CCUser * pUser, const CMBlob * outBlob, 
     CMBlob blob;            /* response blob */
     NQ_UINT16 tempUint16;   /* for parsing 16-bit values */
     Context * pContext;     /* SMB context pointer */
-    NQ_BOOL realUserLogged; /* TRUE when user was already logged once */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "user:%p outBlob:%p inBlob:%p", pUser, outBlob, inBlob);
+
+    /* for error handling */
+	request.buffer = NULL;
+	response.buffer = NULL;
 
     pServer = pUser->server;
 
 	if (pServer->smbContext == NULL)
 	{
-		LOGERR(CM_TRC_LEVEL_ERROR, " smbContext in CCServer ibject is missing");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_ERR_NOTCONNECTED;
+		LOGERR(CM_TRC_LEVEL_ERROR, " smbContext in CCServer object is missing");
+		res = NQ_ERR_NOTCONNECTED;
+		goto Exit;
 	}
 	
+	pServer->useAscii = pServer->negoAscii;
     if (!prepareSingleRequest(pServer, &request, SMB_COM_SESSION_SETUP_ANDX))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
-    realUserLogged = pServer->isLoggedIn;
 
     if (pServer->capabilities & CC_CAP_MESSAGESIGNING)
         request.header.flags2 |= SMB_FLAGS2_SMB_SECURITY_SIGNATURES;
 
     pContext = (Context *)pServer->smbContext;
-    pContext->mid = pContext->mid <= 2 ? 0 : (NQ_UINT16)pContext->mid;
+    pContext->mid = (NQ_UINT16)(pContext->mid <= 2 ? 0 : pContext->mid);
 
 	/* compose request */
     request.header.uid = (NQ_UINT16)pUser->uid.low;
@@ -1448,12 +1637,12 @@ static NQ_STATUS doSessionSetupExtended(CCUser * pUser, const CMBlob * outBlob, 
     cmBufferWriteByte(&request.writer, SMB_SESSIONSETUPANDXSSP_REQUEST_WORDCOUNT); /* for high security SessionSetup */
     writeAndX(&request);
     cmBufferWriteUint16(&request.writer, 0xFFFF);                       /* MaxBufferSize */
-    cmBufferWriteUint16(&request.writer, (NQ_UINT16)pServer->credits);             /* MaxMpxCount */
-    cmBufferWriteUint16(&request.writer, 0);                            /* VcNumber */
+    cmBufferWriteUint16(&request.writer, (NQ_UINT16)pServer->credits);  /* MaxMpxCount */
+	cmBufferWriteUint16(&request.writer, pServer->vcNumber);            /* VcNumber */
     cmBufferWriteUint32(&request.writer, 0);                            /* SessionKey */
-    cmBufferWriteUint16(&request.writer, (NQ_UINT16)outBlob->len);                 /* SecurityBlobLength */
+    cmBufferWriteUint16(&request.writer, (NQ_UINT16)outBlob->len);      /* SecurityBlobLength */
     cmBufferWriteUint32(&request.writer, 0);                            /* reserved */
-    cmBufferWriteUint32(&request.writer,                                /* capablities */
+    cmBufferWriteUint32(&request.writer,                                /* capabilities */
         SMB_CAP_LARGE_FILES |
         SMB_CAP_UNICODE |
         SMB_CAP_NT_SMBS |
@@ -1463,35 +1652,42 @@ static NQ_STATUS doSessionSetupExtended(CCUser * pUser, const CMBlob * outBlob, 
         SMB_CAP_NT_STATUS
         );
     markByteCount(&request, 0);
-    cmBufferWriteBytes(&request.writer, outBlob->data, outBlob->len);   /* SecurityBlob */
-    cmBufferWriterAlign(&request.writer, request.header._start, 2);     /* pad */
-    cmBufferWriteAsciiAsUnicodeN(&request.writer, SY_OSNAME, 1000, CM_BSF_WRITENULLTERM);         /* OS */
-    cmBufferWriteAsciiAsUnicodeN(&request.writer, "NQ", 1000, CM_BSF_WRITENULLTERM);              /* native LAN manager */
+    cmBufferWriteBytes(&request.writer , outBlob->data , outBlob->len);  /* SecurityBlob */
+	if (!pServer->useAscii)
+    	cmBufferWriterAlign(&request.writer, request.header._start, 2); /* pad */
+    cmBufferWriteString(&request.writer, pServer->useAscii, (NQ_BYTE *)SY_OSNAME, FALSE, CM_BSF_WRITENULLTERM); /* OS */
+#ifdef CM_NQSTORAGE
+    cmBufferWriteString(&request.writer, pServer->useAscii, (NQ_BYTE *)"NQStorage", FALSE, CM_BSF_WRITENULLTERM);     /* native LAN manager */
+#else /* CM_NQSTORAGE */
+    cmBufferWriteString(&request.writer, pServer->useAscii, (NQ_BYTE *)"NQE", FALSE, CM_BSF_WRITENULLTERM);     /* native LAN manager */
+#endif /* CM_NQSTORAGE */
     writeByteCount(&request, 0);
 
-	res = sendReceive(pServer, pUser, &request, &response);
-	cmBufManGive(request.buffer);
+	res = pServer->smb->sendReceive(pServer, pUser, &request, &response);
 	if (NQ_SUCCESS != res && NQ_ERR_MOREDATA != res)
 	{
-	    if (response.buffer != NULL)
-            cmBufManGive(response.buffer);
 	    cmU64Zero(&pUser->uid);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		goto Exit;
 	}
     
 	/* parse response */
 	cmBufferReaderSkip(&response.reader, sizeof(NQ_BYTE) * 3 + sizeof(NQ_UINT16));	/* WordCount+AndXComand+AndXReserved+AndXOffset */
-	cmBufferReadUint16(&response.reader, &tempUint16); /* Action */
+	cmBufferReadUint16(&response.reader, &tempUint16);          /* Action */
 	pUser->isGuest = (tempUint16 & 0x1) ? TRUE : FALSE;
     cmBufferReadUint16(&response.reader, &tempUint16);	        /* SecurityBlobLength */
 	cmBufferReaderSkip(&response.reader, sizeof(NQ_UINT16));	/* ByteCount */
 	blob.data = cmBufferReaderGetPosition(&response.reader);
     blob.len = tempUint16;
     if (0 != blob.len)
-		*inBlob = cmMemoryCloneBlob(&blob);
+    {
+        *inBlob = cmMemoryCloneBlob(&blob);
+        if (NULL != blob.data && NULL == inBlob->data)
+        {
+            res = NQ_ERR_OUTOFMEMORY;
+            goto Exit;
+        }
+    }
 
-	cmBufManGive(response.buffer);
     pUser->uid.high = 0;
     pUser->uid.low = (NQ_UINT32)response.header.uid;
 
@@ -1500,14 +1696,16 @@ static NQ_STATUS doSessionSetupExtended(CCUser * pUser, const CMBlob * outBlob, 
         if (pServer->maxTrans < (32*1024))   
             pServer->credits = 10;
     }
-    if (res == NQ_SUCCESS && !realUserLogged && !pUser->isAnonymous)
-        pContext->mid = 2;
-    if (NQ_SUCCESS == res && NULL == pServer->masterUser && !pUser->isAnonymous)
+    if (NQ_SUCCESS == res && NULL == pServer->masterUser && !pUser->isAnonymous && !pUser->isGuest)
     {
         pServer->masterUser = (CMItem *)pUser;
+        pContext->mid = 2;
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+Exit:
+	cmBufManGive(request.buffer);
+	cmBufManGive(response.buffer);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
     return res;
 }
 
@@ -1518,13 +1716,17 @@ static NQ_STATUS doLogOff(CCUser * pUser)
 	CCServer * pServer;		/* server object pointer */
 	NQ_STATUS res;			/* exchange result */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-    
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "user:%p", pUser);
+
+    /* for error handling */
+	request.buffer = NULL;
+	response.buffer = NULL;
+
     pServer = pUser->server;
     if (!prepareSingleRequest(pServer, &request, SMB_COM_LOGOFF_ANDX))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 
 	/* compose request */
@@ -1533,42 +1735,46 @@ static NQ_STATUS doLogOff(CCUser * pUser)
     writeAndX(&request);
 	cmBufferWriteUint16(&request.writer, 0);		/* ByteCount */
 
-	res = sendReceive(pServer, pUser, &request, &response);
+	res = pServer->smb->sendReceive(pServer, pUser, &request, &response);
 	cmBufManGive(request.buffer);
 	if (NQ_SUCCESS != res)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		goto Exit;
 	}
 
 	/* parse response - noting to parse */
 
+Exit:
 	cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS doTreeConnect(CCShare * pShare)
 {
-	Request request;		/* request dscriptor */
+	Request request;		/* request descriptor */
 	Response response;		/* response descriptor */
 	CCServer * pServer;		/* server object pointer */
 	CCUser * pUser;			/* user object pointer */
 	NQ_UINT16 tempUint16;	/* for parsing 2-byte values */
-	NQ_WCHAR * path;		/* full network path */
-	NQ_STATUS res;			/* exchange result */
-#define SERVICE "?????"    /* SMB "Service" */
+	NQ_WCHAR * path = NULL; /* full network path */
+	NQ_STATUS res = NQ_ERR_GENERAL; /* exchange result */
+    NQ_WCHAR  * ipW = NULL;
+    NQ_CHAR   * ip = NULL;
+#define SERVICE "?????"     /* SMB "Service" */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "share:%p", pShare);
+
+    /* for error handling */
+	request.buffer = NULL;
+	response.buffer = NULL;
 
 	pUser = pShare->user;
 	pServer = pUser->server;
     if (!prepareSingleRequest(pServer, &request, SMB_COM_TREE_CONNECT_ANDX))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	
 	/* compose request */
@@ -1594,42 +1800,41 @@ static NQ_STATUS doTreeConnect(CCShare * pShare)
         markByteCount(&request, 0);
         cmBufferWriteByte(&request.writer, 0);	    /* Password */
     }
-    cmBufferWriterAlign(&request.writer, request.header._start, 2);     /* pad */
+	if (!pServer->useAscii)
+		cmBufferWriterAlign(&request.writer, request.header._start, 2);     /* pad */
 	if (pServer->useName)
     {
 	    path = ccUtilsComposeRemotePathToShare(pServer->item.name, pShare->item.name);
     }
     else
     {
-        NQ_WCHAR  * ipW;
-        NQ_CHAR   * ip;
-
         ip = (NQ_CHAR *)cmMemoryAllocate(CM_IPADDR_MAXLEN * sizeof(NQ_CHAR));
         ipW = (NQ_WCHAR *)cmMemoryAllocate(CM_IPADDR_MAXLEN * sizeof(NQ_WCHAR));
-        
+        if (NULL == ip || NULL == ipW)
+        {
+            LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+			res = NQ_ERR_OUTOFMEMORY;
+            goto Exit;
+        }
+
         cmIpToAscii(ip, &pServer->ips[0]);
         cmAnsiToUnicode(ipW, ip);
         path = ccUtilsComposeRemotePathToShare(ipW, pShare->item.name);
-        cmMemoryFree(ip);
-        cmMemoryFree(ipW);
     }
 	if (NULL == path)
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
+		LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
-    cmBufferWriteUnicode(&request.writer, path);                    /* Path */
-    cmBufferWriteBytes(&request.writer, (NQ_BYTE *)SERVICE, sizeof(SERVICE));  /* Service */
+    cmBufferWriteString(&request.writer, pServer->useAscii, (const NQ_BYTE *)path, TRUE, CM_BSF_WRITENULLTERM); 		/* Path */
+    cmBufferWriteString(&request.writer, TRUE, (const NQ_BYTE *)SERVICE, FALSE, CM_BSF_WRITENULLTERM);  				/* Service */
     writeByteCount(&request, 0);
-			
-	res = sendReceive(pServer, pUser, &request, &response);
-	cmMemoryFree(path);
-	cmBufManGive(request.buffer);
+
+	res = pServer->smb->sendReceive(pServer, pUser, &request, &response);
 	if (NQ_SUCCESS != res)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		goto Exit;
 	}
 
 	/* parse response */
@@ -1639,11 +1844,17 @@ static NQ_STATUS doTreeConnect(CCShare * pShare)
     pShare->flags = 0;
     if (tempUint16 & SMB_TREECONNECTANDX_SHAREISINDFS)
         pShare->flags |= CC_SHARE_IN_DFS;
+    cmBufferReaderSkip(&response.reader, sizeof(NQ_UINT16)); /* byte count */
+    pShare->isPrinter = (syStrcmp((NQ_CHAR *) cmBufferReaderGetPosition(&response.reader), "LPT1:") == 0) ? TRUE : FALSE;
 
+Exit:
+    cmMemoryFree(ip);
+    cmMemoryFree(ipW);
+	cmMemoryFree(path);
+	cmBufManGive(request.buffer);
 	cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS doTreeDisconnect(CCShare * pShare)
@@ -1651,159 +1862,265 @@ static NQ_STATUS doTreeDisconnect(CCShare * pShare)
 	return exchangeEmptyCommand(pShare, SMB_COM_TREE_DISCONNECT);
 }
 
+static NQ_STATUS composeCreateFileRequest(Request * request, CCFile * pFile)
+{
+	NQ_UINT16 cmd;				/* command code */
+	NQ_BOOL useAscii;			/* whether ASCII strings should be used */
+	NQ_STATUS result = NQ_SUCCESS; /* return value */
+
+	cmd = pFile->share->isPrinter ? SMB_COM_OPEN_PRINT_FILE : SMB_COM_NT_CREATE_ANDX;
+    if (!prepareSingleRequestByShare(request, pFile->share, cmd))
+    {
+		result = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
+    }
+    useAscii = pFile->share->user->server->useAscii;
+    switch (cmd)
+    {
+		case SMB_COM_OPEN_PRINT_FILE:
+		{
+			/* compose request */
+			writeHeader(request);
+
+			cmBufferWriteUint16(&request->writer, 0);	                /* SetupLength = 0 */
+			cmBufferWriteUint16(&request->writer, 1);					/* Graphics mode */
+			markByteCount(request, 0);
+			cmBufferWriteByte(&request->writer, useAscii ? 4 : 0);	    /* Buffer Format */
+			/* file name */
+			if (!useAscii)
+				cmBufferWriterAlign(&request->writer, request->header._start, 2);
+			cmBufferWriteString(&request->writer, useAscii, (const NQ_BYTE*)pFile->item.name, TRUE, CM_BSF_WRITENULLTERM);
+			writeByteCount(request, 0);
+			break;
+		}
+		case SMB_COM_NT_CREATE_ANDX:
+		{
+			NQ_UINT16 nameLen;			/* name length in bytes (not including terminator) */
+			NQ_BYTE * pNameLen;			/* pointer to the name length field */
+			NQ_BYTE * pName;			/* pointer to the name field */
+			NQ_BYTE * savedPos;			/* saved position in the writer */
+
+			/* compose request */
+			writeHeader(request);
+			writeAndX(request);
+
+			cmBufferWriteByte(&request->writer, 0);	                    /* reserved */
+			pNameLen = cmBufferWriterGetPosition(&request->writer);		/* save */
+			cmBufferWriteUint16(&request->writer, 0);					/* NameLength placeholder */
+			cmBufferWriteUint32(&request->writer, 0);	                /* Flags */
+			cmBufferWriteUint32(&request->writer, 0);	                /* RootDirectoryFID */
+			cmBufferWriteUint32(&request->writer, pFile->accessMask);   /* DesiredAccess */
+			cmBufferWriteUint32(&request->writer, 0);                   /* AllocationSize */
+			cmBufferWriteUint32(&request->writer, 0);                   /* AllocationSize */
+			cmBufferWriteUint32(&request->writer, pFile->attributes);   /* ExtAttributes */
+			cmBufferWriteUint32(&request->writer, pFile->sharedAccess);	/* ShareAccess */
+			cmBufferWriteUint32(&request->writer, pFile->disposition);	/* CreateDisposition */
+			cmBufferWriteUint32(&request->writer, pFile->options);		/* CreateOptions */
+			cmBufferWriteUint32(&request->writer, 2);		            /* ImpersonationLevel */
+			cmBufferWriteByte(&request->writer, 3);		                /* SecurityFlags */
+			markByteCount(request, 0);
+			/* file name */
+			if (!useAscii)
+				cmBufferWriterAlign(&request->writer, request->header._start, 2);
+			pName = cmBufferWriterGetPosition(&request->writer);		/* save */
+			cmBufferWriteString(&request->writer, useAscii, (const NQ_BYTE*)pFile->item.name, TRUE, CM_BSF_WRITENULLTERM);
+			nameLen = (NQ_UINT16)(cmBufferWriterGetPosition(&request->writer) - pName); /* correct name length */
+			if (useAscii && nameLen == 0)
+				nameLen = 1;
+			savedPos = cmBufferWriterGetPosition(&request->writer);		/* save */
+			cmBufferWriterSetPosition(&request->writer, pNameLen);		/* update name length */
+			cmBufferWriteUint16(&request->writer, nameLen);				/* NameLength value */
+			cmBufferWriterSetPosition(&request->writer, savedPos);		/* update name length */
+			writeByteCount(request, 0);
+			break;
+		}
+		default:
+			result = NQ_ERR_BADPARAM;
+			goto Exit;
+    }
+
+Exit:
+    return result;
+}
+
+static void parseCreateFileResponse(Response * response, CCFile * pFile)
+{
+	switch (response->header.command)
+	{
+		case SMB_COM_OPEN_PRINT_FILE:
+		{
+			cmBufferReaderSkip(&response->reader, sizeof(NQ_BYTE));      /* word count */
+			cmBufferReadUint16(&response->reader, FID(pFile));	         /* FID */
+			break;
+		}
+		case SMB_COM_NT_CREATE_ANDX:
+		{
+			/* skip WordCount+AndXComand+AndXReserved+AndXOffset+oplock level */
+			cmBufferReaderSkip(&response->reader, sizeof(NQ_BYTE) * 3 + sizeof(NQ_UINT16) + sizeof(NQ_BYTE));
+			cmBufferReadUint16(&response->reader, FID(pFile));	         /* FID */
+			/* skip create action + 4 times */
+			cmBufferReaderSkip(&response->reader, sizeof(NQ_UINT32) + sizeof(NQ_UINT64) * 4);
+			cmBufferReadUint32(&response->reader, &pFile->attributes);	 /* attributes */
+			break;
+		}
+		default:
+			break;
+	}
+}
+
 static NQ_STATUS doCreate(CCFile * pFile)
 {
-	Request request;			/* request dscriptor */
+	Request request;			/* request descriptor */
 	Response response;			/* response descriptor */
-	CCServer * pServer;			/* server object pointer */
-	CCShare * pShare;			/* share object pointer */
-	NQ_UINT16 nameLen;			/* name length in bytes (not including terminator) */
 	NQ_STATUS res;				/* exchange result */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%p", pFile);
 
-	pShare = pFile->share;
+    /* for error handling */
+	request.buffer = NULL;
+	response.buffer = NULL;
 
-	pServer = pShare->user->server;
-    if (!prepareSingleRequestByShare(&request, pShare, SMB_COM_NT_CREATE_ANDX))
-	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
-	}
-	
-	/* compose request */
-	writeHeader(&request);
-    writeAndX(&request);
-    nameLen = (NQ_UINT16)(sizeof(NQ_WCHAR) * syWStrlen(pFile->item.name));
-
-    cmBufferWriteByte(&request.writer, 0);	                    /* reserved */
-    cmBufferWriteUint16(&request.writer, nameLen);	            /* NameLength */
-	cmBufferWriteUint32(&request.writer, 0);	                /* Flags */
-	cmBufferWriteUint32(&request.writer, 0);	                /* RootDirectoryFID */
-    cmBufferWriteUint32(&request.writer, pFile->accessMask);    /* DesiredAccess */
-    cmBufferWriteUint32(&request.writer, 0);                    /* AllocationSize */
-    cmBufferWriteUint32(&request.writer, 0);                    /* AllocationSize */
-    cmBufferWriteUint32(&request.writer, pFile->attributes);    /* ExtAttributes */
-	cmBufferWriteUint32(&request.writer, pFile->sharedAccess);	/* ShareAccess */
-    cmBufferWriteUint32(&request.writer, pFile->disposition);	/* CreateDisposition */
-	cmBufferWriteUint32(&request.writer, pFile->options);		/* CreateOptions */
-	cmBufferWriteUint32(&request.writer, 2);		            /* ImpersonationLevel */
-	cmBufferWriteByte(&request.writer, 3);		                /* SecurityFlags */
-    markByteCount(&request, 0);
-	/* file name */
-	cmBufferWriterAlign(&request.writer, request.header._start, 2);
-	cmBufferWriteUnicode(&request.writer, pFile->item.name);	/* FileName */
-    writeByteCount(&request, 0);
-
-	res = sendReceive(pServer, pShare->user, &request, &response);
-	cmBufManGive(request.buffer);
+	res = composeCreateFileRequest(&request, pFile);
 	if (NQ_SUCCESS != res)
 	{
-        cmBufManGive(response.buffer);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return res;
+        LOGERR(CM_TRC_LEVEL_ERROR, "composeCreateFileRequest() failed");
+        goto Exit;
 	}
 
-	/* parse response */
-	cmBufferReaderSkip(&response.reader, sizeof(NQ_BYTE) * 3 + sizeof(NQ_UINT16));	/* WordCount+AndXComand+AndXReserved+AndXOffset */
-	cmBufferReaderSkip(&response.reader, sizeof(NQ_BYTE));		/* oplock level */
-    cmBufferReadUint16(&response.reader, FID(pFile));	        /* FID */
-	cmBufferReaderSkip(&response.reader, sizeof(NQ_UINT32));	/* create action */
-	cmBufferReaderSkip(&response.reader, sizeof(NQ_UINT64));	/* creation time */
-	cmBufferReaderSkip(&response.reader, sizeof(NQ_UINT64));	/* last access time */
-	cmBufferReaderSkip(&response.reader, sizeof(NQ_UINT64));	/* last write time */
-	cmBufferReaderSkip(&response.reader, sizeof(NQ_UINT64));	/* change time */
-	cmBufferReadUint32(&response.reader, &pFile->attributes);	/* attributes */
+	res = pFile->share->user->server->smb->sendReceive(pFile->share->user->server, pFile->share->user, &request, &response);
+	if (NQ_SUCCESS != res)
+	{
+        LOGERR(CM_TRC_LEVEL_ERROR, "sendReceive() failed");
+        goto Exit;
+	}
 
+	parseCreateFileResponse(&response, pFile);
+
+Exit:
+	cmBufManGive(request.buffer);
 	cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS doRestoreHandle(CCFile * pFile)
 {
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%p", pFile);
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", NQ_ERR_NOSUPPORT);
     return NQ_ERR_NOSUPPORT;
+}
+
+static NQ_STATUS composeCloseRequest(Request * request, CCFile * pFile)
+{
+	NQ_UINT16 cmd; 			/* command code */
+	NQ_UINT16 * pFid;       /* fid */
+    NQ_STATUS result = NQ_SUCCESS; /* return value */
+
+	cmd = pFile->share->isPrinter ? SMB_COM_CLOSE_PRINT_FILE : SMB_COM_CLOSE;
+    if (!prepareSingleRequestByShare(request, pFile->share, cmd))
+    {
+		result = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
+    }
+    pFid = FID(pFile);
+    switch (cmd)
+    {
+		case SMB_COM_CLOSE_PRINT_FILE:
+		{
+			/* compose request */
+			writeHeader(request);
+			cmBufferWriteUint16(&request->writer, *pFid);	            /* FID */
+			markByteCount(request, 0);
+			break;
+		}
+		case SMB_COM_CLOSE:
+		{
+		    /* force Unicode */
+		    request->header.flags2 |= SMB_FLAGS2_UNICODE;
+			/* compose request */
+			writeHeader(request);
+			cmBufferWriteUint16(&request->writer, *pFid);               /* FID */
+			cmBufferWriteUint32(&request->writer, 0);		            /* LastTimeModified */
+			cmBufferWriteUint32(&request->writer, 0);		            /* LastTimeModified */
+		    markByteCount(request, 0);
+			break;
+		}
+		default:
+			result = NQ_ERR_BADPARAM;
+			goto Exit;
+
+    }
+
+Exit:
+    return result;
 }
 
 static NQ_STATUS doClose(CCFile * pFile)
 {
-	Request request;		/* request dscriptor */
+	Request request;		/* request descriptor */
 	Response response;		/* response descriptor */
-	CCServer * pServer;		/* server object pointer */
-	CCShare * pShare;		/* share object pointer */
-	NQ_UINT16 * pFid;       /* fid */
 	NQ_STATUS res;			/* exchange result */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%p", pFile);
 
-	pShare = pFile->share;
-	pServer = pShare->user->server;
-    pFid = FID(pFile);
-    if (!prepareSingleRequestByShare(&request, pShare, SMB_COM_CLOSE))
-	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
-	}
-	
-	/* compose request */
-	writeHeader(&request);
-	cmBufferWriteUint16(&request.writer, *pFid);                /* FID */
-	cmBufferWriteUint32(&request.writer, 0);		            /* LastTimeModified */
-	cmBufferWriteUint32(&request.writer, 0);		            /* LastTimeModified */
-    markByteCount(&request, 0);                 
+	request.buffer = NULL;
+	response.buffer = NULL;
 
-	res = sendReceive(pServer,  pShare->user, &request, &response);
-	cmBufManGive(request.buffer);
+	res = composeCloseRequest(&request, pFile);
 	if (NQ_SUCCESS != res)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+        LOGERR(CM_TRC_LEVEL_ERROR, "composeCloseRequest() failed");
+		goto Exit;
+	}
+	res = pFile->share->user->server->smb->sendReceive(pFile->share->user->server, pFile->share->user, &request, &response);
+	if (NQ_SUCCESS != res)
+	{
+        LOGERR(CM_TRC_LEVEL_ERROR, "sendReceive() failed");
+		goto Exit;
 	}
 
-	/* parse response - we ingnore response parameters */
+	/* ignore response parameters */
 
+Exit:
+	cmBufManGive(request.buffer);
 	cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS doQueryDfsReferrals(CCShare * pShare, const NQ_WCHAR * path, CCCifsParseReferral parser, CMList * list)
 {
-	Request request;		/* request dscriptor */
+	Request request;		/* request descriptor */
 	Response response;		/* response descriptor */
 	CCServer * pServer;		/* server object pointer */
-	NQ_STATUS res;			/* exchange result */
+	NQ_STATUS res = NQ_SUCCESS; /* exchange result */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "share:%p path:%s parser:%p list:%p", pShare, cmWDump(path), parser, list);
+
+	request.buffer = NULL;
+	response.buffer = NULL;
 
 	pServer = pShare->user->server;
     if (!prepareSingleRequestByShare(&request, pShare, SMB_COM_TRANSACTION2))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	
 	/* compose request */
 	writeHeader(&request);
     markTrans2Start(&request, SMB_TRANS2_GETDFSREFERRAL); 
     /* T2 params */
-	cmBufferWriteUint16(&request.writer, 4);		            /* max refrerral level */
+	cmBufferWriteUint16(&request.writer, 4);		            /* max referral level */
     cmBufferWriteUnicode(&request.writer, path);	            /* file name */
     markTransData(&request);
     writeTrans2(pServer, &request, 0, 0);            
 
-	res = sendReceive(pServer, pShare->user, &request, &response);
-	cmBufManGive(request.buffer);
+	res = pServer->smb->sendReceive(pServer, pShare->user, &request, &response);
 	if (NQ_SUCCESS != res)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+        LOGERR(CM_TRC_LEVEL_ERROR, "sendReceive() failed");
+		goto Exit;
 	}
 
 	/* parse response */
@@ -1811,32 +2128,35 @@ static NQ_STATUS doQueryDfsReferrals(CCShare * pShare, const NQ_WCHAR * path, CC
     setTransData(&response);
 	parser(&response.reader, list);
 
+Exit:
+	cmBufManGive(request.buffer);
     cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS doFindOpen(CCSearch * pSearch)
 {
 	SearchContext * pContext;	/* casted pointer */
+	NQ_STATUS result = NQ_SUCCESS; /* return value */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-	
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "search:%p", pSearch);
+
 	/* create context */
-	pContext = cmMemoryAllocate(sizeof(SearchContext));
+	pContext = (SearchContext *)cmMemoryAllocate(sizeof(SearchContext));
 	if (NULL == pContext)
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		result = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	pSearch->context = pContext;
 	pContext->findFirst = TRUE;	
     pContext->eos = FALSE;
     pContext->sidAvailable = FALSE;
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+	return result;
 }
 
 static NQ_STATUS doFindMore(CCSearch * pSearch)
@@ -1845,26 +2165,29 @@ static NQ_STATUS doFindMore(CCSearch * pSearch)
 	Request request;		    /* request descriptor */
 	Response response;		    /* response descriptor */
 	CCServer * pServer;		    /* server object pointer */
-	NQ_STATUS res;			    /* exchange result */
+	NQ_STATUS res = NQ_SUCCESS; /* exchange result */
     NQ_UINT16 level;            /* info level */
     NQ_UINT16 temp16;           /* for parsing 16 bit values */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "search:%p", pSearch);
+
+    request.buffer = NULL;
+    response.buffer = NULL;
 
     pContext = (SearchContext *)pSearch->context;
     if (pContext->eos)
     {
         pContext->sid = 0xFFFF;
-	    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_ERR_NOFILES;
+        res = NQ_ERR_NOFILES;
+        goto Error;
     }
 
     pServer = pSearch->server;
     if (!prepareSingleRequestByShare(&request, pSearch->share, SMB_COM_TRANSACTION2))
 	{
         pContext->sid = 0xFFFF;
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+        res = NQ_ERR_OUTOFMEMORY;
+        goto Error;
 	}
 	
 	/* compose request */
@@ -1879,7 +2202,7 @@ static NQ_STATUS doFindMore(CCSearch * pSearch)
 	    cmBufferWriteUint16(&request.writer, 0x4|0x2);	            /* flags */
 	    cmBufferWriteUint16(&request.writer, level);   	            /* level */
 	    cmBufferWriteUint32(&request.writer, 0);   	                /* storage type */
-        cmBufferWriteUnicode(&request.writer, pSearch->item.name);	/* search pattern */
+        cmBufferWriteString(&request.writer, pServer->useAscii, (const NQ_BYTE *)pSearch->item.name, TRUE, CM_BSF_WRITENULLTERM);/* search pattern */
     }
     else
     {
@@ -1887,7 +2210,7 @@ static NQ_STATUS doFindMore(CCSearch * pSearch)
 	    cmBufferWriteUint16(&request.writer, 0xFFFE);   	        /* search count */
 	    cmBufferWriteUint16(&request.writer, level);   	            /* level */
 	    cmBufferWriteUint32(&request.writer, pContext->resumeKey);  /* resume key */
-	    cmBufferWriteUint16(&request.writer, 0x4 | 0x8);           /* flags */
+	    cmBufferWriteUint16(&request.writer, 0x4 | 0x8 | 0x2);      /* flags */
         cmBufferWriteBytes(
             &request.writer, 
             pSearch->lastFile.data, 
@@ -1897,14 +2220,11 @@ static NQ_STATUS doFindMore(CCSearch * pSearch)
     markTransData(&request);
     writeTrans2(pServer, &request, 10, 0);            
 
-    res = sendReceive(pServer, pSearch->share->user, &request, &response);
-	cmBufManGive(request.buffer);
+    res = pServer->smb->sendReceive(pServer, pSearch->share->user, &request, &response);
 	if (NQ_SUCCESS != res)
 	{
         pContext->sid = 0xFFFF;
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+        goto Error;
 	}
 
 	/* parse response */
@@ -1917,43 +2237,58 @@ static NQ_STATUS doFindMore(CCSearch * pSearch)
     }
     pContext->sidAvailable = TRUE;
     cmBufferReadUint16(&response.reader, &temp16);                  /* search count */
+    if (temp16 == 0)
+    {
+        pContext->eos = TRUE;
+        pContext->sidAvailable = FALSE;
+        pContext->sid = 0xFFFF;
+        res = NQ_ERR_NOFILES;
+        goto Error;
+    }
     cmBufferReadUint16(&response.reader, &temp16);                  /* EOS */
     pContext->eos = (0 != temp16);
     setTransData(&response);
 	cmBufferReaderInit(
 		&pSearch->parser,
 		cmBufferReaderGetPosition(&response.reader),
-        response.dataCount
+        (NQ_COUNT)response.dataCount
 		);
     pSearch->buffer = response.buffer;
+    goto Exit;
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+Error:
+    cmBufManGive(response.buffer);
+Exit:
+	cmBufManGive(request.buffer);
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS doFindClose(CCSearch * pSearch)
 {
 	SearchContext * pContext;	/* casted pointer */
-	Request request;		    /* request dscriptor */
+	Request request;		    /* request descriptor */
 	Response response;		    /* response descriptor */
 	CCServer * pServer;		    /* server object pointer */
-	NQ_STATUS res;			    /* exchange result */
+	NQ_STATUS res = NQ_SUCCESS; /* exchange result */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "search:%p", pSearch);
+
+	request.buffer = NULL;
+    response.buffer = NULL;
 
     pContext = (SearchContext *)pSearch->context;
     if (pContext->eos || !pContext->sidAvailable)
     {
         /* search was already closed by server */
-	    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NQ_SUCCESS;
+        goto Exit;
     }
 
     pServer = pSearch->server;
     if (!prepareSingleRequestByShare(&request, pSearch->share, SMB_COM_FIND_CLOSE2))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+        goto Exit;
 	}
 	
 	/* compose request */
@@ -1961,19 +2296,17 @@ static NQ_STATUS doFindClose(CCSearch * pSearch)
     cmBufferWriteUint16(&request.writer, pContext->sid);         /* search handle */
     markByteCount(&request, 0);
 
-    res = sendReceive(pServer, pSearch->share->user, &request, &response);
-	cmBufManGive(request.buffer);
+    res = pServer->smb->sendReceive(pServer, pSearch->share->user, &request, &response);
 	if (NQ_SUCCESS != res)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+        goto Exit;
 	}
 
+Exit:
+	cmBufManGive(request.buffer);
     cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static void writeCallback(CCServer * pServer, Match * pContext)
@@ -1985,18 +2318,20 @@ static void writeCallback(CCServer * pServer, Match * pContext)
 	NQ_UINT32 count = 0;									/* bytes written */
     NQ_UINT16 countLow;                                     /* low 16 bit of count */
     NQ_UINT16 countHigh;                                    /* high 16 bit of count */
-    NQ_TIME currentTime;                                    /* Current Time for checking timed-out responses*/
+    NQ_UINT32 currentTime;                                    /* Current Time for checking timed-out responses*/
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p context:%p", pServer, pContext);
 
 	/* receive the rest of command */
 	if (tailLen != ccTransportReceiveBytes(&pServer->transport, buffer, tailLen))
 	{
-    	ccTransportReceiveEnd(&pServer->transport);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return;
+		goto Exit;
 	}
-	ccTransportReceiveEnd(&pServer->transport);
+
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    cmCapturePacketWritePacket( buffer, tailLen);
+	cmCapturePacketWriteEnd();
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 	cmBufferReaderInit(&pResponse->reader, buffer, tailLen);
 
 	/* parse the response */
@@ -2005,45 +2340,110 @@ static void writeCallback(CCServer * pServer, Match * pContext)
 		cmBufferReaderSkip(&pResponse->reader, sizeof(NQ_BYTE) + 
                                                sizeof(NQ_UINT16) * 2);  /* andx command/reserved/offset */
 		cmBufferReadUint16(&pResponse->reader, &countLow);	            /* count */
-		cmBufferReaderSkip(&pResponse->reader, sizeof(NQ_UINT16) * 1);	/* avilable */
+		cmBufferReaderSkip(&pResponse->reader, sizeof(NQ_UINT16) * 1);	/* available */
 		cmBufferReadUint16(&pResponse->reader, &countHigh);	            /* count high */
         count = (NQ_UINT32)((countHigh << 16) + countLow);
 	}
-	currentTime = (NQ_TIME)syGetTime();
+	currentTime = (NQ_UINT32)syGetTimeInSec();
 
     /* call up */
 	if ((pMatch->timeCreated + pMatch->setTimeout) > currentTime)
     {
-        NQ_BOOL statusNT;                                       /* TRUE for NT stgtaus */
+        NQ_BOOL statusNT;                                       /* TRUE for NT status */
 	    statusNT = (pResponse->header.flags2 & SMB_FLAGS2_32_BIT_ERROR_CODES);
-	    pMatch->callback(pResponse->header.status == 0? 0 : (NQ_STATUS)ccErrorsStatusToNq(pResponse->header.status, statusNT), count, pMatch->context);
+	    pMatch->callback(pResponse->header.status == 0? 0 : (NQ_STATUS)ccErrorsStatusToNq(pResponse->header.status, statusNT), (NQ_UINT)count, pMatch->context);
     }
 	
+Exit:
 	/* release context */
+	if (NULL != pMatch->match.thread->element.item.guard)
+	{
+		syMutexDelete(pMatch->match.thread->element.item.guard);
+		cmMemoryFree(pMatch->match.thread->element.item.guard);
+		pMatch->match.thread->element.item.guard = NULL;
+	}
 	cmMemoryFree(pMatch->match.response);
-    cmListItemDispose((CMItem *)pMatch);
-
+	cmListItemDispose((CMItem *)pMatch);
+	ccTransportReceiveEnd(&pServer->transport);
 	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
-static NQ_STATUS doWrite(CCFile * pFile, const NQ_BYTE * data, NQ_UINT bytesToWrite, CCCifsWriteCallback callback, void * context)
+static NQ_BOOL disposeReadWriteCallback(CMItem * pItem)
 {
-	Request request;		    /* request dscriptor */
+    Match * pMatch = (Match *)pItem;
+    if (NULL != pMatch && NULL != pMatch->response)
+    {
+        cmMemoryFree(pMatch->response);
+        pMatch->response = NULL;
+    }
+    return TRUE;
+}
+
+
+static NQ_BOOL removeReadWriteMatch(void * hook, void* _pServer, NQ_BOOL isReadMatch)
+{
+    Match *pMatch;
+    NQ_UINT16 matchType;
+    CMIterator itr;
+    NQ_BOOL result = FALSE;
+    CCServer *pServer = (CCServer *)_pServer;
+
+
+    cmListIteratorStart(&pServer->expectedResponses, &itr);
+
+	if (isReadMatch)
+	{
+		matchType = MATCHINFO_READ;
+		while(cmListIteratorHasNext(&itr))
+		{
+			pMatch = (Match *)cmListIteratorNext(&itr);
+			if ((pMatch->matchExtraInfo & matchType) && (((ReadMatch *)pMatch)->hook == hook))
+			{
+				result = disposeReadWriteCallback(&pMatch->item);
+				cmListItemRemoveAndDispose(&pMatch->item);
+				break;
+			}
+		}
+	}
+	else
+	{
+		matchType = MATCHINFO_WRITE;
+		while(cmListIteratorHasNext(&itr))
+		{
+			pMatch = (Match *)cmListIteratorNext(&itr);
+			if ((pMatch->matchExtraInfo & matchType) && (((WriteMatch *)pMatch)->hook == hook))
+			{
+				result = disposeReadWriteCallback(&pMatch->item);
+				cmListItemRemoveAndDispose(&pMatch->item);
+				break;
+			}
+		}
+	}
+	cmListIteratorTerminate(&itr);
+
+    return result;
+}
+
+static NQ_STATUS doWrite(CCFile * pFile, const NQ_BYTE * data, NQ_UINT bytesToWrite, CCCifsWriteCallback callback, void * context, void *hook)
+{
+	Request request;		    /* request descriptor */
 	CCServer * pServer;		    /* server object pointer */
-	NQ_STATUS res;			    /* exchange result */
+	NQ_STATUS res = NQ_SUCCESS; /* exchange result */
     NQ_BYTE * pDataOffset;      /* pointer to the data offset field */
-    NQ_BYTE * pTemp;            /* temporray pointer in the packet */
+    NQ_BYTE * pTemp;            /* temporary pointer in the packet */
    	NQ_UINT16 * pFid;           /* fid */
     WriteMatch * pMatch;        /* item for matching response to request */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%p data:%p bytes:%u callback:%p context:%p", pFile, data, bytesToWrite, callback, context);
+
+	request.buffer = NULL;
 
     pServer = pFile->share->user->server;
     pFid = FID(pFile);
     if (!prepareSingleRequestByShare(&request, pFile->share, SMB_COM_WRITE_ANDX))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	
 	/* compose request */
@@ -2070,38 +2470,43 @@ static NQ_STATUS doWrite(CCFile * pFile, const NQ_BYTE * data, NQ_UINT bytesToWr
     cmBufferWriterSetPosition(&request.writer, pTemp);
 
     /* create match */
-	pMatch = (WriteMatch *)cmListItemCreate(sizeof(WriteMatch), NULL , FALSE);
+	pMatch = (WriteMatch *)cmListItemCreate(sizeof(WriteMatch), NULL, CM_LISTITEM_NOLOCK);
 	if (NULL == pMatch)
 	{
-    	cmBufManGive(request.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	pMatch->match.response = (Response *)cmMemoryAllocate(sizeof(Response));
 	if (NULL == pMatch->match.response)
 	{
-    	cmBufManGive(request.buffer);
 		cmMemoryFree(pMatch);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
+    pMatch->match.thread = cmThreadGetCurrent();
 	pMatch->match.server = pFile->share->user->server;
-    pMatch->timeCreated = (NQ_TIME)syGetTime();
+	pMatch->match.isResponseAllocated = TRUE;
+	pMatch->match.cond = NULL;
+	pMatch->match.matchExtraInfo = MATCHINFO_WRITE;
+    pMatch->timeCreated = (NQ_UINT32)syGetTimeInSec();
     pMatch->setTimeout = ccConfigGetTimeout();
 	pMatch->callback = callback;
 	pMatch->context = context;
-	cmListItemAdd(&pServer->expectedResponses, (CMItem *)pMatch, NULL);
 
-    res = sendRequest(pServer, pFile->share->user, &request, &pMatch->match);
-	cmBufManGive(request.buffer);
-	if (NQ_SUCCESS != res)
+    res = pServer->smb->sendRequest(pServer, pFile->share->user, &request, &pMatch->match, disposeReadWriteCallback);
+    if (NQ_SUCCESS != res)
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		cmMemoryFree(pMatch->match.response);
+		if (pMatch->match.item.master != NULL)
+			cmListItemRemoveAndDispose((CMItem *)pMatch);
+		else
+			cmListItemDispose((CMItem *)pMatch);
 	}
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+Exit:
+	cmBufManGive(request.buffer);
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static void readCallback(CCServer * pServer, Match * pContext)
@@ -2114,13 +2519,17 @@ static void readCallback(CCServer * pServer, Match * pContext)
 	NQ_UINT16 countLow;								/* bytes read (low 2 bytes) */
 	NQ_UINT16 countHigh;							/* bytes read (high two bytes) */
 	NQ_UINT16 dataOffset;							/* data offset */
-    NQ_TIME currentTime;                            /* Current Time for checking timed-out responses*/
+    NQ_UINT32 currentTime;                            /* Current Time for checking timed-out responses*/
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p context:%p", pServer, pContext);
 
 	/* receive the structure but not padding nor the buffer (payload) */
-	if (READSTRUCT_SIZE == ccTransportReceiveBytes(&pServer->transport, buffer, READSTRUCT_SIZE))
+
+	if (pResponse->tailLen >= READSTRUCT_SIZE &&  READSTRUCT_SIZE == ccTransportReceiveBytes(&pServer->transport, buffer, READSTRUCT_SIZE))
 	{
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+		cmCapturePacketWritePacket( buffer,READSTRUCT_SIZE );
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 		/* parse the response */
 		cmBufferReaderInit(&pResponse->reader, buffer, sizeof(buffer));
 		if (NQ_SUCCESS == pResponse->header.status)
@@ -2128,7 +2537,7 @@ static void readCallback(CCServer * pServer, Match * pContext)
 			cmBufferReaderSkip(
                 &pResponse->reader, 
                 sizeof(NQ_BYTE) * 3 +                               /* word count + AndX command/reserved/offset */ 
-                 sizeof(NQ_UINT16) * 4                              /* available, datacompaction model, reserved1 */
+                 sizeof(NQ_UINT16) * 4                              /* available, data compaction model, reserved1 */
                 );				            
 			cmBufferReadUint16(&pResponse->reader, &countLow);	    /* count low */
             cmBufferReadUint16(&pResponse->reader, &dataOffset);	/* data offset */
@@ -2138,49 +2547,82 @@ static void readCallback(CCServer * pServer, Match * pContext)
 	        {
                 dataOffset = (NQ_UINT16)(dataOffset - (SMB_HEADERSIZE + READSTRUCT_SIZE));
 		        ccTransportReceiveBytes(&pServer->transport, buffer, (NQ_COUNT)dataOffset);	/* read padding */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+				cmCapturePacketWritePacket(buffer,dataOffset );
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 	        }
-	        ccTransportReceiveBytes(&pServer->transport, pMatch->buffer, count);	/* read into application buffer */
+	        ccTransportReceiveBytes(&pServer->transport, pMatch->buffer, (NQ_COUNT)count);	/* read into application buffer */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+		    cmCapturePacketWritePacket(pMatch->buffer, (NQ_UINT)count);
+			cmCapturePacketWriteEnd();
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 		}
+	}
+	else if (pResponse->tailLen < READSTRUCT_SIZE)
+	{
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+		NQ_COUNT res =
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+	    ccTransportReceiveBytes(&pServer->transport, buffer, pResponse->tailLen );
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+		if (res > 0)
+		{
+			cmCapturePacketWritePacket(buffer,res );
+			cmCapturePacketWriteEnd();
+		}
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+		count = 0;
 	}
 	else
 	{
 		count = 0;
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+		cmCapturePacketWriteEnd();
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 	}
 	ccTransportReceiveEnd(&pServer->transport);
-    currentTime = (NQ_TIME)syGetTime();
+    currentTime = (NQ_UINT32)syGetTimeInSec();
     
     /* call up */
     if ((pMatch->timeCreated + pMatch->setTimeout) > currentTime)
     {
-        NQ_BOOL statusNT;                               /* TRUE for NT stgtaus */
+        NQ_BOOL statusNT;                               /* TRUE for NT status */
     
         statusNT = (pResponse->header.flags2 & SMB_FLAGS2_32_BIT_ERROR_CODES);
-	    pMatch->callback(pResponse->header.status == 0? (count == 0 ? NQ_ERR_QEOF : 0) : (NQ_STATUS)ccErrorsStatusToNq(pResponse->header.status, statusNT), count, pMatch->context, count < pMatch->count);
+	    pMatch->callback(pResponse->header.status == 0? ((count == 0 && pMatch->count > 0) ? NQ_ERR_QEOF : 0) : (NQ_STATUS)ccErrorsStatusToNq(pResponse->header.status, statusNT), (NQ_UINT)count, pMatch->context, count < pMatch->count);
     }
 	
 	/* release */
+	if (NULL != pMatch->match.thread->element.item.guard)
+	{
+		syMutexDelete(pMatch->match.thread->element.item.guard);
+		cmMemoryFree(pMatch->match.thread->element.item.guard);
+		pMatch->match.thread->element.item.guard = NULL;
+	}
 	cmMemoryFree(pMatch->match.response);
     cmListItemDispose((CMItem *)pMatch);
 
    	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
-static NQ_STATUS doRead(CCFile * pFile, const NQ_BYTE * buffer, NQ_UINT bytesToRead, CCCifsReadCallback callback, void * context)
+static NQ_STATUS doRead(CCFile * pFile, const NQ_BYTE * buffer, NQ_UINT bytesToRead, CCCifsReadCallback callback, void *context, void *hook)
 {
-	Request request;		    /* request dscriptor */
+	Request request;		    /* request descriptor */
 	CCServer * pServer;		    /* server object pointer */
 	NQ_STATUS res;			    /* exchange result */
    	NQ_UINT16 * pFid;           /* fid */
     ReadMatch * pMatch;         /* item for matching response to request */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%p buff:%p bytes:%u callback:%p context:%p", pFile, buffer, bytesToRead, callback, context);
+
+	request.buffer = NULL;
 
     pServer = pFile->share->user->server;
     pFid = FID(pFile);
     if (!prepareSingleRequestByShare(&request, pFile->share, SMB_COM_READ_ANDX))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	
 	/* compose request */
@@ -2191,47 +2633,61 @@ static NQ_STATUS doRead(CCFile * pFile, const NQ_BYTE * buffer, NQ_UINT bytesToR
 
     cmBufferWriteUint16(&request.writer, bytesToRead&0xFFFF);   /* max count of bytes to return - low */
     cmBufferWriteUint16(&request.writer, 0);                    /* min count of bytes to return - low */
-    cmBufferWriteUint32(&request.writer, bytesToRead>>16);      /* max count of bytes to return - high */
-    cmBufferWriteUint16(&request.writer, (bytesToRead&0xFFFF0000) == 0xFFFF0000? 0xFFFF:0x0000);
-                                                                /* reserved */
+    if (pFile->isPipe)
+	{
+		cmBufferWriteUint32(&request.writer, 0xFFFFFFFF);		/* timeout 0xFFFFFFFF "wait forever"  */	
+		cmBufferWriteUint16(&request.writer, 0);				/* reserved */
+	}
+	else
+	{
+		cmBufferWriteUint32(&request.writer, bytesToRead>>16);  /* max count of bytes to return - high */
+		cmBufferWriteUint16(&request.writer, (bytesToRead&0xFFFF0000) == 0xFFFF0000? 0xFFFF:0x0000);  
+																/* reserved */
+	}
     cmBufferWriteUint32(&request.writer, pFile->offset.high);   /* offset high */
     markByteCount(&request, 0);
     writeByteCount(&request, 0);
 
-	pMatch = (ReadMatch *)cmListItemCreate(sizeof(ReadMatch), NULL , FALSE);
+	pMatch = (ReadMatch *)cmListItemCreate(sizeof(ReadMatch), NULL , CM_LISTITEM_NOLOCK);
 	if (NULL == pMatch)
 	{
-    	cmBufManGive(request.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	pMatch->match.response = (Response *)cmMemoryAllocate(sizeof(Response));
 	if (NULL == pMatch->match.response)
 	{
-    	cmBufManGive(request.buffer);
 		cmMemoryFree(pMatch);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
+    pMatch->match.thread = cmThreadGetCurrent();
 	pMatch->match.server = pFile->share->user->server;
-    pMatch->timeCreated = (NQ_TIME)syGetTime();
+	pMatch->match.isResponseAllocated = TRUE;
+	pMatch->match.cond = NULL;
+	pMatch->match.matchExtraInfo = MATCHINFO_READ;
+    pMatch->timeCreated = (NQ_UINT32)syGetTimeInSec();
     pMatch->setTimeout = ccConfigGetTimeout();
 	pMatch->callback = callback;
 	pMatch->context = context;
 	pMatch->count = bytesToRead;
 	pMatch->buffer = (NQ_BYTE *)buffer;
-	cmListItemAdd(&pServer->expectedResponses, (CMItem *)pMatch, NULL);
+	pMatch->hook = hook;
 
-    res = sendRequest(pServer, pFile->share->user, &request, &pMatch->match);
-	cmBufManGive(request.buffer);
-	if (NQ_SUCCESS != res)
+    res = pServer->smb->sendRequest(pServer, pFile->share->user, &request, &pMatch->match, disposeReadWriteCallback);
+    if (NQ_SUCCESS != res)
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		cmMemoryFree(pMatch->match.response);
+		if (pMatch->match.item.master != NULL)
+			cmListItemRemoveAndDispose((CMItem *)pMatch);
+		else
+			cmListItemDispose((CMItem *)pMatch);
 	}
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+Exit:
+	cmBufManGive(request.buffer);
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 #ifdef UD_CC_INCLUDESECURITYDESCRIPTORS
@@ -2263,17 +2719,18 @@ static void writeNtTrans(CCServer * pServer, Request * pRequest, NQ_UINT16 maxPa
     pEnd = cmBufferWriterGetPosition(&pRequest->writer);
     dataCount = (NQ_UINT32)(pEnd - pRequest->pData) + tailLen;
     cmBufferWriterSetPosition(&pRequest->writer, pRequest->pTrans);
-    cmBufferWriteByte(&pRequest->writer, maxSetupCount);                                /* max setup count */
-    cmBufferWriterSkip(&pRequest->writer, sizeof(NQ_UINT16));                           /* reserved */
-    cmBufferWriteUint32(&pRequest->writer, (NQ_UINT32)(pRequest->pData - pRequest->pParams));        /* total params count */
-    cmBufferWriteUint32(&pRequest->writer, (NQ_UINT32)(pEnd - pRequest->pData + tailLen));           /* total data count */
-    cmBufferWriteUint32(&pRequest->writer, maxParamCount);                              /* max params count */
-    cmBufferWriteUint32(&pRequest->writer, maxBuffer);                                  /* max data count */
-    cmBufferWriteUint32(&pRequest->writer, (NQ_UINT32)(pRequest->pData - pRequest->pParams));        /* params count */
-    cmBufferWriteUint32(&pRequest->writer, (NQ_UINT32)(pRequest->pParams - pRequest->header._start));/* params offset */
-    cmBufferWriteUint32(&pRequest->writer, dataCount);                                  /* data count */
+    cmBufferWriteByte(&pRequest->writer, maxSetupCount);                                				/* max setup count */
+    cmBufferWriteUint16(&pRequest->writer, 0);                           								/* reserved */
+    cmBufferWriteUint32(&pRequest->writer, (NQ_UINT32)(pRequest->pData - pRequest->pParams));        	/* total params count */
+    cmBufferWriteUint32(&pRequest->writer, (NQ_UINT32)(pEnd - pRequest->pData) + tailLen);           	/* total data count */
+    cmBufferWriteUint32(&pRequest->writer, maxParamCount);                              				/* max params count */
+    cmBufferWriteUint32(&pRequest->writer, maxBuffer);                                  				/* max data count */
+    cmBufferWriteUint32(&pRequest->writer, (NQ_UINT32)(pRequest->pData - pRequest->pParams));        	/* params count */
+    cmBufferWriteUint32(&pRequest->writer, (NQ_UINT32)(pRequest->pParams - pRequest->header._start));	/* params offset */
+    cmBufferWriteUint32(&pRequest->writer, dataCount);                                  				/* data count */
     cmBufferWriteUint32(&pRequest->writer, dataCount ==0? 
-        0: (NQ_UINT32)(pRequest->pData - pRequest->header._start));                                   /* data offset */
+        0: (NQ_UINT32)(pRequest->pData - pRequest->header._start));                                   	/* data offset */
+    cmBufferWriteByte(&pRequest->writer, 0);															/* setup count */
     cmBufferWriterSetPosition(&pRequest->writer, pEnd);
     writeByteCount(pRequest, (NQ_UINT16)tailLen);
 }
@@ -2295,21 +2752,24 @@ static void parseNtTrans(Response * pResponse)
 
 static NQ_STATUS doQuerySecurityDescriptor(CCFile * pFile, CMSdSecurityDescriptor * sd)
 {
-	Request request;		    /* request dscriptor */
+	Request request;		    /* request descriptor */
 	Response response;		    /* response descriptor */
 	CCServer * pServer;		    /* server object pointer */
 	NQ_STATUS res;			    /* exchange result */
 	CMRpcPacketDescriptor in;	/* for parsing SD */
    	NQ_UINT16 * pFid;           /* fid */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%p sd:%p", pFile, sd);
+
+	request.buffer = NULL;
+	response.buffer = NULL;
 
     pServer = pFile->share->user->server;
     pFid = FID(pFile);
     if (!prepareSingleRequestByShare(&request, pFile->share, SMB_COM_NT_TRANSACT))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	
 	/* compose request */
@@ -2322,13 +2782,10 @@ static NQ_STATUS doQuerySecurityDescriptor(CCFile * pFile, CMSdSecurityDescripto
     markTransData(&request);
     writeNtTrans(pServer, &request, 4, 0, 0);    /* no data - no tail */            
 
-    res = sendReceive(pServer, pFile->share->user, &request, &response);
-	cmBufManGive(request.buffer);
+    res = pServer->smb->sendReceive(pServer, pFile->share->user, &request, &response);
 	if (NQ_SUCCESS != res)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		goto Exit;
 	}
 
 	/* parse response */
@@ -2339,15 +2796,16 @@ static NQ_STATUS doQuerySecurityDescriptor(CCFile * pFile, CMSdSecurityDescripto
 	cmRpcSetDescriptor(&in, cmBufferReaderGetPosition(&response.reader), FALSE);
 	cmSdParseSecurityDescriptor(&in, sd);			/* security descriptor */
 
+Exit:
+	cmBufManGive(request.buffer);
     cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS doSetSecurityDescriptor(CCFile * pFile, const CMSdSecurityDescriptor * sd)
 {
-	Request request;		    /* request dscriptor */
+	Request request;		    /* request descriptor */
 	Response response;		    /* response descriptor */
 	CCServer * pServer;		    /* server object pointer */
 	NQ_STATUS res;			    /* exchange result */
@@ -2355,24 +2813,26 @@ static NQ_STATUS doSetSecurityDescriptor(CCFile * pFile, const CMSdSecurityDescr
 	NQ_BYTE * sdBuffer;			/* buffer for packing SD - the same size as SD itself */
    	NQ_UINT16 * pFid;           /* fid */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%p sd:%p", pFile, sd);
+
+	request.buffer = NULL;
+	response.buffer = NULL;
 
 	pServer = pFile->share->user->server;
-	sdBuffer = cmBufManTake(sd->length + 32);
+	sdBuffer = cmBufManTake((NQ_COUNT)(sd->length + 32));
     pFid = FID(pFile);
     if (NULL == sdBuffer)
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	cmRpcSetDescriptor(&out, sdBuffer, FALSE);
-	cmSdPackSecurityDescriptor(&out, sd);
+	cmSdPackSecurityDescriptor(&out, sd, 0x0f);
 
     if (!prepareSingleRequestByShare(&request, pFile->share, SMB_COM_NT_TRANSACT))
 	{
-		cmBufManGive(sdBuffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	
 	/* compose request */
@@ -2389,138 +2849,190 @@ static NQ_STATUS doSetSecurityDescriptor(CCFile * pFile, const CMSdSecurityDescr
 	request.tail.len = (NQ_COUNT)(out.current - sdBuffer);
     writeNtTrans(pServer, &request, 0, 0, request.tail.len);
     
-    res = sendReceive(pServer, pFile->share->user, &request, &response);
-	cmBufManGive(sdBuffer);
-	cmBufManGive(request.buffer);
+    res = pServer->smb->sendReceive(pServer, pFile->share->user, &request, &response);
 	if (NQ_SUCCESS != res)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		goto Exit;
 	}
 
 	/* parse response */
-    cmBufManGive(response.buffer);
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+Exit:
+	cmBufManGive(request.buffer);
+    cmBufManGive(response.buffer);
+	cmBufManGive(sdBuffer);
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 #endif /* UD_CC_INCLUDESECURITYDESCRIPTORS */
 
-static NQ_STATUS doQueryFileInfoByHandle(CCFile * pFile, CCCifsParseFileInfoCallback callback, void * context)
+static void	composeQueryFileInfoByHandleRequest(Request *request, NQ_BYTE * position, CCServer * pServer, NQ_UINT16 * pFid, NQ_UINT16 level)
 {
-	Request request;		    /* request dscriptor */
+	cmBufferWriterSetPosition(&request->writer, position);
+	writeHeader(request);
+	markTrans2Start(request, SMB_TRANS2_QUERYFILEINFORMATION);
+	/* T2 params */
+	cmBufferWriteUint16(&request->writer, *pFid); /* FID */
+	cmBufferWriteUint16(&request->writer, level); /* info level */
+	markTransData(request);
+	writeTrans2(pServer, request, 2, 0);
+}
+
+static NQ_STATUS doQueryFileInfoByHandle(CCFile * pFile, CCFileInfo * pInfo)
+{
+	Request request;		    /* request descriptor */
 	Response response;		    /* response descriptor */
 	CCServer * pServer;		    /* server object pointer */
-	NQ_STATUS res;			    /* exchange result */
-    NQ_UINT16 level;            /* information level */
+	NQ_STATUS res = NQ_FAIL;    /* exchange result */
     NQ_UINT16 * pFid;           /* fid */
+	NQ_BYTE * position;         /* save position */
+	NQ_UINT16 *pLevel;			/* pointer to level */
+	NQ_UINT16 levels[] = 		 {
+									SMB_QUERYPATH2_NT_BASICINFO,
+									SMB_QUERYPATH2_NT_STANDARDINFO,
+									0
+								 };
+	NQ_UINT16 levelsPassthru[] = {
+									SMB_PASSTHRU_FILE_BASICINFO,
+									SMB_PASSTHRU_FILE_STANDARDINFO,
+									SMB_PASSTHRU_FILE_INTERNALINFO,
+									0
+								 };
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%p info:%p", pFile, pInfo);
+
+	request.buffer = NULL;
+	response.buffer = NULL;
 
 	pServer = pFile->share->user->server;
 	pFid = FID(pFile);
     if (!prepareSingleRequestByShare(&request, pFile->share, SMB_COM_TRANSACTION2))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
-	
-	/* compose request */
-	writeHeader(&request);
-    markTrans2Start(&request, SMB_TRANS2_QUERYFILEINFORMATION); 
-    /* T2 params */
-	cmBufferWriteUint16(&request.writer, *pFid);     	        /* FID */
-    level = (pServer->capabilities & CC_CAP_INFOPASSTHRU)? SMB_PASSTHRU_FILE_ALLINFO : SMB_QUERYPATH2_NT_ALLINFO;
-    cmBufferWriteUint16(&request.writer, level);	            /* info level */
-    markTransData(&request);
-    writeTrans2(pServer, &request, 2, 0);
-    
-    res = sendReceive(pServer, pFile->share->user, &request, &response);
-	cmBufManGive(request.buffer);
-	if (NQ_SUCCESS != res)
+
+	position = cmBufferWriterGetPosition(&request.writer);
+	pLevel = ((pServer->capabilities & CC_CAP_INFOPASSTHRU) && !pServer->useAscii) ? levelsPassthru : levels;
+	for (	; *pLevel != 0; pLevel++)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		/* compose request */
+		composeQueryFileInfoByHandleRequest(&request, position, pServer, pFid, *pLevel);
+
+	    res = pServer->smb->sendReceive(pServer, pFile->share->user, &request, &response);
+		if (NQ_SUCCESS != res)
+		{
+			goto Exit;
+		}
+		/* parse response */
+		parseTrans(&response);
+		setTransData(&response);
+		fileInfoResponseParser(&response.reader, pInfo, 0);
+		fileInfoResponseParser(&response.reader, pInfo, *pLevel);
+	    cmBufManGive(response.buffer);
+        response.buffer = NULL;
 	}
 
-	/* parse response */
-    parseTrans(&response);
-    setTransData(&response);
-	(*callback)(&response.reader, context);
-
+Exit:
+    cmBufManGive(request.buffer);
     cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+    return res;
 }
 
-static NQ_STATUS doQueryFileInfoByName(CCShare * pShare, const NQ_WCHAR * fileName, CCCifsParseFileInfoCallback callback, void * context)
+static void	composeQueryFileInfoByNameRequest(Request *request, NQ_BYTE * position, CCServer * pServer, const NQ_WCHAR * fileName, NQ_UINT16 level)
 {
-	Request request;		    /* request dscriptor */
+	cmBufferWriterSetPosition(&request->writer, position);
+	writeHeader(request);
+	markTrans2Start(request, SMB_TRANS2_QUERYPATHINFORMATION);
+	/* T2 params */
+    cmBufferWriteUint16(&request->writer, level);	            /* info level */
+    cmBufferWriterSkip(&request->writer, sizeof(NQ_UINT32));    /* reserved */
+    cmBufferWriteString(&request->writer, pServer->useAscii, (const NQ_BYTE *)fileName, TRUE, CM_BSF_WRITENULLTERM);
+	markTransData(request);
+	writeTrans2(pServer, request, 2, 0);
+}
+
+static NQ_STATUS doQueryFileInfoByName(CCShare * pShare, const NQ_WCHAR * fileName, CCFileInfo * pInfo)
+{
+	Request request;		    /* request descriptor */
 	Response response;		    /* response descriptor */
 	CCServer * pServer;		    /* server object pointer */
-	NQ_STATUS res;			    /* exchange result */
-    NQ_UINT16 level;            /* information level */
+	NQ_STATUS res = NQ_FAIL;	/* exchange result */
+	NQ_BYTE * position;         /* save position */
+	NQ_UINT16 *pLevel;			/* pointer to level */
+	NQ_UINT16 levels[] = 		 {
+									SMB_QUERYPATH2_NT_BASICINFO,
+									SMB_QUERYPATH2_NT_STANDARDINFO,
+									0
+								 };
+	NQ_UINT16 levelsPassthru[] = {
+									SMB_PASSTHRU_FILE_BASICINFO,
+									SMB_PASSTHRU_FILE_STANDARDINFO,
+									SMB_PASSTHRU_FILE_INTERNALINFO,
+									0
+								 };
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "share:%p file:%s info:%p", pShare, cmWDump(fileName), pInfo);
+
+	request.buffer = NULL;
+	response.buffer = NULL;
 
 	pServer = pShare->user->server;
     if (!prepareSingleRequestByShare(&request, pShare, SMB_COM_TRANSACTION2))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
-	
-	/* compose request */
-	writeHeader(&request);
-    markTrans2Start(&request, SMB_TRANS2_QUERYPATHINFORMATION); 
-    /* T2 params */
-    level = (pServer->capabilities & CC_CAP_INFOPASSTHRU)? SMB_PASSTHRU_FILE_ALLINFO : SMB_QUERYPATH2_NT_ALLINFO;
-    cmBufferWriteUint16(&request.writer, level);	            /* info level */
-    cmBufferWriterSkip(&request.writer, sizeof(NQ_UINT32));     /* reserved */
-    cmBufferWriteUnicode(&request.writer, fileName);
-    markTransData(&request);
-    writeTrans2(pServer, &request, 2, 0);
-    
-    res = sendReceive(pServer, pShare->user, &request, &response);
-	cmBufManGive(request.buffer);  
-	if (NQ_SUCCESS != res)
+
+	position = cmBufferWriterGetPosition(&request.writer);
+	pLevel = ((pServer->capabilities & CC_CAP_INFOPASSTHRU) && !pServer->useAscii) ? levelsPassthru : levels;
+	for (	; *pLevel != 0; pLevel++)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		/* compose request */
+	 	composeQueryFileInfoByNameRequest(&request, position, pServer, fileName, *pLevel);
+
+	    res = pServer->smb->sendReceive(pServer, pShare->user, &request, &response);
+		if (NQ_SUCCESS != res)
+		{
+			goto Exit;
+		}
+		/* parse response */
+		parseTrans(&response);
+		setTransData(&response);
+		fileInfoResponseParser(&response.reader, pInfo, 0);
+		fileInfoResponseParser(&response.reader, pInfo, *pLevel);
+	    cmBufManGive(response.buffer);
+        response.buffer = NULL;
 	}
 
-	/* parse response */
-    parseTrans(&response);
-    setTransData(&response);
-	(*callback)(&response.reader, context);
-
-    cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+Exit:
+	cmBufManGive(request.buffer);
+	cmBufManGive(response.buffer);
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 typedef void (* FsInfoCallback) (CMBufferReader * pReader, CCVolumeInfo * pInfo);
 
 static NQ_STATUS queryFsInfoByLevel(CCShare * pShare, CCVolumeInfo * pInfo, NQ_UINT16 level, FsInfoCallback callback)
 {
-	Request request;		    /* request dscriptor */
+	Request request;		    /* request descriptor */
 	Response response;		    /* response descriptor */
 	CCServer * pServer;		    /* server object pointer */
 	NQ_STATUS res;			    /* exchange result */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "share:%p info:%p level:%u callback:%p", pShare, pInfo, level, callback);
+
+	request.buffer = NULL;
+	response.buffer = NULL;
 
 	pServer = pShare->user->server;
     if (!prepareSingleRequestByShare(&request, pShare, SMB_COM_TRANSACTION2))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	
 	/* compose request */
@@ -2531,13 +3043,10 @@ static NQ_STATUS queryFsInfoByLevel(CCShare * pShare, CCVolumeInfo * pInfo, NQ_U
     markTransData(&request);
     writeTrans2(pServer, &request, 0, 0);
     
-    res = sendReceive(pServer, pShare->user, &request, &response);
-	cmBufManGive(request.buffer);
+    res = pServer->smb->sendReceive(pServer, pShare->user, &request, &response);
 	if (NQ_SUCCESS != res)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		goto Exit;
 	}
 
 	/* parse response */
@@ -2545,29 +3054,32 @@ static NQ_STATUS queryFsInfoByLevel(CCShare * pShare, CCVolumeInfo * pInfo, NQ_U
     setTransData(&response);
 	(*callback)(&response.reader, pInfo);
 
+Exit:
+	cmBufManGive(request.buffer);
     cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
-static void fsSizeCallback(CMBufferReader * pReader, CCVolumeInfo * pInfo)
+void fsSizeCallback(CMBufferReader * pReader, CCVolumeInfo * pInfo)
 {
 	NQ_UINT64 temp64;		/* for parsing 64-bit values */
 	NQ_UINT32 temp32;		/* for parsing 32-bit values */
 
     /* parse response */
 	cmBufferReadUint64(pReader, &temp64);	/* total allocation units */
-	pInfo->totalClusters = temp64.low;
+	pInfo->totalClusters.low = temp64.low;
+	pInfo->totalClusters.high = temp64.high;
 	cmBufferReadUint64(pReader, &temp64);	/* available allocation units */
-	pInfo->freeClusters = temp64.low;
+	pInfo->freeClusters.low = temp64.low;
+	pInfo->freeClusters.high = temp64.high;
 	cmBufferReadUint32(pReader, &temp32);	/* sectors per allocation unit */
 	pInfo->sectorsPerCluster = (NQ_UINT)temp32;
 	cmBufferReadUint32(pReader, &temp32);	/* bytes per sectors */
 	pInfo->bytesPerSector = (NQ_UINT)temp32;
 }
 
-static void fsVolumeCallback(CMBufferReader * pReader, CCVolumeInfo * pInfo)
+void fsVolumeCallback(CMBufferReader * pReader, CCVolumeInfo * pInfo)
 {
 	NQ_UINT32 temp32;		/* for parsing 32-bit values */
 
@@ -2588,15 +3100,36 @@ static NQ_STATUS doQueryFsInfo(CCShare * pShare, CCVolumeInfo * pInfo)
 	return res;
 }
 
+static NQ_STATUS writeDeleteDirectory(CCFile * pFile, Request * pRequest)
+{
+	NQ_STATUS result = NQ_ERR_OUTOFMEMORY;
+
+	if (!prepareSingleRequestByShare(pRequest, pFile->share, SMB_COM_DELETE_DIRECTORY))
+	{
+		goto Exit;
+	}
+
+	/* compose request */
+	writeHeader(pRequest);
+	markByteCount(pRequest, 0);
+	cmBufferWriteByte(&pRequest->writer, 4);          /* buffer format */
+    cmBufferWriteString(&pRequest->writer, TRUE, (NQ_BYTE *)pFile->item.name, TRUE, CM_BSF_WRITENULLTERM);
+	writeByteCount(pRequest, 0);
+    result = NQ_SUCCESS;
+
+Exit:
+	return result;
+}
+
 static NQ_STATUS writeSetFileInfo(CCFile * pFile, Request * pRequest, NQ_UINT16 level)
 {
     NQ_UINT16 * pFid;           /* fid */
+	NQ_STATUS result = NQ_ERR_OUTOFMEMORY;
 
     pFid = FID(pFile);
     if (!prepareSingleRequestByShare(pRequest, pFile->share, SMB_COM_TRANSACTION2))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	
 	/* compose request */
@@ -2607,12 +3140,15 @@ static NQ_STATUS writeSetFileInfo(CCFile * pFile, Request * pRequest, NQ_UINT16 
     cmBufferWriteUint16(&pRequest->writer, level);          /* info level */
     cmBufferWriteUint16(&pRequest->writer, 0);	            /* reserved */
     markTransData(pRequest);
-    return NQ_SUCCESS;
+    result = NQ_SUCCESS;
+
+Exit:
+	return result;
 }
 
 static NQ_STATUS doSetFileAttributes(CCFile * pFile, NQ_UINT32 attributes)
 {
-	Request request;		    /* request dscriptor */
+	Request request;		    /* request descriptor */
 	Response response;		    /* response descriptor */
 	CCServer * pServer;		    /* server object pointer */
 	NQ_STATUS res;			    /* exchange result */
@@ -2620,7 +3156,10 @@ static NQ_STATUS doSetFileAttributes(CCFile * pFile, NQ_UINT32 attributes)
 	static const NQ_UINT64 doNotChange = 
 	{ 0x0, 0x0 };	/* the "do-not-change" value in the time fields */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%p attr:0x%x", pFile, attributes);
+
+	request.buffer = NULL;
+	response.buffer = NULL;
 
     pServer = pFile->share->user->server;
     level = pServer->capabilities & CC_CAP_INFOPASSTHRU? 
@@ -2629,8 +3168,7 @@ static NQ_STATUS doSetFileAttributes(CCFile * pFile, NQ_UINT32 attributes)
     res = writeSetFileInfo(pFile, &request, level);
     if (NQ_SUCCESS != res)
     {
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		goto Exit;
     }
 	cmBufferWriteUint64(&request.writer, &doNotChange);	/* creation time */
 	cmBufferWriteUint64(&request.writer, &doNotChange);	/* last access time */
@@ -2640,31 +3178,33 @@ static NQ_STATUS doSetFileAttributes(CCFile * pFile, NQ_UINT32 attributes)
 	cmBufferWriteUint32(&request.writer, 0);			/* reserved */
     writeTrans2(pServer, &request, 2, 0);
     
-    res = sendReceive(pServer, pFile->share->user, &request, &response);
-	cmBufManGive(request.buffer);
+    res = pServer->smb->sendReceive(pServer, pFile->share->user, &request, &response);
 	if (NQ_SUCCESS != res)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		goto Exit;
 	}
 
 	/* parse response */
-    cmBufManGive(response.buffer);
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+Exit:
+	cmBufManGive(request.buffer);
+    cmBufManGive(response.buffer);
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS doSetFileSize(CCFile * pFile, NQ_UINT64 size)
 {
-	Request request;		    /* request dscriptor */
+	Request request;		    /* request descriptor */
 	Response response;		    /* response descriptor */
 	CCServer * pServer;		    /* server object pointer */
 	NQ_STATUS res;			    /* exchange result */
     NQ_UINT16 level;            /* information level */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%p size(low,high):%u,%u", pFile, size.low, size.high);
+
+	request.buffer = NULL;
+	response.buffer = NULL;
 
     pServer = pFile->share->user->server;
     level = SMB_SETPATH2_NT_ENDOFFILEINFO;
@@ -2672,31 +3212,29 @@ static NQ_STATUS doSetFileSize(CCFile * pFile, NQ_UINT64 size)
     res = writeSetFileInfo(pFile, &request, level);
     if (NQ_SUCCESS != res)
     {
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		goto Exit;
     }
 	cmBufferWriteUint64(&request.writer, &size);	/* end of file */
     writeTrans2(pServer, &request, 2, 0);
     
-    res = sendReceive(pServer, pFile->share->user, &request, &response);
-	cmBufManGive(request.buffer);
+    res = pServer->smb->sendReceive(pServer, pFile->share->user, &request, &response);
 	if (NQ_SUCCESS != res)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		goto Exit;
 	}
 
 	/* parse response */
-    cmBufManGive(response.buffer);
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+Exit:
+    cmBufManGive(request.buffer);
+    cmBufManGive(response.buffer);
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS doSetFileTime(CCFile * pFile, NQ_UINT64 creationTime, NQ_UINT64 lastAccessTime, NQ_UINT64 lastWriteTime)
 {
-	Request request;		    /* request dscriptor */
+	Request request;		    /* request descriptor */
 	Response response;		    /* response descriptor */
 	CCServer * pServer;		    /* server object pointer */
 	NQ_STATUS res;			    /* exchange result */
@@ -2704,7 +3242,10 @@ static NQ_STATUS doSetFileTime(CCFile * pFile, NQ_UINT64 creationTime, NQ_UINT64
 	static const NQ_UINT64 doNotChange = 
 	{ 0x0, 0x0 };	/* the "do-not-change" value in the time fields */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%p creationTime(low,high):%u,%u lastAccessTime(low,high):%u,%u lastWriteTime(low,high):%u,%u", pFile, creationTime.low, creationTime.high, lastAccessTime.low, lastAccessTime.high, lastWriteTime.low, lastWriteTime.high);
+
+	request.buffer = NULL;
+	response.buffer = NULL;
 
     pServer = pFile->share->user->server;
     level = SMB_SETPATH2_NT_BASICINFO;
@@ -2712,8 +3253,7 @@ static NQ_STATUS doSetFileTime(CCFile * pFile, NQ_UINT64 creationTime, NQ_UINT64
     res = writeSetFileInfo(pFile, &request, level);
     if (NQ_SUCCESS != res)
     {
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		goto Exit;
     }
 	cmBufferWriteUint64(&request.writer, &creationTime);	/* creation time */
 	cmBufferWriteUint64(&request.writer, &lastAccessTime);	/* last access time */
@@ -2723,98 +3263,149 @@ static NQ_STATUS doSetFileTime(CCFile * pFile, NQ_UINT64 creationTime, NQ_UINT64
 	cmBufferWriteUint32(&request.writer, 0);				/* reserved */
     writeTrans2(pServer, &request, 2, 0);
     
-    res = sendReceive(pServer, pFile->share->user, &request, &response);
-	cmBufManGive(request.buffer);
+    res = pServer->smb->sendReceive(pServer, pFile->share->user, &request, &response);
 	if (NQ_SUCCESS != res)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		goto Exit;
 	}
 
 	/* parse response */
-    cmBufManGive(response.buffer);
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+Exit:
+	cmBufManGive(request.buffer);
+    cmBufManGive(response.buffer);
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS doSetFileDeleteOnClose(CCFile * pFile)
 {
-	Request request;		    /* request dscriptor */
+	Request request;		    /* request descriptor */
 	Response response;		    /* response descriptor */
 	CCServer * pServer;		    /* server object pointer */
 	NQ_STATUS res;			    /* exchange result */
-    NQ_UINT16 level;            /* info level to sue */
+	NQ_UINT16 level = 0;        /* info level */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%p", pFile);
+
+	request.buffer = NULL;
+	response.buffer = NULL;
 
     pServer = pFile->share->user->server;
-    level = pServer->capabilities & CC_CAP_INFOPASSTHRU?
-        SMB_PASSTHRU_FILE_DISPOSITIONINFO : SMB_SETPATH2_NT_DISPOSITIONINFO;
-    res = writeSetFileInfo(pFile, &request, level);
-    if (NQ_SUCCESS != res)
-    {
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
-    }
-	cmBufferWriteByte(&request.writer, 1);	/* delete pending */
-    writeTrans2(pServer, &request, 2, 0);
-    
-    res = sendReceive(pServer, pFile->share->user, &request, &response);
-	cmBufManGive(request.buffer);
-	if (NQ_SUCCESS != res)
+    if (pServer->useAscii && (pFile->attributes & CIFS_ATTR_DIR))
 	{
+		res = writeDeleteDirectory(pFile, &request);
+		if (NQ_SUCCESS != res)
+		{
+			goto Exit;
+		}
+	}
+	else
+	{
+		level = pServer->capabilities & CC_CAP_INFOPASSTHRU ? SMB_PASSTHRU_FILE_DISPOSITIONINFO : SMB_SETPATH2_NT_DISPOSITIONINFO;
+		res = writeSetFileInfo(pFile, &request, level);
+		if (NQ_SUCCESS != res)
+		{
+			goto Exit;
+		}
+		cmBufferWriteByte(&request.writer, 1);	/* delete pending */
+		writeTrans2(pServer, &request, 2, 0);
+	}
+    
+    res = pServer->smb->sendReceive(pServer, pFile->share->user, &request, &response);
+	if (NQ_SUCCESS != res && pServer->useAscii && level == SMB_PASSTHRU_FILE_DISPOSITIONINFO)
+	{
+		cmBufManGive(request.buffer);
+		request.buffer = NULL;
+
+	    res = writeSetFileInfo(pFile, &request, SMB_SETPATH2_NT_DISPOSITIONINFO);
+		if (NQ_SUCCESS != res)
+		{
+			goto Exit;
+		}
+		cmBufferWriteByte(&request.writer, 1);	/* delete pending */
+		writeTrans2(pServer, &request, 2, 0);
+
 		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		response.buffer = NULL;
+		res = pServer->smb->sendReceive(pServer, pFile->share->user, &request, &response);
 	}
 
 	/* parse response */
-    cmBufManGive(response.buffer);
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+Exit:
+    cmBufManGive(request.buffer);
+    cmBufManGive(response.buffer);
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS doRename(CCFile * pFile, const NQ_WCHAR * newName)
 {
-	Request         request;		/* request dscriptor */
+	Request         request;		/* request descriptor */
 	Response        response;		/* response descriptor */
 	CCServer *      pServer;		/* server object pointer */
 	CCShare *       pShare;		    /* share object pointer */
 	NQ_STATUS       res;			/* exchange result */
-    NQ_BYTE *       tailData;
+    NQ_BYTE *       tailData = NULL;
     CMBufferWriter  tailWriter;
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%p name:%s", pFile, cmWDump(newName));
+
+	request.buffer = NULL;
+	response.buffer = NULL;
 
 	pShare = pFile->share;
 	pServer = pShare->user->server;
     if (!prepareSingleRequestByShare(&request, pShare, SMB_COM_RENAME))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
+
     request.tail.len = 3;
-	request.tail.len += syWStrlen(pFile->item.name)*2 +2;
-    request.tail.len += syWStrlen(newName)*2 +2;
-    
+    if (pServer->useAscii)
+    {
+    	NQ_CHAR *       nameTemp;
+
+    	nameTemp = (NQ_CHAR *)cmMemoryAllocate((syWStrlen(pFile->item.name)+syWStrlen(newName)) * 4);
+	    if (NULL == nameTemp)
+		{
+			res = NQ_ERR_OUTOFMEMORY;
+			goto Exit;
+		}
+
+    	cmUnicodeToAnsi(nameTemp , pFile->item.name);
+    	request.tail.len += (NQ_COUNT)syStrlen(nameTemp) + 1;
+    	cmUnicodeToAnsi(nameTemp , newName);
+		request.tail.len += (NQ_COUNT)syStrlen(nameTemp) + 1;
+		cmMemoryFree(nameTemp);
+    }
+    else
+    {
+		request.tail.len += syWStrlen(pFile->item.name)*2 + 2;
+		request.tail.len += syWStrlen(newName)*2 + 2;
+    }
+
     /* compose request */
     writeHeader(&request);
     cmBufferWriteUint16(&request.writer, 0x16);                 /* search attributes */
     markByteCount(&request, 0);   
 
     tailData = (NQ_BYTE *)cmMemoryAllocate(request.tail.len * sizeof(NQ_BYTE));
+    if (NULL == tailData)
+	{
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
+	}
 
     cmBufferWriterInit(&tailWriter, tailData, request.tail.len);
     cmBufferWriteByte(&tailWriter, 0x4);                    /* buffer format */
-	cmBufferWriteUnicodeNoNull(&tailWriter, pFile->item.name);    /* old name */
-	cmBufferWriteUint16(&tailWriter, 0);
+	cmBufferWriteString(&tailWriter, pServer->useAscii, (const NQ_BYTE *)pFile->item.name, TRUE, CM_BSF_WRITENULLTERM); /* old name */
 	cmBufferWriteByte(&tailWriter, 0x4);                    /* buffer format */
-	cmBufferWriterSkip(&tailWriter , 1);
-    cmBufferWriteUnicodeNoNull(&tailWriter, newName);             /* new name */
-	cmBufferWriteUint16(&tailWriter, 0);
+	if (!pServer->useAscii)
+		cmBufferWriteByte(&tailWriter , 0);
+	cmBufferWriteString(&tailWriter, pServer->useAscii, (const NQ_BYTE *)newName, TRUE, CM_BSF_WRITENULLTERM); /* new name */
 
     request.tail.data = tailData;
     
@@ -2826,81 +3417,76 @@ static NQ_STATUS doRename(CCFile * pFile, const NQ_WCHAR * newName)
   	ccCloseHandle(pFile);
     cmListItemUnlock(&pFile->item);
 
-	res = sendReceive(pServer,  pShare->user, &request, &response);
-	cmBufManGive(request.buffer);
-	if (NQ_SUCCESS != res)
-	{
-	    cmMemoryFree(tailData);
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
-	}
+	res = pServer->smb->sendReceive(pServer,  pShare->user, &request, &response);
 
-	/* parse response - we ingnore response parameters */
+	/* parse response - we ignore response parameters */
+
+Exit:
     cmMemoryFree(tailData);
+	cmBufManGive(request.buffer);
 	cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS doFlush(CCFile * pFile)
 {
-	Request request;		/* request dscriptor */
+	Request request;		/* request descriptor */
 	Response response;		/* response descriptor */
 	CCServer * pServer;		/* server object pointer */
 	CCShare * pShare;		/* share object pointer */
-    NQ_UINT16 * pFid;           /* fid */
+    NQ_UINT16 * pFid;       /* fid */
 	NQ_STATUS res;			/* exchange result */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%d", pFile);
+
+	request.buffer = NULL;
+	response.buffer = NULL;
 
 	pShare = pFile->share;
 	pServer = pShare->user->server;
 	pFid = FID(pFile);
     if (!prepareSingleRequestByShare(&request, pShare, SMB_COM_FLUSH))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	
 	/* compose request */
 	writeHeader(&request);
 	cmBufferWriteUint16(&request.writer, *pFid);          /* FID */
     markByteCount(&request, 0);                 
-	res = sendReceive(pServer, pShare->user, &request, &response);
+	res = pServer->smb->sendReceive(pServer, pShare->user, &request, &response);
+
+	/* parse response - we ignore response parameters */
+
+Exit:
 	cmBufManGive(request.buffer);
-	if (NQ_SUCCESS != res)
-	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
-	}
-
-	/* parse response - we ingnore response parameters */
-
 	cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
  
-static NQ_STATUS doRapTransaction(CCShare * pShare, const CMBlob * inData, CMBlob * outData)	
+static NQ_STATUS doRapTransaction(CCShare * pShare, const CMBlob * inData, CMBlob * outParams, CMBlob * outData)
 {
 	CCServer * pServer;		/* server object pointer */
-	Request request;		/* request dscriptor */
+	Request request;		/* request descriptor */
 	Response response;		/* response descriptor */
     CMBlob tempData;        /* response parameter + data */
     NQ_STATUS res;          /* operation result */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "share:%p inData:%p params:%p outData:%p", pShare, inData, outParams, outData);
 
-    outData->data = NULL;
+	request.buffer = NULL;
+	response.buffer = NULL;
+
+	outParams->data = NULL;
+	outData->data = NULL;
 	pServer = pShare->user->server;
     if (!prepareSingleRequestByShare(&request, pShare, SMB_COM_TRANSACTION))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 	
 	/* compose request:
@@ -2914,26 +3500,49 @@ static NQ_STATUS doRapTransaction(CCShare * pShare, const CMBlob * inData, CMBlo
     markTransData(&request);
     writeTrans(pServer, &request, (NQ_UINT16)inData->len);
     
-    res = sendReceive(pServer, pShare->user, &request, &response);
+    res = pServer->smb->sendReceive(pServer, pShare->user, &request, &response);
 	cmBufManGive(request.buffer);
+    request.buffer = NULL;
 	if (NQ_SUCCESS != res)
 	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 
 	/* parse response */
     parseTrans(&response);
     setTransData(&response);
+	/* set params&data blob */
     tempData.data = response.pParams;
-    tempData.len = (NQ_COUNT)(response.dataCount + (response.pData - response.pParams));
-    *outData = cmMemoryCloneBlob(&tempData);
+    tempData.len = (NQ_COUNT)response.dataCount + (NQ_COUNT)(response.pData - response.pParams);
+    *outParams = cmMemoryCloneBlob(&tempData);
+	if (NULL != tempData.data && NULL == outParams->data)
+	{
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
+	}
+	/* set data blob */
+	tempData.data = response.pData;
+	tempData.len = (NQ_COUNT)response.dataCount;
+	*outData = cmMemoryCloneBlob(&tempData);
+	if (NULL != tempData.data && NULL == outData->data)
+	{
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
+	}
 
+Exit:
+	if (res == NQ_ERR_OUTOFMEMORY)
+	{
+		cmMemoryFreeBlob(outParams);
+		cmMemoryFreeBlob(outData);
+		outParams->data = NULL;
+		outData->data = NULL;
+	}
+	cmBufManGive(request.buffer);
 	cmBufManGive(response.buffer);
-
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return NQ_SUCCESS;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 static NQ_STATUS doEcho(CCShare * pShare)
@@ -2944,34 +3553,105 @@ static NQ_STATUS doEcho(CCShare * pShare)
     CCUser    * pUser;
     NQ_STATUS   res;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-    
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "share:%p", pShare);
+
+	request.buffer = NULL;
+	response.buffer = NULL;
+
     pUser = pShare->user;
     pServer = pUser->server;
     
     if (!prepareSingleRequestByShare(&request, pShare, SMB_COM_ECHO))
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NQ_ERR_OUTOFMEMORY;
+		res = NQ_ERR_OUTOFMEMORY;
+		goto Exit;
 	}
 
     writeHeader(&request);
     cmBufferWriteUint16(&request.writer, 1);  
     cmBufferWriteUint32(&request.writer, 0); 
     
-    res = sendReceive(pServer, pUser, &request, &response);
+    res = pServer->smb->sendReceive(pServer, pUser, &request, &response);
+
+Exit:
     cmBufManGive(request.buffer);
-    if (NQ_SUCCESS != res)
-	{
-		cmBufManGive(response.buffer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return res;
-	}
-    
     cmBufManGive(response.buffer);
-    
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return NQ_SUCCESS;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+    return res;
 }
 
+static void keyDerivation(void * user)
+{
+	return;
+}
+
+static void signalAllMatches(void * trans)
+{
+	CCTransport * 	pTransport = (CCTransport *)trans;
+	CCServer * 		pServer = NULL;
+	CMIterator		iterator;
+
+	LOGERR(CM_TRC_LEVEL_ERROR, "Signaling all matches");
+	pServer = (CCServer *)pTransport->server;
+	/* match with request */
+	cmListItemTake((CMItem *)pServer);
+	cmListIteratorStart(&pServer->expectedResponses, &iterator);
+	while (cmListIteratorHasNext(&iterator))
+	{
+		Match * pMatch;
+
+		pMatch = (Match *)cmListIteratorNext(&iterator);
+		if (pMatch->cond != NULL)
+			cmThreadCondSignal(pMatch->cond);
+		if (pMatch->isResponseAllocated)
+        {
+			cmMemoryFree(pMatch->response);
+            pMatch->response = NULL;
+        }
+	}
+	cmListIteratorTerminate(&iterator);
+	if (NULL != pTransport->cleanupCallback)
+		(*pTransport->cleanupCallback)(pTransport->cleanupContext);
+	cmListItemGive((CMItem *)pServer);
+}
+
+static void fileInfoResponseParser(CMBufferReader * pReader, CCFileInfo * pInfo, NQ_UINT16 level)
+{
+	switch (level)
+	{
+		case SMB_QUERYPATH2_NT_BASICINFO:
+		case SMB_PASSTHRU_FILE_BASICINFO:
+		{
+			cmBufferReadUint64(pReader, &pInfo->creationTime);		/* creation time */
+			cmBufferReadUint64(pReader, &pInfo->lastAccessTime);	/* last access time */
+			cmBufferReadUint64(pReader, &pInfo->lastWriteTime);		/* last write time */
+			cmBufferReadUint64(pReader, &pInfo->changeTime);		/* change time */
+			cmBufferReadUint32(pReader, &pInfo->attributes);		/* file attributes */
+			break;
+		}
+		case SMB_QUERYPATH2_NT_STANDARDINFO:
+		case SMB_PASSTHRU_FILE_STANDARDINFO:
+		{
+			cmBufferReadUint64(pReader, &pInfo->allocationSize);	/* file allocation size */
+			cmBufferReadUint64(pReader, &pInfo->endOfFile);			/* file size */
+			cmBufferReadUint32(pReader, &pInfo->numberOfLinks);		/* number of links */
+			break;
+		}
+		case SMB_PASSTHRU_FILE_INTERNALINFO:
+		{
+			cmBufferReadUint64(pReader, &pInfo->fileIndex);		    /* file index */
+			break;
+		}
+		default:
+		{
+			pInfo->fileIndex.low = pInfo->fileIndex.high = 0;       /* file index */
+			break;
+		}
+	}
+}
+
+static NQ_BOOL validateNegotiate(void *pServ, void *_pUser, void *pShare)
+{
+	return TRUE;
+}
 #endif /* UD_NQ_INCLUDECIFSCLIENT */

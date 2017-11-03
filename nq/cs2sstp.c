@@ -16,7 +16,6 @@
  ********************************************************************/
 
 #include "csauth.h"
-#include "cs2disp.h"
 
 #if defined(UD_NQ_INCLUDECIFSSERVER) && defined(UD_NQ_INCLUDESMB2)
 
@@ -28,14 +27,13 @@
 
 static
 NQ_BOOL
-isConnectionSigned(
+isConnectionSigningRequired(
     NQ_BYTE securityFlags,
     NQ_UINT32 headerFlags
     )
 {
     return csIsMessageSigningEnabled() ? 
-            (csIsMessageSigningRequired() ? TRUE : (securityFlags & SMB2_NEGOTIATE_SIGNINGREQUIRED) || (headerFlags & SMB2_FLAG_SIGNED)) 
-            : FALSE;
+            (csIsMessageSigningRequired() ? TRUE : (securityFlags & SMB2_NEGOTIATE_SIGNINGREQUIRED)) : FALSE;
 }
 #endif /* UD_CS_MESSAGESIGNINGPOLICY */
 
@@ -66,12 +64,17 @@ NQ_UINT32 csSmb2OnSessionSetup(CMSmb2Header *in, CMSmb2Header *out, CMBufferRead
     NQ_BYTE securityMode;
     NQ_UINT64 previousSid;
     CSUser* previousSession;
+    NQ_UINT16	sessionFlags;
+#ifdef UD_NQ_INCLUDESMB311
+    NQ_BOOL firstSessionSetup = FALSE;
+    NQ_BYTE preauthTemp[SMB3_PREAUTH_INTEG_HASH_LENGTH];
+#endif
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDUserAccessEvent   eventInfo;
 #endif
     
     LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
-    
+
     /* check whether reauthentication is needed */
     if (in->sid.low != 0)
     {
@@ -106,6 +109,23 @@ NQ_UINT32 csSmb2OnSessionSetup(CMSmb2Header *in, CMSmb2Header *out, CMBufferRead
             session = expiredSession;
         }
     }
+
+#ifdef UD_NQ_INCLUDESMB311
+    if (connection->dialect == CS_DIALECT_SMB311)
+    {
+		if (session == NULL)
+		{
+			firstSessionSetup = TRUE;
+			syMemcpy(preauthTemp , connection->preauthIntegHashVal , SMB3_PREAUTH_INTEG_HASH_LENGTH);
+		}
+		else
+		{
+			NQ_BYTE ctxBuff[SHA512_CTXSIZE];
+			/* in this point full packet is in buffer and not tampered yet. can calculate message hash */
+			cmSmb311CalcMessagesHash(reader->origin, reader->length + 4, session->preauthIntegHashVal, ctxBuff);
+		}
+    }
+#endif
 
     /* read request */
     cmBufferReaderSkip(reader, 1);           /* skip vc number */
@@ -144,18 +164,33 @@ NQ_UINT32 csSmb2OnSessionSetup(CMSmb2Header *in, CMSmb2Header *out, CMBufferRead
                                 TRUE, 
                                 &session, 
                                 &pOsName);                           
+
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Generated security blob with length = %d", outBlobLen); 
-    if (result == 0)
+
+#ifdef UD_NQ_INCLUDESMB311
+    if (session != NULL)
+    {
+    	if (firstSessionSetup && session->preauthIntegOn)
+    	{
+    		NQ_BYTE ctxBuff[SHA512_CTXSIZE];
+
+    		syMemcpy(session->preauthIntegHashVal , preauthTemp, SMB3_PREAUTH_INTEG_HASH_LENGTH);
+			/* in this point full packet is in buffer and not tampered yet. can calculate message hash */
+			cmSmb311CalcMessagesHash(reader->origin, reader->length + 4, session->preauthIntegHashVal, ctxBuff);
+    	}
+
+    }
+#endif
+    if (result == NQ_SUCCESS && NULL != session)
     {
 
         session->authenticated = TRUE;
         session->preservesCase = (UD_FS_FILESYSTEMATTRIBUTES & CM_FS_CASESENSITIVESEARCH) == 0;
         session->supportsNotify = TRUE;
+#ifdef UD_NQ_INCLUDESMB3
+        session->preauthIntegOn = FALSE;
+#endif /* UD_NQ_INCLUDESMB3 */
         
-#ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
-        csFillUserToken(session, TRUE);
-#endif /*  UD_CS_INCLUDESECURITYDESCRIPTORS */
-
         /* release previous session, if authenticated for the same user */
         if (previousSid.low != 0)
         {
@@ -165,19 +200,39 @@ NQ_UINT32 csSmb2OnSessionSetup(CMSmb2Header *in, CMSmb2Header *out, CMBufferRead
                 ((previousSession = csGetUserByUid((CSUid)previousSid.low)) != NULL)
                )
             {
-                if (cmTStrncmp(session->name, previousSession->name, cmTStrlen(session->name)) == 0)
+                if (syWStrncmp(session->name, previousSession->name, syWStrlen(session->name)) == 0)
                 {
                     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Releasing previous sid = 0x%x", previousSid.low);
                     csReleaseUser(previousSession->uid , TRUE);
                 }
             }  
         }
+#ifdef UD_NQ_INCLUDESMB3
+        if (connection->dialect == CS_DIALECT_SMB30)
+        {
+        	TRCDUMP("Session Key" , session->sessionKey , sizeof(session->sessionKey));
+        	cmKeyDerivation( session->sessionKey, sizeof(session->sessionKey)    , (NQ_BYTE*)"SMB2AESCMAC\0", 12 , (NQ_BYTE*)"SmbSign\0"   , 8  , (NQ_BYTE *)session->signingKey );
+        	cmKeyDerivation( session->sessionKey, sizeof(session->encryptionKey) , (NQ_BYTE*)"SMB2AESCCM\0" , 11 , (NQ_BYTE*)"ServerOut\0" , 10 , (NQ_BYTE *)session->encryptionKey );
+        	cmKeyDerivation( session->sessionKey, sizeof(session->decryptionKey) , (NQ_BYTE*)"SMB2AESCCM\0" , 11 , (NQ_BYTE*)"ServerIn \0" , 10 , (NQ_BYTE *)session->decryptionKey );
+        	cmKeyDerivation( session->sessionKey, sizeof(session->applicationKey), (NQ_BYTE*)"SMB2APP\0"    , 8 , (NQ_BYTE*)"SmbRpc\0"    , 7  , (NQ_BYTE *)session->applicationKey);
+        	TRCDUMP("Signing Key" , session->signingKey , sizeof(session->signingKey));
+        }
+        else /* connection->dialect == CS_DIALECT_SMB311 */
+        {
+			TRCDUMP("Session Key" , session->sessionKey , sizeof(session->sessionKey));
+			cmKeyDerivation(session->sessionKey, sizeof(session->sessionKey), (NQ_BYTE*)"SMBSigningKey\0",   14 , session->preauthIntegHashVal, SMB3_PREAUTH_INTEG_HASH_LENGTH , (NQ_BYTE *)session->signingKey );
+			cmKeyDerivation(session->sessionKey, sizeof(session->sessionKey), (NQ_BYTE*)"SMBS2CCipherKey\0", 16 , session->preauthIntegHashVal, SMB3_PREAUTH_INTEG_HASH_LENGTH , (NQ_BYTE *)session->encryptionKey );
+			cmKeyDerivation(session->sessionKey, sizeof(session->sessionKey), (NQ_BYTE*)"SMBC2SCipherKey\0", 16 , session->preauthIntegHashVal, SMB3_PREAUTH_INTEG_HASH_LENGTH , (NQ_BYTE *)session->decryptionKey );
+			cmKeyDerivation(session->sessionKey, sizeof(session->sessionKey), (NQ_BYTE*)"SMBAppKey\0",       10 , session->preauthIntegHashVal, SMB3_PREAUTH_INTEG_HASH_LENGTH , (NQ_BYTE *)session->applicationKey);
+			TRCDUMP("Signing Key" , session->signingKey , sizeof(session->signingKey));
+        }
+#endif /* UD_NQ_INCLUDESMB3 */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     	eventInfo.rid = csGetUserRid(session);
 		udEventLog(UD_LOG_MODULE_CS,
 				   UD_LOG_CLASS_USER,
 				   UD_LOG_USER_LOGON,
-				   (NQ_TCHAR*)session->name,
+				   (NQ_WCHAR*)session->name,
 				   &connection->ip,
 				   0,
 				   (const NQ_BYTE *)&eventInfo);
@@ -188,19 +243,20 @@ NQ_UINT32 csSmb2OnSessionSetup(CMSmb2Header *in, CMSmb2Header *out, CMBufferRead
 #ifdef UD_NQ_INCLUDEEVENTLOG
     	if (result != csErrorReturn(SMB_STATUS_LOGON_FAILURE, DOS_ERRnoaccess))
     	{
-    		NQ_TCHAR nullName = '\0';
+    		NQ_WCHAR noName[] = CM_WCHAR_NULL_STRING;
 
 			eventInfo.rid = (session != NULL) ? csGetUserRid(session) : CS_ILLEGALID;
 			udEventLog(UD_LOG_MODULE_CS,
 					   UD_LOG_CLASS_USER,
 					   UD_LOG_USER_LOGON,
-					   (session != NULL) ? (NQ_TCHAR *)&session->name : (NQ_TCHAR *)&nullName,
+					   (session != NULL) ? (NQ_WCHAR *)&session->name : (NQ_WCHAR *)&noName,
 					   &connection->ip,
 					   result,
 					   (const NQ_BYTE *)&eventInfo);
     	}
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+
         return result;
     }
 
@@ -222,26 +278,33 @@ NQ_UINT32 csSmb2OnSessionSetup(CMSmb2Header *in, CMSmb2Header *out, CMBufferRead
             connection->signingOn = FALSE;
         }
         else
-#endif
+#endif /* UD_CS_INCLUDEPASSTHROUGH */
         {
-            connection->signingOn = isConnectionSigned(securityMode, in->flags);
-            out->flags |= (connection->signingOn && !session->isAnonymous && !session->isGuest) ? SMB2_FLAG_SIGNED : 0;
+             connection->signingOn = isConnectionSigningRequired(securityMode, in->flags);
+             out->flags |= (connection->signingOn && !session->isAnonymous && !session->isGuest && session->authenticated) ? SMB2_FLAG_SIGNED : 0;
         }
-        TRC("Connection will be %s", connection->signingOn ? " signed" : " not signed");
+        TRC("Connection signing%s mandatory.", connection->signingOn ? "" : " not");
     }
-#endif
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */
 
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "sid=0x%x", (session != NULL ? uidToSessionId(session->uid) : 0));
 
     cmBufferWriteUint16(writer, SMB2_SESSION_SETUP_RESPONSE_DATASIZE);                             /* constant data length */
-    if (session)                                                                                   /* session flags */
-        cmBufferWriteUint16(writer, session->isAnonymous ? SMB2_SESSIONSETUP_ANONYM : (session->isGuest ? SMB2_SESSIONSETUP_GUEST : 0)); 
-    else
-        cmBufferWriteUint16(writer, 0); 
+    sessionFlags = 0;
+    if (NULL != session)
+    {
+#ifdef UD_NQ_INCLUDESMB3
+        if (connection->dialect >= CS_DIALECT_SMB30 && session->isEncrypted)
+            sessionFlags = SMB2_SESSIONSETUP_ENCRYPT;
+        else
+#endif /* UD_NQ_INCLUDESMB3 */
+            sessionFlags = (NQ_UINT16)(session->isAnonymous ? SMB2_SESSIONSETUP_ANONYM : (session->isGuest ? SMB2_SESSIONSETUP_GUEST : 0));
+    }
+    cmBufferWriteUint16(writer, sessionFlags);                                                     /* session flags */
     cmBufferWriteUint16(writer, (NQ_UINT16)(cmSmb2HeaderGetWriterOffset(out, writer) + 4));        /* security blob offset */   
     cmBufferWriteUint16(writer, (NQ_UINT16)cmBufferWriterGetDataCount(&outSecurityBlob));          /* security blob size */    
     cmBufferWriterSync(writer, &outSecurityBlob);
-    
+
     LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
     return result;
 }

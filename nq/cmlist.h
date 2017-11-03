@@ -19,6 +19,11 @@
 #include "syapi.h"          /* system-dependent */
 #include "cmcommon.h"       /* basic types */
 
+/* -- Defines -- */
+#define CM_LISTITEM_NOLOCK    0x0000	/* do not lock */
+#define CM_LISTITEM_LOCK  	  0x0001	/* lock item, guard required */
+#define CM_LISTITEM_EXCLUSIVE 0x0002 	/* lock item, no guard required */
+
 /* -- Structures -- */
 
 struct _cmitem;         /* forward definition */
@@ -31,7 +36,7 @@ struct _cmreference;    /* forward definition */
 typedef struct _cmlist
 {
     SYMutex guard;           /* List protection. */
-    struct _cmitem * first;  /* Pointer to the first item in the list or NULLwhen the list is empty. */
+    struct _cmitem * first;  /* Pointer to the first item in the list or NULL when the list is empty. */
     struct _cmitem * last;   /* Pointer to the last item in the list or NULL when the list is empty. */
     NQ_BOOL          isUsed; /* set to FALSE only after the list was disposed */
 #if SY_DEBUGMODE
@@ -68,7 +73,7 @@ typedef struct _cmitem
 #if SY_DEBUGMODE
     void (*dump)(struct _cmitem * item);  /* Dump callback. This value may be NULL. */
 #endif /* SY_DEBUGMODE */
-    SYMutex guard;          /* Item protection. */
+    SYMutex * guard;          /* Item protection. */
 } CMItem; /* Linked list item. */
 
 /* Description
@@ -105,7 +110,7 @@ typedef struct _cmiterator
 void cmListStart(CMList * list);
 
 /* Description
-   This function releases resources accociated with a linked list.
+   This function releases resources associated with a linked list.
    
    It also removes and disposes all list items (if any).
    Parameters      
@@ -119,7 +124,7 @@ void cmListShutdown(CMList * list);
    Parameters
    list :  Pointer to the list.
    Returns
-   TRUE if list has at least one item, FALSE oetherwise.             */
+   TRUE if list has at least one item, FALSE otherwise.             */
 #define cmListHasItems(_list_) ((_list_)->first != NULL)
 
 /* Description
@@ -134,6 +139,14 @@ void cmListShutdown(CMList * list);
 void cmListRemoveAndDisposeAll(CMList * list);
 
 /* Description
+   This function initialized an item.
+
+   Parameters
+   item :  Pointer to the item to remove.
+   Returns                                   */
+void cmListItemInit(CMItem * item);
+
+/* Description
    This function adds an item to the list.
    
    The <i>item</i> parameter below can be NULL, which allows to
@@ -146,7 +159,7 @@ void cmListRemoveAndDisposeAll(CMList * list);
                fully unlocked.
    Returns
    TRUE when the item was linked or FALSE code otherwise.
-   Possible erros are:
+   Possible errors are:
      * The <i>item</i> parameter was NULL;
      * List is corrupted.                                       */
 NQ_BOOL cmListItemAdd(CMList * list, CMItem * item, NQ_BOOL (*callback)(CMItem * item));
@@ -158,12 +171,12 @@ NQ_BOOL cmListItemAdd(CMList * list, CMItem * item, NQ_BOOL (*callback)(CMItem *
    size :  Item size in bytes.
    name :  Pointer to item name. NQ copies the name so that the
            origin may be released after this call.
-   lock: Whether to lock the item if found or not.
+   lock : Whether to lock the item if found or not.
    Returns
    Pointer to the new item or NULL on failure. Possible error
    reasons are:
      * Out of memory.                                           */
-CMItem * cmListItemCreate(NQ_UINT size, const NQ_WCHAR * name , NQ_BOOL lock);
+CMItem * cmListItemCreate(NQ_UINT size, const NQ_WCHAR * name , NQ_UINT32 lock);
    
    /* Description
       This function creates new item and adds it to the list.
@@ -178,12 +191,13 @@ CMItem * cmListItemCreate(NQ_UINT size, const NQ_WCHAR * name , NQ_BOOL lock);
                   the origin may be released after this call.
       callback :  Callback function to be called when the item is
                   fully unlocked.
+      lock :	  Mask indicating lock for exclusive use.
       Returns
       Pointer to the new item or NULL on failure. Possible error
       reasons are:
         * Out of memory;
         * List is corrupted.                                       */
-CMItem * cmListItemCreateAndAdd(CMList * list, NQ_UINT size, const NQ_WCHAR * name, NQ_BOOL (*callback)(CMItem * item) , NQ_BOOL lock);
+CMItem * cmListItemCreateAndAdd(CMList * list, NQ_UINT size, const NQ_WCHAR * name, NQ_BOOL (*callback)(CMItem * item) , NQ_UINT32 lock);
 
 /* Description
    This function removes an item from the list.
@@ -313,7 +327,7 @@ void cmListIteratorStart(CMList * list, CMIterator * iterator);
    was not reached (i.e., <link cmListIteratorNext@CMIterator *, cmListIteratorNext>()
    did not return NULL yet). .
    Parameters
-   iterator :  The iteratot to terminate.
+   iterator :  The iterator to terminate.
    Returns
    None */
 void cmListIteratorTerminate(CMIterator * iterator);

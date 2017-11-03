@@ -25,34 +25,34 @@
  * PURPOSE: parse OID and compare it with another one
  *--------------------------------------------------------------------
  * PARAMS:  IN/OUT packet descriptor
- *          IN OID data to compare
- *          IN OID this data length
+ *          IN     OID data to compare
+ *          IN     whether to revert descriptor on error or no match
  *
- * RETURNS: TRUE on match
+ * RETURNS: TRUE on match, FAIL otherwise
  *
- * NOTES:   on no match or error packet descripor reverts
+ * NOTES:
  *====================================================================
  */
 
 NQ_BOOL
 cmAsn1ParseCompareOid(
     CMBufferReader * ds,
-    const CMAsn1Oid *oid
+    const CMAsn1Oid *oid,
+    NQ_BOOL toRevertOnMismatch
     )
 {
-    NQ_BYTE* savedCurrent = ds->current;/* saved position in the packet */
-    CMAsn1Len dataLen;                  /* OID data length */
-    NQ_BOOL res;                        /* result */
+    NQ_BYTE* savedCurrent = ds->current; /* saved position in the packet */
+    CMAsn1Len dataLen;                   /* OID data length */
+    NQ_BOOL res = FALSE;                 /* result */
 
     if (CM_ASN1_OID != cmAsn1ParseTag(ds, &dataLen))
     {
-        cmBufferReaderSetPosition(ds, savedCurrent);
-        TRCERR("Tag is not OID");
-        return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Tag is not OID");
+        goto Exit;
     }
     if (dataLen == oid->size)
     {
-        res = 0==syMemcmp(ds->current, oid->data, oid->size);
+        res = (0 == syMemcmp(ds->current, oid->data, oid->size));
     }
     else
     {
@@ -60,11 +60,16 @@ cmAsn1ParseCompareOid(
     }
     if (cmBufferReaderGetRemaining(ds) < dataLen)
     {
-        cmBufferReaderSetPosition(ds, savedCurrent);
-        TRCERR("Tag data exceeds packet limits");
-        return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Tag data exceeds packet limits");
+        res = FALSE;
+        goto Exit;
     }
     cmBufferReaderSkip(ds, dataLen);
+
+Exit:
+    if (FALSE == res && toRevertOnMismatch)
+        cmBufferReaderSetPosition(ds, savedCurrent);
+
     return res;
 }
 
@@ -195,7 +200,7 @@ cmAsn1PackTag(
             dataLen /= 256;
         }
         cmBufferWriteByte(ds, (NQ_BYTE)(0x80 | (5 - i - 1)));
-        cmBufferWriteBytes(ds, lenBuf + i + 1, (NQ_UINT32)(5 - i - 1));
+        cmBufferWriteBytes(ds, lenBuf + i + 1, (NQ_COUNT)(5 - i - 1));
     }
     else
     {
@@ -209,11 +214,9 @@ cmAsn1PackTag(
  *--------------------------------------------------------------------
  * PARAMS:  IN/OUT packet descriptor
  *          IN OID data
- *          IN OID data length
  *
- * RETURNS: parsed tag
+ * RETURNS: NONE
  *
- * NOTES:   on no match or error packet descripor
  *====================================================================
  */
 
@@ -223,8 +226,11 @@ cmAsn1PackOid(
     const CMAsn1Oid *oid
     )
 {
-	cmAsn1PackTag(ds, CM_ASN1_OID, oid->size);
-	cmBufferWriteBytes(ds, oid->data, oid->size);
+    if (NULL != oid)
+    {
+        cmAsn1PackTag(ds, CM_ASN1_OID, oid->size);
+        cmBufferWriteBytes(ds, oid->data, oid->size);
+    }
 }
 
 #endif /* defined(UD_CC_INCLUDEEXTENDEDSECURITY) || defined(UD_CS_INCLUDEEXTENDEDSECURITY) */

@@ -19,6 +19,7 @@
 
 #include "ndadaptr.h"
 #include "nsapi.h"
+#include "nssessio.h"
 
 #ifdef UD_ND_INCLUDENBDAEMON
 
@@ -71,17 +72,18 @@ ndAdapterListInit(
     )
 {
     NQ_INDEX idx;              /* index in the list of adapters */
+    NQ_STATUS result = NQ_SUCCESS;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
     if (NULL == staticData)
     {
-        TRCERR("Unable to allocate adapter table");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate adapter table");
+        result = NQ_FAIL;
+        goto Exit;
     }
 #endif /* SY_FORCEALLOCATION */
 
@@ -96,8 +98,11 @@ ndAdapterListInit(
         staticData->adapters[idx].status = ND_ADAPTER_NONE;
     }
 
-    TRCE();
-    return NQ_SUCCESS;
+#ifdef SY_FORCEALLOCATION
+Exit:
+#endif /* SY_FORCEALLOCATION */
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:0x%x", result);
+    return result;
 }
 
 /*
@@ -119,7 +124,7 @@ ndAdapterListStop(
 {
     NQ_INDEX idx;              /* index in the list of adapters */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     /* release all adapters */
 
@@ -132,11 +137,11 @@ ndAdapterListStop(
     /* release memory */
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
-        syFree(staticData);
+        cmMemoryFree(staticData);
     staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 /*
@@ -162,11 +167,12 @@ ndAdapterListLoad(
     NQ_INDEX idx;              /* index in the list of adapters */
     NQ_IPADDRESS4 ip;          /* next IP address */
     const CMSelfIp * nextIp;   /* next host IP */ 
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     /* mark all existing adapters as temporary
-       later we will deside whether an adapter is reloaded, removed or added */
+       later we will decide whether an adapter is reloaded, removed or added */
 
     oldAdapters = sizeof(staticData->adapters)/sizeof(staticData->adapters[0]);
     for (idx = 0; idx < oldAdapters; idx++)
@@ -189,7 +195,7 @@ ndAdapterListLoad(
 
         ip = CM_IPADDR_GET4(nextIp->ip);
         bcast = nextIp->bcast;
-        TRC(">> Adapter attached: ip:%08lx, broadcast:%08lx", ip, bcast);
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, ">> Adapter attached: ip:%08lx, broadcast:%08lx", ip, bcast);
 
         /* compare this adapter with existing adapters and define it is NEW or OLD */
 
@@ -201,12 +207,14 @@ ndAdapterListLoad(
             {
                 emptyIdx = (NQ_INT)idx;
             }
-            else if (   staticData->adapters[idx].ip == ip
-                     && staticData->adapters[idx].bcast == bcast
-                     && staticData->adapters[idx].wins == udGetWins()
+            else if (   staticData->adapters[idx].status != ND_ADAPTER_NONE
+            		 && staticData->adapters[idx].ip == ip
+            		 && staticData->adapters[idx].bcast == bcast
                     )
             {
                 staticData->adapters[idx].status = ND_ADAPTER_OLD;
+                /* if we received set wins servers command we want to modify adapter type */
+                staticData->adapters[idx].typeB = (cmNetBiosGetNumWinsServers() == 0);
                 isOld = TRUE;
                 break;
             }
@@ -216,26 +224,22 @@ ndAdapterListLoad(
 
         if (!isOld)
         {
-            TRC1P("new adapter at idx: %d", emptyIdx);
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "new adapter at idx: %d", emptyIdx);
 
             if (emptyIdx == -1)
             {
                 emptyIdx = (NQ_INT)oldAdapters;
                 if (emptyIdx >= UD_NS_MAXADAPTERS)
                 {
-                    cmSelfipTerminate();
-                    TRCERR("Adapter list overflow");
-                    TRC2P("Max adapters: %d, required: %d", UD_NS_MAXADAPTERS, emptyIdx);
-
-                    TRCE();
-                    return NQ_FAIL;
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Adapter list overflow");
+                    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Max adapters: %d, required: %d", UD_NS_MAXADAPTERS, emptyIdx);
+                    goto Exit;
                 }
             }
             idx = (NQ_INDEX)emptyIdx;
             staticData->adapters[idx].ip = ip;
             staticData->adapters[idx].bcast = bcast;
-            staticData->adapters[idx].wins = udGetWins();
-            staticData->adapters[idx].typeB = (staticData->adapters[emptyIdx].wins == 0L);
+            staticData->adapters[idx].typeB = (cmNetBiosGetNumWinsServers() == 0);
             staticData->adapters[idx].status = ND_ADAPTER_NEW;
             staticData->adapters[idx].subnet = nextIp->subnet;
             syGetMacAddress(ip, staticData->adapters[idx].mac);
@@ -258,16 +262,17 @@ ndAdapterListLoad(
             staticData->adapters[idx].status = ND_ADAPTER_NONE;
             if (cleanUpAdapter(&staticData->adapters[idx]) == NQ_FAIL)
             {
-                cmSelfipTerminate();
-                return NQ_FAIL;
+                goto Exit;
             }
         }
     }
-    cmSelfipTerminate();
-    TRC1P("Number of adapters: %d", staticData->numAdapters);
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Number of adapters: %d", staticData->numAdapters);
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    cmSelfipTerminate();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:0x%x", result);
+    return result;
 }
 
 /*
@@ -287,6 +292,9 @@ ndAdapterGetNext(
     void
     )
 {
+    NDAdapterInfo* pResult = NULL;
+
+    /* skip empty adapters in the list */
     while (   staticData->nextIdx < sizeof(staticData->adapters)/sizeof(staticData->adapters[0])
            && staticData->adapters[staticData->nextIdx].status == ND_ADAPTER_NONE
           )
@@ -294,13 +302,17 @@ ndAdapterGetNext(
         staticData->nextIdx++;
     }
 
+    /* when end of list got to start and return null */
     if (staticData->nextIdx >= sizeof(staticData->adapters)/sizeof(staticData->adapters[0]))
     {
         staticData->nextIdx = 0;
-        return NULL;
+        goto Exit;
     }
 
-    return &staticData->adapters[staticData->nextIdx++];
+    pResult = &staticData->adapters[staticData->nextIdx++];
+
+Exit:
+    return pResult;
 }
 
 NDAdapterInfo*
@@ -309,26 +321,30 @@ ndFindAdapter(
     NDAdapterInfo *internalAdapter
     )
 {
-    NQ_UINT i;
+    NDAdapterInfo *a = NULL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "ip:0x%08x internalAdapter:%p", ip, internalAdapter);
 
-    for (i = 0; i < staticData->numAdapters; i++)
+    staticData->nextIdx = 0;
+    while ((a = ndAdapterGetNext()) != NULL)
     {
-        NDAdapterInfo *a = &staticData->adapters[i];
         NQ_IPADDRESS4 bcast = (ip & a->subnet) | (0xFFFFFFFF & ~a->subnet);
 
         if (bcast == a->bcast)
         {
-            TRC("ndFindAdapter: found exact match");
-            TRCE();
-            return a;
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "ndFindAdapter: found exact match");
+            staticData->nextIdx = 0;
+            goto Exit;
         }
     }
+    staticData->nextIdx = 0;
 
-    TRC("ndFindAdapter: no matching adapter, returning internal");
-    TRCE();
-    return internalAdapter;
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "ndFindAdapter: no matching adapter, returning internal");
+    a = internalAdapter;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", a);
+    return a;
 }
 
 /*
@@ -348,7 +364,7 @@ cleanUpAdapter(
     NDAdapterInfo* adapter
     )
 {
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "adapter:%p", adapter);
 
     adapter->nsSocket = syInvalidSocket();
     adapter->dsSocket = syInvalidSocket();
@@ -356,9 +372,17 @@ cleanUpAdapter(
     adapter->ssSocket = syInvalidSocket();
 #endif /* UD_NB_RETARGETSESSIONS */
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:0x%x", NQ_SUCCESS);
     return NQ_SUCCESS;
 }
 
+
+NQ_UINT
+ndGetNumAdapters(
+    void
+    )
+{
+	return staticData->numAdapters;
+}
 #endif /* UD_ND_INCLUDENBDAEMON */
 

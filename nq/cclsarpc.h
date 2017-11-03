@@ -37,7 +37,7 @@ typedef NQ_BOOL     /* TRUE when next SID was placed, FALSE otherwise */
 
 typedef NQ_BOOL     /* TRUE always */
 (*CCLsaLookupSidsDomainsCallback)(
-    const NQ_TCHAR* name,       /* trusted domain name */
+    const NQ_WCHAR* name,       /* trusted domain name */
     const CMSdDomainSid* sid,   /* trusted domain SID */
     NQ_UINT32 count,            /* total number of domains */
     NQ_UINT32 maxCount,         /* available number of domains */
@@ -46,7 +46,7 @@ typedef NQ_BOOL     /* TRUE always */
 
 typedef NQ_BOOL     /* TRUE always */
 (*CCLsaLookupSidsNamesCallback)(
-    const NQ_TCHAR* name,       /* resolved name (may be NULL) */
+    const NQ_WCHAR* name,       /* resolved name (may be NULL) */
     NQ_UINT16 type,             /* SID type */
     NQ_UINT32 index,            /* SID index */
     NQ_UINT32 reserved,         /* not used */
@@ -84,7 +84,7 @@ ccLsaLookupSids(
     );
 
 typedef struct {
-    NQ_TCHAR name[CM_BUFFERLENGTH(NQ_TCHAR, DOMAIN_LENGTH)];  /* NetBIOS domain name */
+    NQ_WCHAR name[CM_BUFFERLENGTH(NQ_WCHAR, DOMAIN_LENGTH)];  /* NetBIOS domain name */
     CMSdDomainSid sid;
 }
 CCLsaPolicyInfoDomain;

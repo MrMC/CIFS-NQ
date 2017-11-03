@@ -17,6 +17,22 @@
 #include "cmmemory.h"
 
 /* -- API functions -- */
+void cmListItemInit(CMItem * item)
+{
+	item->locks 	= 0;
+    item->callback  = NULL;
+	item->guard 	= NULL;
+	item->name 		= NULL;
+	item->next 		= NULL;
+	item->prev 		= NULL;
+	item->master	= NULL;
+	item->findable 	= FALSE;
+	item->isStatic	= FALSE;
+	item->beingDisposed = FALSE;
+#if SY_DEBUGMODE
+	item->dump      = NULL;
+#endif
+}
 
 void cmListStart(CMList * pList)
 {
@@ -30,9 +46,11 @@ void cmListStart(CMList * pList)
 
 void cmListShutdown(CMList * pList)
 {
+	syMutexTake(&pList->guard);
     cmListRemoveAndDisposeAll(pList);
+	pList->isUsed = FALSE;
+    syMutexGive(&pList->guard);
     syMutexDelete(&pList->guard);
-    pList->isUsed = FALSE;
 }
 
 
@@ -47,15 +65,17 @@ void cmListRemoveAndDisposeAll(CMList * pList)
 
 NQ_BOOL cmListItemAdd(CMList * pList, CMItem * pItem, NQ_BOOL (*callback)(CMItem * pItem))
 {
+    NQ_BOOL result = FALSE;
+
     /* item can be NULL */
     if (NULL == pItem || !pList->isUsed)
-        return FALSE;
+        goto Exit;
 
     /* we protect the list but we do not protect the item since it cannot 
     * be found until it is inside the list
     */
     syMutexTake(&pList->guard);
-
+    cmListItemTake(pItem);
     /* adding to the end of list */
     if (NULL == pList->last)
     {
@@ -73,47 +93,77 @@ NQ_BOOL cmListItemAdd(CMList * pList, CMItem * pItem, NQ_BOOL (*callback)(CMItem
     pItem->next = NULL;
     pItem->beingDisposed = FALSE;
     pItem->findable = TRUE;
+    cmListItemGive(pItem);
     syMutexGive(&pList->guard);
-    return TRUE;
+    result = TRUE;
+
+Exit:
+    return result;
 }
 
-CMItem * cmListItemCreate(NQ_UINT size, const NQ_WCHAR * name , NQ_BOOL lock)
+CMItem * cmListItemCreate(NQ_UINT size, const NQ_WCHAR * name , NQ_UINT32 lock)
 {
     CMItem * pItem;
 
-    LOGFB(CM_TRC_LEVEL_CMLIST);
+    LOGFB(CM_TRC_LEVEL_CMLIST, "size:%u name:%s lock:%u", size,cmWDump(name), lock );
     LOGMSG(CM_TRC_LEVEL_CMLIST, "Create item: %s, lock: %s", name ? cmWDump(name) : "", lock ? "yes" : "no");
-    
+
     pItem = (CMItem *)cmMemoryAllocate(size);
     if (NULL != pItem)
     {
+    	cmListItemInit(pItem);
         if (NULL != name)
         {
-            pItem->name = cmMemoryAllocate((NQ_UINT)(sizeof(NQ_WCHAR) * (cmWStrlen(name) + 1)));
+            pItem->name = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)(sizeof(NQ_WCHAR) * (cmWStrlen(name) + 1)));
             if (NULL != pItem->name)
             {
                 cmWStrcpy(pItem->name, name);
             }
+		    else
+		    {
+		        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+				goto Error;
+		    }
         }
-        else
-        {
-            pItem->name = NULL;
-        }
-        
-        syMutexCreate(&pItem->guard);
-        pItem->locks = 0;
-        if (lock)
-        {
-            cmListItemLock(pItem);
-        }
+
+		/* do not create mutex if exclusive access required */
+		if (!(lock & CM_LISTITEM_EXCLUSIVE))
+		{
+			pItem->guard = (SYMutex *)cmMemoryAllocate(sizeof(*pItem->guard));
+			if (NULL == pItem->guard)
+			{
+				cmMemoryFree(pItem->name);
+				pItem->name = NULL;
+				goto Error;
+			}
+			syMutexCreate(pItem->guard);
+		}
+
+		if (lock & CM_LISTITEM_LOCK)
+			cmListItemLock(pItem);
+ 
         pItem->isStatic = FALSE;
         cmListStart(&pItem->references);
     }
-    LOGFE(CM_TRC_LEVEL_CMLIST);
+    else
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+    }
+
+	goto Exit;
+
+Error:
+	pItem->locks = 0;
+	pItem->guard = NULL;
+	cmMemoryFree(pItem);
+	pItem = NULL;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_CMLIST, "result:%p", pItem);
     return pItem;
 }
    
-CMItem * cmListItemCreateAndAdd(CMList * pList, NQ_UINT size, const NQ_WCHAR * name, NQ_BOOL (*callback)(CMItem * pItem) , NQ_BOOL lock)
+CMItem * cmListItemCreateAndAdd(CMList * pList, NQ_UINT size, const NQ_WCHAR * name, NQ_BOOL (*callback)(CMItem * pItem) , NQ_UINT32 lock)
 {
     CMItem * pItem;
 
@@ -131,29 +181,30 @@ CMItem * cmListItemCreateAndAdd(CMList * pList, NQ_UINT size, const NQ_WCHAR * n
 
 NQ_BOOL cmListItemRemove(CMItem * pItem)
 {
-    CMList * pList;
-    
-    LOGFB(CM_TRC_LEVEL_CMLIST);
-    LOGMSG(CM_TRC_LEVEL_CMLIST, "Remove item: %s", pItem->name ? cmWDump(pItem->name) : "");
+    CMList * pList = NULL;
+    NQ_BOOL result = FALSE;
+
+    LOGFB(CM_TRC_LEVEL_CMLIST, "item:%p", pItem);
+	LOGMSG(CM_TRC_LEVEL_CMLIST, "Remove item: %s, %p", pItem->name ? cmWDump(pItem->name) : "", pItem);
 
     if (0 != pItem->locks)
     {
-        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to remove locked item: %p, lock=%d, name:%s", pItem, pItem->locks, pItem->name ? cmWDump(pItem->name) : "");
-        LOGFE(CM_TRC_LEVEL_CMLIST);
-        return FALSE;
+		LOGERR(CM_TRC_LEVEL_ERROR, "Unable to remove locked item: %s, lock=%d, %p", pItem->name ? cmWDump(pItem->name) : "", pItem->locks, pItem);
+        goto Exit;
     }
     pList = pItem->master;
     
     if (NULL == pList || !pList->isUsed)
     {
-        LOGFE(CM_TRC_LEVEL_CMLIST);
-        return FALSE; /* may be normal for nested removal */
+        /* may be normal for nested removal */
+        goto Exit;
     }
-    
+
     /* we protect the list but we do not protect the item since we do 
     * not modify its contents 
     */
     syMutexTake(&pList->guard);
+    cmListItemTake(pItem);
     if (NULL == pItem->prev)  /* first in the list */
     {
 #if SY_DEBUGMODE
@@ -161,8 +212,7 @@ NQ_BOOL cmListItemRemove(CMItem * pItem)
         {
             LOGERR(CM_TRC_LEVEL_ERROR, "Corrupted list or item: first: %p, expected: %p", pList->first, pItem);
             syMutexGive(&pList->guard);
-            LOGFE(CM_TRC_LEVEL_CMLIST);
-            return FALSE;
+            goto Exit;
         }
 #endif /* SY_DEBUGMODE */
         pList->first = pItem->next;
@@ -179,27 +229,37 @@ NQ_BOOL cmListItemRemove(CMItem * pItem)
     {
         pItem->next->prev = pItem->prev;
     }
-    pItem->master = NULL;
+    pItem->master 	= NULL;
+    pItem->next		= NULL;
+	pItem->prev		= NULL;
+    cmListItemGive(pItem);
     syMutexGive(&pList->guard);
-    LOGFE(CM_TRC_LEVEL_CMLIST);
-    return TRUE;
+    result = TRUE;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_CMLIST, "result:%s", result ? "TRUE" : "FALSE");
+    return result;
 }
 
 void cmListItemDispose(CMItem * pItem)
 {
     CMIterator iterator;
 
-    LOGFB(CM_TRC_LEVEL_CMLIST);
-    LOGMSG(CM_TRC_LEVEL_CMLIST, "Dispose item: %s", pItem->name ? cmWDump(pItem->name) : "");
-    
+    LOGFB(CM_TRC_LEVEL_CMLIST, "item:%p", pItem);
+
+	cmListItemTake(pItem);
+	LOGMSG(CM_TRC_LEVEL_CMLIST, "Dispose item: %s, locks: %d, %p", pItem->name ? cmWDump(pItem->name) : "", pItem->locks, pItem);
+
     if (pItem->beingDisposed || pItem->isStatic)
     {
-        LOGFE(CM_TRC_LEVEL_CMLIST);
-        return;
+    	cmListItemGive(pItem);
+        goto Exit;
     }
 
-    pItem->beingDisposed = TRUE;
     pItem->findable = FALSE;
+    pItem->beingDisposed = TRUE;
+    if (NULL != pItem->guard)	syMutexGive(pItem->guard);
+
     cmListIteratorStart(&pItem->references, &iterator);
     while (cmListIteratorHasNext(&iterator))
     {
@@ -214,41 +274,65 @@ void cmListItemDispose(CMItem * pItem)
     if (NULL != pItem->name)
     {
         cmMemoryFree(pItem->name);
+        pItem->name = NULL;
     }
-    syMutexDelete(&pItem->guard);
+    if (NULL != pItem->guard)
+	{
+		syMutexDelete(pItem->guard);
+		cmMemoryFree(pItem->guard);
+		pItem->guard = NULL;
+	}
     cmMemoryFree(pItem);
+    pItem = NULL;
+
+Exit:
     LOGFE(CM_TRC_LEVEL_CMLIST);
 }
 
 NQ_BOOL cmListItemRemoveAndDispose(CMItem * pItem)
 {
-    LOGFB(CM_TRC_LEVEL_CMLIST);
-    LOGMSG(CM_TRC_LEVEL_CMLIST, "Remove & dispose item: %s", pItem->name ? cmWDump(pItem->name) : "");
+    NQ_BOOL result = FALSE;
+
+    LOGFB(CM_TRC_LEVEL_CMLIST, "item:%p", pItem);
+	LOGMSG(CM_TRC_LEVEL_CMLIST, "Remove & dispose item: %s, %p", pItem->name ? cmWDump(pItem->name) : "", pItem);
 
     if (cmListItemRemove(pItem))
     {
         cmListItemDispose(pItem);
-        LOGFE(CM_TRC_LEVEL_CMLIST);
-        return TRUE;
+        result = TRUE;
+        goto Exit;
     }
-    LOGFE(CM_TRC_LEVEL_CMLIST);
-    return FALSE;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_CMLIST, "result:%s", result ? "TRUE" : "FALSE");
+    return result;
 }
 
 void cmListItemAddReference(CMItem * referencing, CMItem * referenced)
 {
-    /* we do not protect the item since its ref list is protected anyway */
-    CMReference * ref = (CMReference *)cmListItemCreateAndAdd(&referencing->references, sizeof(CMReference), NULL, NULL , FALSE);
+    /* we do not protect the item since its references list is protected anyway */
+	CMReference * ref;
+
+	LOGFB(CM_TRC_LEVEL_CMLIST, "referencing:%p referenced:%p", referencing, referenced);
+	LOGMSG(CM_TRC_LEVEL_CMLIST, "Add reference - referencing item: %s, %p", referencing->name ? cmWDump(referencing->name) : "", referencing);
+	LOGMSG(CM_TRC_LEVEL_CMLIST, "Add reference - referenced item: %s, %p (lock)", referenced->name ? cmWDump(referenced->name) : "", referenced);
+
+	ref = (CMReference *)cmListItemCreateAndAdd(&referencing->references, sizeof(CMReference), NULL, NULL, CM_LISTITEM_NOLOCK);
     if (NULL != ref)
     {
         ref->ref = referenced;
         cmListItemLock(referenced);
     }
+	LOGFE(CM_TRC_LEVEL_CMLIST);
 }
 
 void cmListItemRemoveReference(CMItem * referencing, CMItem * referenced)
 {
     CMIterator iterator;        /* in the list of references */
+
+	LOGFB(CM_TRC_LEVEL_CMLIST, "referencing:%p referenced:%p", referencing, referenced);
+	LOGMSG(CM_TRC_LEVEL_CMLIST, "Remove reference - referencing item: %s, %p", referencing->name ? cmWDump(referencing->name) : "", referencing);
+	LOGMSG(CM_TRC_LEVEL_CMLIST, "Remove reference - referenced item: %s, %p (unlock)", referenced->name ? cmWDump(referenced->name) : "", referenced);
 
     cmListIteratorStart(&referencing->references, &iterator);
     while (cmListIteratorHasNext(&iterator))
@@ -259,10 +343,12 @@ void cmListItemRemoveReference(CMItem * referencing, CMItem * referenced)
             cmListIteratorTerminate(&iterator);
             cmListItemRemoveAndDispose((CMItem *)ref);
             cmListItemUnlock(referenced);
+			LOGFE(CM_TRC_LEVEL_CMLIST);
             return;
         }
     }
     cmListIteratorTerminate(&iterator);
+	LOGFE(CM_TRC_LEVEL_CMLIST);
 }
 
 void cmListIteratorStart(CMList * pList, CMIterator * iterator)
@@ -302,105 +388,135 @@ CMItem * cmListIteratorNext(CMIterator * iterator)
 
 void cmListItemLock(CMItem * pItem)
 {
-    LOGFB(CM_TRC_LEVEL_CMLIST);
+    LOGFB(CM_TRC_LEVEL_CMLIST, "item:%p", pItem);
     
-    syMutexTake(&pItem->guard);
+    cmListItemTake(pItem);
     pItem->locks++;
-    LOGMSG(CM_TRC_LEVEL_CMLIST, "Lock item: %s, now: %d", pItem->name ? cmWDump(pItem->name) : "", pItem->locks);
-    syMutexGive(&pItem->guard);
+    LOGMSG(CM_TRC_LEVEL_CMLIST, "Lock item: %s, %p, now: %d", pItem->name ? cmWDump(pItem->name) : "", pItem, pItem->locks);
+    cmListItemGive(pItem);
     
     LOGFE(CM_TRC_LEVEL_CMLIST);
 }
 
 void cmListItemUnlock(CMItem * pItem)
 {
-    LOGFB(CM_TRC_LEVEL_CMLIST);
+    LOGFB(CM_TRC_LEVEL_CMLIST, "item:%p", pItem);
 
-    syMutexTake(&pItem->guard);
-    LOGMSG(CM_TRC_LEVEL_CMLIST, "Unlock item: %s, was: %d", pItem->name ? cmWDump(pItem->name) : "", pItem->locks);
+    cmListItemTake(pItem);
+    LOGMSG(CM_TRC_LEVEL_CMLIST, "Unlock item: %s, %p, was: %d", pItem->name ? cmWDump(pItem->name) : "", pItem, pItem->locks);
     if (0 == pItem->locks || 0 == --pItem->locks)
     {
+		if (NULL != pItem->callback)
+		{
+			if (pItem->findable == FALSE)
+			{
+				cmListItemGive(pItem);
+				goto Exit;
+			}
+			pItem->findable = FALSE;
+		}
+		cmListItemGive(pItem);
         if (NULL != pItem->callback)
         {
-            NQ_BOOL res = TRUE;
-        	pItem->findable = FALSE;
-        	res = (*pItem->callback)(pItem);
-            if (!res)
-                syMutexGive(&pItem->guard);            
-            LOGFE(CM_TRC_LEVEL_CMLIST);
-            return;         /* We assume that the item was disposed and the mutex with it*/
+            (*pItem->callback)(pItem);
         }
+        goto Exit;
     }
-    syMutexGive(&pItem->guard);
+    cmListItemGive(pItem);
+
+Exit:
     LOGFE(CM_TRC_LEVEL_CMLIST);
 }
 
 void cmListItemCheck(CMItem * pItem)
 {
-    syMutexTake(&pItem->guard);
+	LOGFB(CM_TRC_LEVEL_CMLIST, "item:%p", pItem);
+
+	cmListItemTake(pItem);
+	LOGMSG(CM_TRC_LEVEL_CMLIST, "Check item: %s, %p, locks: %d", pItem->name ? cmWDump(pItem->name) : "", pItem, pItem->locks);
+
     if (0 == pItem->locks)
     {
+    	cmListItemGive(pItem);
         if (NULL != pItem->callback && !pItem->beingDisposed)
         {
-        	NQ_BOOL res = TRUE;
         	pItem->findable = FALSE;
-        	res = (*pItem->callback)(pItem);
-            if (!res)
-                syMutexGive(&pItem->guard);            
-            return;         /* We assume that the item was disposed and the mutex with it*/
+        	(*pItem->callback)(pItem);
         }
+        goto Exit;
     }
-    syMutexGive(&pItem->guard);
+    cmListItemGive(pItem);
+Exit:
+	LOGFE(CM_TRC_LEVEL_CMLIST);
+	return;
 }
 
 CMItem * cmListItemFind(CMList * pList, const NQ_WCHAR * name, NQ_BOOL ignoringCase , NQ_BOOL lock)
 {
     CMIterator iterator;
+    CMItem * pItem = NULL;
+
+	LOGFB(CM_TRC_LEVEL_CMLIST, "list:%p name:%s ignoringCase:%s lock:%s", pList, cmWDump(name), ignoringCase ? "TRUE" : "FALSE", lock ? "TRUE" : "FALSE");
 
     if (name == NULL)
-        return NULL;
+        goto Exit;
+
+	LOGMSG(CM_TRC_LEVEL_CMLIST, "Find item: %s and lock: %s", cmWDump(name), lock ? "yes" : "no");
     
     cmListIteratorStart(pList, &iterator);
     while (cmListIteratorHasNext(&iterator))
     {
-        CMItem * pItem = (CMItem *)cmListIteratorNext(&iterator);
+        pItem = (CMItem *)cmListIteratorNext(&iterator);
         if (NULL != pItem->name && (ignoringCase ? (0 == cmWStricmp(name, pItem->name)) : (0 == cmWStrcmp(name, pItem->name))))
         {
-            cmListIteratorTerminate(&iterator);
-            
             if (pItem->findable)
             {
-                if (lock)
+            	cmListItemTake(pItem);
+            	if (lock)
                 {
-                    cmListItemLock(pItem);
+            		cmListItemGive(pItem);
+            		cmListItemLock(pItem);
+                    goto Exit;
                 }
-                return pItem;
+        		cmListItemGive(pItem);
+                goto Exit;
             }
             else
             {
-                return NULL;
+                goto Error;
             }
         }
+        else
+        	pItem = NULL;
     }
-    cmListIteratorTerminate(&iterator);
-    return NULL;
+
+Error:
+	pItem = NULL;
+
+Exit:
+	if (name != NULL)
+		cmListIteratorTerminate(&iterator);
+    LOGFE(CM_TRC_LEVEL_CMLIST, "result:%p", pItem);
+    return pItem;
 }
 
 void cmListItemTake(CMItem * pItem)
 {
-    syMutexTake(&pItem->guard);
+	if (pItem->beingDisposed)	return;
+	if (NULL != pItem->guard)	syMutexTake(pItem->guard);
 }
 
 void cmListItemGive(CMItem * pItem) 
 {
-    syMutexGive(&pItem->guard);
+	if (pItem->beingDisposed)	return;
+	if (NULL != pItem->guard)	syMutexGive(pItem->guard);
 }
 
 #if SY_DEBUGMODE
 
 void cmListDump(CMList * pList)
 {
-#ifdef UD_NQ_INCLUDETRACE
+#ifdef NQ_INTERNALTRACE
     CMIterator iterator;
     NQ_INT i = 0;
 
@@ -424,13 +540,13 @@ void cmListDump(CMList * pList)
             while (cmListIteratorHasNext(&refIterator))
             {
                 CMReference * ref = (CMReference *)cmListIteratorNext(&refIterator);
-                LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "    item %p master %p (%s): %p, prev: %p, locks: %d, flags: %x, name: %s", ref->ref, ref->ref->master, ref->ref->master->name);
+				LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "    item %p master: %p, locks: %d", ref->ref, ref->ref->master, ref->ref->locks);
             }
             cmListIteratorTerminate(&refIterator);
         }
     }
     cmListIteratorTerminate(&iterator);
-#endif /* UD_NQ_INCLUDETRACE */
+#endif /* NQ_INTERNALTRACE */
 }
 
 #endif /* SY_DEBUGMODE */

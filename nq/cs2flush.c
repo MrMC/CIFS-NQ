@@ -46,7 +46,7 @@ NQ_UINT32 csSmb2OnFlush(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
     CMCifsStatus error;                     /* for composing DOS-style error */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDFileAccessEvent eventInfo;            /* share event information */
-    const NQ_TCHAR *pFileName;              /* file name pointer */
+    const NQ_WCHAR *pFileName;              /* file name pointer */
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
@@ -129,7 +129,7 @@ NQ_UINT32 csSmb2OnFlush(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
 	);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
     /* compose response */
-    cmBufferWriteUint16(writer, 1);   /* structure size */
+    cmBufferWriteUint16(writer, 4);   /* structure size */
     cmBufferWriteUint16(writer, 0);   /* reserved */
     
     LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);

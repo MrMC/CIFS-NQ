@@ -24,6 +24,49 @@
 #include "csauth.h"
 #endif /* UD_NQ_INCLUDECIFSSERVER */
 
+/* -- client definitions -- */
+
+#ifdef UD_NQ_INCLUDECIFSCLIENT
+
+void amSpnegoClientSetDefaultLevels();
+void amSpnegoClientSetAuthLevel(NQ_INT level);
+NQ_INT amSpnegoClientGetAuthLevel();
+
+#ifdef UD_CC_INCLUDEEXTENDEDSECURITY
+
+/* security mechanism */
+typedef struct
+{
+    NQ_UINT32 mask;                 /* mechanism mask as AM_MECH... */
+    const CMAsn1Oid *oid;           /* ASN1 OID */
+    const CMAsn1Oid *reqOid;        /* ASN1 request OID */
+    const NQ_CHAR* name;            /* readable name */
+    NQ_BOOL(*init)(void*);
+    NQ_BOOL(*stop)();
+    NQ_BOOL(*setMechanism)(NQ_BYTE *, const NQ_CHAR *);
+    NQ_BYTE*(*contextCreate)(const NQ_CHAR *, NQ_BOOL);
+    NQ_BOOL(*generateFirstRequest)(NQ_BYTE *, const NQ_CHAR *, NQ_BYTE **, NQ_COUNT *);
+    NQ_BOOL(*generateNextRequest)(NQ_BYTE*, const NQ_BYTE *, NQ_COUNT, NQ_BYTE **, NQ_COUNT *, NQ_BYTE *);
+    NQ_BOOL(*getSessionKey)(NQ_BYTE*, NQ_BYTE *, NQ_COUNT *);
+    NQ_BOOL(*contextIsValid)(const NQ_BYTE *);
+    NQ_BOOL(*contextDispose)(NQ_BYTE *);
+    NQ_BOOL(*packNegotBlob)(void *, CMBufferWriter *, NQ_COUNT, NQ_COUNT *);
+    NQ_INT type;                    /* future - mechanism type */
+} SecurityMechanism;
+
+/*  SPNEGO context */
+typedef struct
+{
+    NQ_INT defAuthLevel;                    /* authentication level to start with */
+    NQ_STATUS status;                       /* result of the last operation */
+    const SecurityMechanism * mechanism;    /* security mechanism to use */
+    NQ_BYTE * extendedContext;              /* extended context per mechanism */
+    AMCredentialsW credentials;             /* credentials to use */
+    CMBlob * sessionKey;                    /* pointer to session key blob */
+    CMBlob * macSessionKey;                 /* pointer to MAC session key blob */
+    NQ_UINT level;                          /* required security level as supplied in allocateContext */
+} SecurityContext;
+
 /* -- client functions (used in mechanisms) -- */
 
 CMBlob * amSpnegoClientGetSessionKey(void * context);
@@ -33,6 +76,9 @@ NQ_UINT amSpnegoClientGetCrypter1(void * context);
 NQ_UINT amSpnegoClientGetCrypter2(void * context);
 NQ_UINT amSpnegoClientGetCryptLevel(void * context);
 
+#endif /* UD_CC_INCLUDEEXTENDEDSECURITY */
+#endif /* UD_NQ_INCLUDECIFSCLIENT */
+
 /* -- server definitions -- */
 
 #if defined(UD_NQ_INCLUDECIFSSERVER) && defined(UD_CS_INCLUDEEXTENDEDSECURITY)
@@ -41,6 +87,7 @@ NQ_UINT amSpnegoClientGetCryptLevel(void * context);
 typedef struct
 {
     const CMAsn1Oid *oid;           /* mechanism OID */
+    const CMAsn1Oid *oidSecondary;  /* alternative mechanism OID */
     NQ_UINT32 (*processor)(
         CMRpcPacketDescriptor * in, 
         CMRpcPacketDescriptor * out, 
@@ -51,6 +98,7 @@ typedef struct
         );
 }
 AMSpnegoServerMechDescriptor; 
+
 
 #endif /* defined(UD_NQ_INCLUDECIFSSERVER) && defined(UD_CS_INCLUDEEXTENDEDSECURITY) */
 

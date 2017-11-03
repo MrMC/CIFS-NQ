@@ -53,10 +53,10 @@
 
 typedef struct
 {
-    NQ_TCHAR shareNameT[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXSHARELEN)];   /* share name*/
-    NQ_TCHAR shareMapT[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXPATHLEN)];     /* share path */
-    NQ_TCHAR shareDescriptionT[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXDESCRIPTIONLEN)];   /* share description */
-    NQ_TCHAR tempT[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXPATHLEN)];         /* temporary */
+    NQ_WCHAR shareNameW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXSHARELEN)];   /* share name*/
+    NQ_WCHAR shareMapW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXPATHLEN)];     /* share path */
+    NQ_WCHAR shareDescriptionW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXDESCRIPTIONLEN)];   /* share description */
+    NQ_WCHAR tempW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXPATHLEN)];         /* temporary */
 }
 StaticData;
 
@@ -295,13 +295,13 @@ hasAdministrativeAccess(
     );
 
 /* convert share path from network to local form */
-static NQ_TCHAR*        /* local path */
+static NQ_WCHAR*        /* local path */
 pathNetworkToLocal(
-    NQ_TCHAR* path      /* network path */
+    NQ_WCHAR* path      /* network path */
     );
 
 /* convert share path from local to network form */
-static NQ_TCHAR*        /* network path */
+static NQ_WCHAR*        /* network path */
 pathLocalToNetwork(
     CSShare *share      /* share */
     );
@@ -428,7 +428,7 @@ srvsvcNetSrvGetInfo (
     /* parse input parameters */
 
     cmRpcParseSkip(in, 4);
-    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseUint32(in, &infoLevel);
 
     TRC1P("info level: %ld", infoLevel);
@@ -552,16 +552,16 @@ srvsvcNetSrvGetInfo (
     case 101:
         {
             CS_RP_CALL(cmRpcPackAsciiAsUnicode(&outTemp, cmNetBiosGetHostNameZeroed(), CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
-            udGetServerComment(staticData->shareNameT);
-            CS_RP_CALL(cmRpcPackTcharAsUnicode(&outTemp, staticData->shareNameT, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
+            udGetServerComment(staticData->shareNameW);
+            CS_RP_CALL(cmRpcPackWcharAsUnicode(&outTemp, staticData->shareNameW, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
         }
         break;
 #ifdef UD_CS_INCLUDERPC_SRVSVC_EXTENSION
     case 102:
         {
             CS_RP_CALL(cmRpcPackAsciiAsUnicode(&outTemp, cmNetBiosGetHostNameZeroed(), CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
-            udGetServerComment(staticData->shareNameT);
-            CS_RP_CALL(cmRpcPackTcharAsUnicode(&outTemp, staticData->shareNameT, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
+            udGetServerComment(staticData->shareNameW);
+            CS_RP_CALL(cmRpcPackWcharAsUnicode(&outTemp, staticData->shareNameW, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
             CS_RP_CALL(cmRpcPackAsciiAsUnicode(&outTemp, "", CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
         }
         break;
@@ -654,7 +654,7 @@ srvsvcNetShareEnum (
 
     /* parse input parameters */
     cmRpcParseSkip(in, 4);
-    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseUint32(in, &infoLevel);
 
     /* check space according to the largest variant */
@@ -729,7 +729,7 @@ srvsvcNetShareEnumAll (
     /* parse input parameters */
     savedPtr = in->current;
     cmRpcParseSkip(in, 4);
-    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseUint32(in, &infoLevel);
     cmRpcPackUint32(out, infoLevel);    /* this is the only difference between this and NetShareEnum */
     in->current = savedPtr;
@@ -758,20 +758,21 @@ srvsvcNetShareGetInfo (
 
     /* parse input parameters */
     cmRpcParseSkip(in, 4);
-    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseUint32(in, &infoLevel);
 
     /* find the share */
 
-    cmUnicodeToTchar(staticData->shareNameT, shareName.text);
-    pShare = csGetShareByName(staticData->shareNameT);
+    syWStrncpy(staticData->shareNameW, shareName.text, shareName.length);
+    staticData->shareNameW[shareName.length] = cmWChar(0);
+    pShare = csGetShareByName(staticData->shareNameW);
     if (NULL == pShare)
     {
         cmRpcPackUint32(out, infoLevel);
         cmRpcPackUint32(out, 0);    /* null ref id */
         TRCERR("Share not found");
-        TRC1P(" required: %s", cmTDump(staticData->shareNameT));
+        TRC1P(" required: %s", cmWDump(staticData->shareNameW));
         TRCE();
         return CM_RP_FAULTNAMENOTFOUND;
     }
@@ -824,19 +825,20 @@ srvsvcNetShareSetInfo (
 
     /* parse input parameters */
     cmRpcParseSkip(in, 4);  /* server ref id */
-    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseUint32(in, &infoLevel);
 
     /* find the share */
 
-    cmUnicodeToTchar(staticData->shareNameT, shareName.text);
-    pShare = csGetShareByName(staticData->shareNameT);
+    syWStrncpy(staticData->shareNameW, shareName.text, shareName.length);
+    staticData->shareNameW[shareName.length] = cmWChar(0);
+    pShare = csGetShareByName(staticData->shareNameW);
     if (NULL == pShare)
     {
         cmRpcPackUint32(out, 0);    /* Parameter Error */
         TRCERR("Share not found");
-        TRC1P(" required: %s", cmTDump(staticData->shareNameT));
+        TRC1P(" required: %s", cmWDump(staticData->shareNameW));
         TRCE();
         return CM_RP_FAULTNAMENOTFOUND;
     }
@@ -884,7 +886,7 @@ srvsvcNetSessEnum (
 
     /* parse input parameters */
     cmRpcParseSkip(in, 4);  /* server ref id */
-    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseSkip(in, 4);  /* computer */
     cmRpcParseSkip(in, 4);  /* user */
     cmRpcParseUint32(in, &infoLevel);       /* info level */
@@ -985,7 +987,7 @@ srvsvcNetSessDel (
 
     /* parse input parameters */
     cmRpcParseSkip(in, 4);  /* server ref id */
-    cmRpcParseUnicode(in, &userName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &userName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseUint32(in, &refId);           /* computer ref id */
     allClients = (0 == refId);
 
@@ -993,8 +995,9 @@ srvsvcNetSessDel (
     {
         NQ_CHAR * pClient;   /* pointer to client name */
 
-        cmRpcParseUnicode(in, &compName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-        cmUnicodeToAnsi(buffer, compName.text);
+        cmRpcParseUnicode(in, &compName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+        cmUnicodeToAnsiN(buffer, compName.text, (NQ_UINT)(compName.length * sizeof(NQ_WCHAR)));
+        buffer[compName.length] = '\0';
         pClient = buffer;
         if ('\\' == *pClient)
             pClient += 2;
@@ -1045,8 +1048,9 @@ srvsvcNetSessDel (
 
     if (!allUsers)
     {
-        cmRpcParseUnicode(in, &userName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-        cmUnicodeToTchar(staticData->shareNameT, userName.text);
+        cmRpcParseUnicode(in, &userName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+        syWStrncpy(staticData->shareNameW, userName.text, userName.length);
+        staticData->shareNameW[userName.length] = cmWChar(0);
     }
 
     if (!checkAccessToUsers(out))
@@ -1068,12 +1072,12 @@ srvsvcNetSessDel (
             }
             else
             {
-                doDel =    (0 == cmTStrcmp(pUser->name, staticData->shareNameT))
+                doDel =    (0 == syWStrcmp(pUser->name, staticData->shareNameW))
                         && pSess->key == pUser->session;
             }
         }
         else
-            doDel = (0 == cmTStrcmp(pUser->name, staticData->shareNameT));
+            doDel = (0 == syWStrcmp(pUser->name, staticData->shareNameW));
 
         if (doDel)
         {
@@ -1107,7 +1111,7 @@ srvsvcNetFileClose (
 
     /* parse input parameters */
     cmRpcParseSkip(in, 4);  /* server ref id */
-    cmRpcParseUnicode(in, &compName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &compName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseUint32(in, &fid);             /* fid */
 
     if (!checkAccessToUsers(out))
@@ -1138,8 +1142,8 @@ srvsvcNetNameValidate (
 
     /* parse input parameters */
     cmRpcParseSkip(in, 4);  /* server ref id */
-    cmRpcParseUnicode(in, &nameDesc, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-    cmRpcParseUnicode(in, &nameDesc, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &nameDesc, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+    cmRpcParseUnicode(in, &nameDesc, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseUint32(in, &type);            /* type */
 
     switch (type)
@@ -1169,12 +1173,12 @@ srvsvcNetFileEnum (
     CMRpcUnicodeString serverName;  /* requested server name */
     NQ_UINT32 infoLevel;            /* requested information level */
     NQ_UINT32 prefLength;           /* preferred data length */
-    NQ_UINT32 refId = 3;            /* referent ID */
+    NQ_UINT32 refId;                /* referent ID */
     NQ_UINT32 actualEntries = 0;    /* actual number of entries */
     NQ_BYTE* savedPtr1;             /* pointer in the descriptor */
     NQ_BYTE* savedPtr2;             /* pointer in the descriptor */
     NQ_UINT32 ret = 0;              /* return value */
-    NQ_UINT32 resume;               /* resume handle */
+    NQ_UINT32 resume = 0;           /* resume handle */
     NQ_UINT32 status = 0;           /* call result */
     CSFid fid;                      /* running fid */
 
@@ -1182,7 +1186,7 @@ srvsvcNetFileEnum (
 
     /* parse input parameters */
     cmRpcParseSkip(in, 4);  /* server ref id */
-    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseSkip(in, 4);  /* path */
     cmRpcParseSkip(in, 4);  /* user */
     cmRpcParseUint32(in, &infoLevel);       /* info level */
@@ -1191,8 +1195,9 @@ srvsvcNetFileEnum (
     cmRpcParseSkip(in, 4);  /* number of entries */
     cmRpcParseSkip(in, 4);  /* array */
     cmRpcParseUint32(in, &prefLength);      /* preferred length */
-    cmRpcParseSkip(in, 4);  /* resume handle ref id */
-    cmRpcParseUint32(in, &resume);          /* resume handle */
+    cmRpcParseUint32(in, &refId);           /* resume handle ref id */
+    if (refId != 0)
+        cmRpcParseUint32(in, &resume);      /* resume handle */
 
     resume = (NQ_UINT32)(resume == 0? CS_ILLEGALID : (CSFid)status);
 
@@ -1285,7 +1290,7 @@ srvsvcNetShareAdd (
 
     /* parse input parameters */
     cmRpcParseSkip(in, 4);  /* server ref id */
-    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseUint32(in, &infoLevel);       /* info level */
 
     if (!checkAccessToUsers(out))
@@ -1307,8 +1312,8 @@ srvsvcNetShareAdd (
         return CM_RP_OUTOFMEMORY;
     }
 
-    cmAnsiToTchar(staticData->shareNameT, TEMPSHARENAME);
-    pShare = csGetShareByName(staticData->shareNameT);
+    syAnsiToUnicode(staticData->shareNameW, TEMPSHARENAME);
+    pShare = csGetShareByName(staticData->shareNameW);
     if (NULL == pShare)
     {
         cmRpcPackUint32(out, 0);        /* error handle */
@@ -1320,7 +1325,7 @@ srvsvcNetShareAdd (
     status = setShareInfo(in, pShare);
 
     if (0 != status)
-        nqRemoveShare(pShare->name);
+        nqRemoveShareW(pShare->name);
 
     cmRpcPackUint32(out, 0);        /* error handle */
 
@@ -1350,13 +1355,13 @@ srvsvcNetShareDel (
 
     /* parse input parameters */
     cmRpcParseSkip(in, 4);  /* server ref id */
-    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-    cmUnicodeToTchar(staticData->shareNameT, shareName.text);
+    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+    syWStrncpy(staticData->shareNameW, shareName.text, shareName.length);
+    staticData->shareNameW[shareName.length] = cmWChar(0);
 
     /* delete share from user persistent store */
-
-    if (!udRemoveShare(staticData->shareNameT))
+    if (!udRemoveShare(staticData->shareNameW))
     {
         TRCERR("Unable to remove share from the persistent store");
         TRCE();
@@ -1364,7 +1369,7 @@ srvsvcNetShareDel (
     }
 
     /* delete share */
-    status = (NQ_UINT32)nqRemoveShare(staticData->shareNameT);
+    status = (NQ_UINT32)nqRemoveShareW(staticData->shareNameW);
     if (0 != status)
     {
         TRCERR("Unable to remove share");
@@ -1400,9 +1405,9 @@ srvsvcNetConnEnum (
 
     /* parse input parameters */
     cmRpcParseSkip(in, 4);
-    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseSkip(in, 4);
-    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseUint32(in, &infoLevel);       /* info level */
 
     /* check space according to the largest variant */
@@ -1422,12 +1427,13 @@ srvsvcNetConnEnum (
 
     /* find the share */
 
-    cmUnicodeToTchar(staticData->shareNameT, shareName.text);
-    pShare = csGetShareByName(staticData->shareNameT);
+    syWStrncpy(staticData->shareNameW, shareName.text, shareName.length);
+    staticData->shareNameW[shareName.length] = cmWChar(0);
+    pShare = csGetShareByName(staticData->shareNameW);
     if (NULL == pShare)
     {
         TRCERR("Share not found");
-        TRC1P(" required: %s", cmTDump(staticData->shareNameT));
+        TRC1P(" required: %s", cmWDump(staticData->shareNameW));
         TRCE();
         return CM_RP_FAULTNAMENOTFOUND;
     }
@@ -1522,7 +1528,7 @@ packShareEntry(
     /* hide share from user that has no right to use it */
     if (!cmSdHasAccess((CMSdAccessToken*)out->token, pShare->sd.data, SMB_DESIREDACCESS_READDATA))
     {
-        TRCERR("No access - hidding share: %s", cmTDump(pShare->name));
+        TRCERR("No access - hidding share: %s", cmWDump(pShare->name));
         TRCE();
         return CM_RP_FAULTACCESSDENIED;
     }
@@ -1601,13 +1607,13 @@ packShareEntry(
         cmRpcPackUint32(out, 0);                    /* security descriptor container length inluding extra ACEs TODO */
         cmRpcPackUint32(out, referentId++);         /* security descriptor referral */
         cmRpcAllignZero(out, 4);
-        CS_RP_CALL(cmRpcPackTcharAsUnicode(out, pShare->name , (CM_RP_NULLTERM | CM_RP_SIZE32 | CM_RP_FRAGMENT32)));
-        CS_RP_CALL(cmRpcPackTcharAsUnicode(out, pShare->description, (CM_RP_NULLTERM | CM_RP_SIZE32 | CM_RP_FRAGMENT32)));
-        CS_RP_CALL(cmRpcPackTcharAsUnicode(out, pathLocalToNetwork(pShare), (CM_RP_NULLTERM | CM_RP_SIZE32 | CM_RP_FRAGMENT32)));
+        CS_RP_CALL(cmRpcPackWcharAsUnicode(out, pShare->name , (CM_RP_NULLTERM | CM_RP_SIZE32 | CM_RP_FRAGMENT32)));
+        CS_RP_CALL(cmRpcPackWcharAsUnicode(out, pShare->description, (CM_RP_NULLTERM | CM_RP_SIZE32 | CM_RP_FRAGMENT32)));
+        CS_RP_CALL(cmRpcPackWcharAsUnicode(out, pathLocalToNetwork(pShare), (CM_RP_NULLTERM | CM_RP_SIZE32 | CM_RP_FRAGMENT32)));
         cmRpcCloneDescriptor(out, &savedOut2);      /* save SD length position */
         cmRpcPackUint32(out, 0);      /* security descriptor container length inluding extra ACEs TODO */
         sdStart = out->current;
-        cmSdPackSecurityDescriptor(out, &pShare->sd);     /* security descriptor */
+        cmSdPackSecurityDescriptor(out, &pShare->sd, 0x0f);     /* security descriptor */
         cmSdPackSidRid(out, &token->domain, token->rids[0]);       /* owner SID and RID */
         cmSdPackSidRid(out, &token->domain, CM_SD_RIDALIASUSER);   /* group SID and RID */
         cmRpcPackUint32(&savedOut1, (NQ_UINT32)(out->current - sdStart));
@@ -1649,7 +1655,7 @@ packShareStrings(
   /* hide share from user that has no right to use it */
     if (!cmSdHasAccess((CMSdAccessToken*)out->token, pShare->sd.data, SMB_DESIREDACCESS_READDATA))
     {
-        TRCERR("No access - hidding share: %s", cmTDump(pShare->name));
+        TRCERR("No access - hidding share: %s", cmWDump(pShare->name));
         TRCE();
         return CM_RP_FAULTACCESSDENIED;
     }
@@ -1663,23 +1669,23 @@ packShareStrings(
     {
     case 0:
         {
-            CS_RP_CALL(cmRpcPackTcharAsUnicode(out, pShare->name, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
+            CS_RP_CALL(cmRpcPackWcharAsUnicode(out, pShare->name, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
         }
         break;
     case 1:
     case 501:
         {
-            CS_RP_CALL(cmRpcPackTcharAsUnicode(out, pShare->name, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
-            CS_RP_CALL(cmRpcPackTcharAsUnicode(out, pShare->description, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
+            CS_RP_CALL(cmRpcPackWcharAsUnicode(out, pShare->name, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
+            CS_RP_CALL(cmRpcPackWcharAsUnicode(out, pShare->description, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
         }
         break;
     case 502:
     	break;
     case 2:
         {
-            CS_RP_CALL(cmRpcPackTcharAsUnicode(out, pShare->name, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
-            CS_RP_CALL(cmRpcPackTcharAsUnicode(out, pShare->description, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
-            CS_RP_CALL(cmRpcPackTcharAsUnicode(out, pathLocalToNetwork(pShare), (CM_RP_NULLTERM | CM_RP_SIZE32 | CM_RP_FRAGMENT32)));
+            CS_RP_CALL(cmRpcPackWcharAsUnicode(out, pShare->name, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
+            CS_RP_CALL(cmRpcPackWcharAsUnicode(out, pShare->description, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
+            CS_RP_CALL(cmRpcPackWcharAsUnicode(out, pathLocalToNetwork(pShare), (CM_RP_NULLTERM | CM_RP_SIZE32 | CM_RP_FRAGMENT32)));
         }
         break;
     default:
@@ -1786,7 +1792,7 @@ packUserStrings(
             }
             cmIpToAscii(buffer, &pSess->ip);
             cmRpcPackAsciiAsUnicode(out, buffer, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-            cmRpcPackTcharAsUnicode(out, pUser->name, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+            cmRpcPackWcharAsUnicode(out, pUser->name, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
         }
         break;
     default:
@@ -1874,6 +1880,7 @@ packFileStrings(
 {
     const CSFile* pFile = csGetFileByJustFid(fid);    /* file pointer */
 
+
     TRCB();
 
     if (NULL == pFile)
@@ -1887,8 +1894,8 @@ packFileStrings(
     {
     case 3:
         {
-            CS_RP_CALL(cmRpcPackTcharAsUnicode(out, csGetNameByNid(pFile->nid) != NULL ? csGetNameByNid(pFile->nid)->name : NULL, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
-            CS_RP_CALL(cmRpcPackTcharAsUnicode(out, csGetUserByUid(pFile->uid) != NULL ? csGetUserByUid(pFile->uid)->name : NULL, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
+            CS_RP_CALL(cmRpcPackWcharAsUnicode(out, csGetNameByNid(pFile->nid) != NULL ? csGetNameByNid(pFile->nid)->name : NULL, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
+            CS_RP_CALL(cmRpcPackWcharAsUnicode(out, csGetUserByUid(pFile->uid) != NULL ? csGetUserByUid(pFile->uid)->name : NULL, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
         }
         break;
     default:
@@ -1974,7 +1981,7 @@ packConnStrings(
     {
     case 1:
         {
-            CS_RP_CALL(cmRpcPackTcharAsUnicode(out, csGetUserByUid(pTree->uid) != NULL ? csGetUserByUid(pTree->uid)->name : NULL, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
+        	CS_RP_CALL(cmRpcPackWcharAsUnicode(out, csGetUserByUid(pTree->uid) != NULL ? csGetUserByUid(pTree->uid)->name : NULL, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
             CS_RP_CALL(cmRpcPackAsciiAsUnicode(out, cmNetBiosGetHostNameZeroed(), CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
         }
         break;
@@ -2102,7 +2109,7 @@ initData(
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(*staticData));
     if (NULL == staticData)
     {
         TRCERR("Unable to allocate SRVSVC data");
@@ -2110,7 +2117,7 @@ initData(
         return NQ_FAIL;
     }
 #endif /* SY_FORCEALLOCATION */
-    staticData->shareMapT[0] = 0;
+    staticData->shareMapW[0] = 0;
     TRCE();
     return NQ_SUCCESS;
 }
@@ -2188,29 +2195,35 @@ setShareInfo(
             cmRpcParseUint32(in, &sdRefId);  /* SD ref id */
         }
         /* parse referenced data in the order of their ref ids */
-        cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-        cmUnicodeToTcharN(staticData->shareNameT, shareName.text, sizeof(staticData->shareNameT));
-        cmRpcParseUnicode(in, &shareDescription, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-        cmUnicodeToTcharN(staticData->shareDescriptionT, shareDescription.text, sizeof(staticData->shareNameT));
-        cmRpcParseUnicode(in, &shareMap, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-        cmUnicodeToTcharN(staticData->tempT, shareMap.text, sizeof(staticData->tempT));
-        pathNetworkToLocal(staticData->tempT);
+        cmRpcParseUnicode(in, &shareName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+        syWStrncpy(staticData->shareNameW, shareName.text, shareName.length);
+        staticData->shareNameW[shareName.length] = cmWChar(0);
+        cmRpcParseUnicode(in, &shareDescription, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+        syWStrncpy(staticData->shareDescriptionW, shareDescription.text, shareDescription.length);
+        staticData->shareDescriptionW[shareDescription.length] = cmWChar(0);
+        cmRpcParseUnicode(in, &shareMap, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+        syWStrncpy(staticData->tempW, shareMap.text, shareMap.length);
+        staticData->tempW[shareMap.length] = cmWChar(0);
+
+        pathNetworkToLocal(staticData->tempW);
 #ifdef UD_CS_INCLUDERPC_SRVSVC_EXTENSION     
-        if (!udSaveShareInformation(
-                pShare->name,
-                staticData->shareNameT,
-                staticData->shareMapT,
-                staticData->shareDescriptionT
-            ))
         {
-            TRCERR("User level persistence failed");
-            TRCE();
-            return CM_RP_FAULTACCESSDENIED;
+			if (!udSaveShareInformation(
+					pShare->name,
+					staticData->shareNameW,
+					 staticData->shareMapW,
+					staticData->shareDescriptionW
+				))
+			{
+				TRCERR("User level persistence failed");
+				TRCE();
+				return CM_RP_FAULTACCESSDENIED;
+			}
         }
 #endif /* UD_CS_INCLUDERPC_SRVSVC_EXTENSION */
-        cmUnicodeToTcharN(pShare->name, shareName.text, sizeof(pShare->name));
-        cmUnicodeToTcharN(pShare->description, shareDescription.text, sizeof(pShare->description));
-        if (0 != cmTStrcmp(staticData->shareMapT, pShare->map))
+        syWStrncpy(pShare->name, shareName.text, sizeof(pShare->name));
+        syWStrncpy(pShare->description, shareDescription.text, sizeof(pShare->description));
+        if (0 != syWStrcmp(staticData->shareMapW, pShare->map))
         {
             if (csGetNumberOfShareFiles(pShare))
             {
@@ -2218,7 +2231,7 @@ setShareInfo(
                 TRCE();
                 return CM_RP_FAULTACCESSDENIED;
             }
-            cmTStrncpy(pShare->map, staticData->shareMapT, sizeof(pShare->map));
+            syWStrncpy(pShare->map, staticData->shareMapW, sizeof(pShare->map));
         }
 
 
@@ -2229,7 +2242,7 @@ setShareInfo(
             cmSdParseSecurityDescriptor(in, &pShare->sd);  /* share SD */
             if (!csSetShareSecurityDescriptor(pShare))
             {
-                TRCERR("Security desriptor too big");
+                TRCERR("Security descriptor too big");
                 TRCE();
                 return CM_RP_FAULTACCESSDENIED;
             }
@@ -2260,35 +2273,35 @@ setShareInfo(
  *====================================================================
  */
 
-static NQ_TCHAR*
+static NQ_WCHAR*
 pathNetworkToLocal(
-    NQ_TCHAR* path
+    NQ_WCHAR* path
     )
 {
-    NQ_TCHAR* pc;           /* pointer in path */
-    const NQ_TCHAR wrongSeparator = cmTChar(SY_PATHSEPARATOR == '/'? '\\':'/');
-    NQ_TCHAR name[3] = {cmTChar(0), cmTChar('$'), cmTChar(0)};  /* buffer for hidden admin share name */
+	NQ_WCHAR* pc;           									/* pointer in path */
+	const NQ_WCHAR wrongSeparator = cmWChar(SY_PATHSEPARATOR == '/'? '\\':'/');
+	NQ_WCHAR name[3] = {cmWChar(0), cmWChar('$'), cmWChar(0)};  /* buffer for hidden admin share name */
         
-    cmTStrcpy(staticData->shareMapT, path);
+    syWStrcpy(staticData->shareMapW, path);
         
 #ifndef SY_DRIVELETTERINPATH
-    if (cmTStrlen(path) > 1 && path[1] == cmTChar(':'))    
+    if (cmWStrlen(path) > 1 && path[1] == cmWChar(':'))
     {
         if (csHasAdminShare())
         {
             /* convert path of form 'C:\folder' into local path */
             /* for example 'C:\folder' -> '/ata0a/folder'  */
             name[0] = path[0];
-            cmTStrcpy(staticData->shareMapT, csGetShareByName(name)->map);
-            if (staticData->shareMapT[cmTStrlen(staticData->shareMapT) - 1] == cmTChar(SY_PATHSEPARATOR))
-                staticData->shareMapT[cmTStrlen(staticData->shareMapT) - 1] = 0;
+            syWStrcpy(staticData->shareMapW, csGetShareByName(name)->map);
+            if (staticData->shareMapW[cmWStrlen(staticData->shareMapW) - 1] == cmWChar(SY_PATHSEPARATOR))
+                staticData->shareMapW[cmWStrlen(staticData->shareMapW) - 1] = 0;
             path += 2;
-            cmTStrcat(staticData->shareMapT, path);   
+            cmWStrcat(staticData->shareMapW, path);
         }
         else
         {
             path += 2;
-            cmTStrcpy(staticData->shareMapT, path);
+            syWStrcpy(staticData->shareMapW, path);
         }
     }
    
@@ -2296,15 +2309,15 @@ pathNetworkToLocal(
 
     /* convert path separators into local */
     
-    pc = staticData->shareMapT;
+    pc = staticData->shareMapW;
     for (;;)
-    {
-        pc = cmTStrchr(pc, wrongSeparator);
-        if (NULL == pc)
-            break;
-        *pc++ = cmTChar(SY_PATHSEPARATOR); 
-    } 
-    return staticData->shareMapT;
+	{
+		pc = cmWStrchr(pc, wrongSeparator);
+		if (NULL == pc)
+			break;
+		*pc++ = cmWChar(SY_PATHSEPARATOR);
+	}
+    return staticData->shareMapW;
 }
 
 /*====================================================================
@@ -2318,7 +2331,7 @@ pathNetworkToLocal(
  *====================================================================
  */
 
-static NQ_TCHAR*
+static NQ_WCHAR*
 pathLocalToNetwork(
     CSShare *share
     )
@@ -2326,9 +2339,9 @@ pathLocalToNetwork(
 #ifdef SY_DRIVELETTERINPATH
     return share->map;
 #else
-	NQ_TCHAR path[] = {cmTChar(0), cmTChar(':'), cmTChar('\\'), cmTChar(0)};
+	NQ_WCHAR path[] = {cmWChar(0), cmWChar(':'), cmWChar('\\'), cmWChar(0)};
     CSShare *hidden;  /* pointer to hidden administrative share */
-    NQ_TCHAR *p, *t;  /* pointers in path */
+    NQ_WCHAR *p, *t;  /* pointers in path */
 
     if (csHasAdminShare())
     {
@@ -2337,16 +2350,16 @@ pathLocalToNetwork(
         if (share->isHidden)
         {
             path[0] = share->name[0];
-            cmTStrcpy(staticData->shareMapT, path);
+            syWStrcpy(staticData->shareMapW, path);
         }
         else if (share->ipcFlag)
         {
-            cmAnsiToTchar(staticData->shareMapT, "");
+        	syAnsiToUnicode(staticData->shareMapW, "");
         }
         else if ((hidden = csGetHiddenShareByMap(share->map)) != NULL)
         {
             path[0] = hidden->name[0];
-            cmTStrcpy(staticData->shareMapT, path);
+            syWStrcpy(staticData->shareMapW, path);
             p = share->map;
             t = hidden->map;
             while (*p != 0 && *p == *t)
@@ -2354,29 +2367,29 @@ pathLocalToNetwork(
                 t++;
             }
             if (*p != 0)
-                cmTStrcat(staticData->shareMapT, p);
+                cmWStrcat(staticData->shareMapW, p);
         }
         else    
-            cmTStrcpy(staticData->shareMapT, share->map);
+            syWStrcpy(staticData->shareMapW, share->map);
         
         /* convert local path separators to '\\' */
-        p = staticData->shareMapT;
+        p = staticData->shareMapW;
         for (;;)
         {
-            p = cmTStrchr(p, '/');
+            p = syWStrchr(p, '/');
             if (NULL == p)
                 break;
-            *p++ = cmTChar('\\'); 
+            *p++ = cmWChar('\\');
         } 
     }
     else
     {
         /* just add 'C:' prefix to local path */
-        cmAnsiToTchar(staticData->shareMapT, "C:");
-        cmTStrcat(staticData->shareMapT, share->map);
+        syAnsiToUnicode(staticData->shareMapW, "C:");
+        cmWStrcat(staticData->shareMapW, share->map);
     } 
    
-    return staticData->shareMapT;
+    return staticData->shareMapW;
 #endif /* SY_DRIVELETTERINPATH */   
 }
 

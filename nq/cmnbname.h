@@ -21,7 +21,7 @@
 #define _CMNBNAME_H_
 
 /*
- * Generic defintion of a NetBIOS name
+ * Generic definition of a NetBIOS name
  */
 
 #define CM_NB_NAMELEN  16           /* NetBIOS name lengths as by RFC1002
@@ -43,15 +43,14 @@ CMNetBiosNameInfo;
 
 /* NetBIOS name postfix - defines name class */
 
-#define CM_NB_POSTFIXPOSITION 15
+#define CM_NB_POSTFIXPOSITION               15
 
-#define CM_NB_POSTFIX_SERVER 0x20
-#define CM_NB_POSTFIX_WORKSTATION 0x0
-#define CM_NB_POSTFIX_DOMAINMASTERBROWSER 0x1b
-#define CM_NB_POSTFIX_DOMAINCONTROLLER 0x1c
-#define CM_NB_POSTFIX_MASTERBROWSER 0x1d
+/*
 #define CM_NB_POSTFIX_NONE 0xff
 #define CM_NB_POSTFIX_INTERNAL 0x0
+*/
+
+#define CM_NB_POSTFIXMASK                   0x3F
 
 /*
  * Host name definition
@@ -144,7 +143,7 @@ cmNetBiosGetNodeType(
 NQ_BYTE*                            /* returns a pointer to the 1st byte after the
                                        name (+ scope) or NULL if the parsing failed */
 cmNetBiosParseName(
-    const void* msg,                /* pointer tp the beginning of the message */
+    const void* msg,                /* pointer to the beginning of the message */
     const void *encodedname,        /* pointer to the encoded name */
     CMNetBiosName decodedname,      /* buffer to place the decoded NetBIOS name */
     NQ_CHAR *scope,                    /* buffer of sufficient size for the scope */
@@ -156,7 +155,7 @@ cmNetBiosParseName(
 NQ_BYTE*                            /* returns a pointer to the 1st byte after the
                                        name (+ scope) or NULL if the parsing failed */
 cmNetBiosSkipName(
-    const void* msg,                /* pointer tp the beginning of the message */
+    const void* msg,                /* pointer to the beginning of the message */
     const void *encodedname         /* pointer to the encoded name */
     );
 
@@ -208,7 +207,7 @@ cmGetFullDomainName(
 
 void						/* sets NetBIOS domain name for authentication */
 cmNetBiosSetDomainAuth(
-	NQ_TCHAR *name
+	NQ_WCHAR *name
 	);
 
 const CMNetBiosNameInfo* 	/* NetBIOS domain name */

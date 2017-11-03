@@ -94,19 +94,29 @@ nsInitInternalSockets(
     )
 {
     NQ_INDEX     i;       /* just a counter */
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
     if (NULL == staticData)
     {
-        TRCERR("Unable to allocate internal sockets");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate internal sockets");
+        sySetLastError(NQ_ERR_NOMEM);
+        goto Exit;
     }
 #endif /* SY_FORCEALLOCATION */
+
+    syMutexCreate(&staticData->poolGuardND);
+    syMutexCreate(&staticData->poolGuardDD);
+
+    sySemaphoreCreate(&staticData->overflowGuardND, UD_NS_NUMNDCHANNELS);
+    sySemaphoreCreate(&staticData->overflowGuardDD, UD_NS_NUMDDCHANNELS);
+
+    syMutexTake(&staticData->poolGuardND);
+    syMutexTake(&staticData->poolGuardDD);
 
     staticData->firstFreeND = 0;
     staticData->lastFreeND  = -1;
@@ -114,51 +124,43 @@ nsInitInternalSockets(
     staticData->lastFreeDD  = -1;
 
     /* Name Daemon sockets */
-
-    syMutexCreate(&staticData->poolGuardND);
-    sySemaphoreCreate(&staticData->overflowGuardND, UD_NS_NUMNDCHANNELS);
-
-    syMutexTake(&staticData->poolGuardND);
     for (i=0; i<UD_NS_NUMNDCHANNELS; i++)
     {
 #ifdef SY_INTERNALSOCKETPOOL
         staticData->slotsND[i].socket = syInvalidSocket();
         if (initInternalSocketHandle(&staticData->slotsND[i].socket) == NQ_FAIL)
         {
-            syMutexGive(&staticData->poolGuardND);               
-            TRCE();
-            return NQ_FAIL;
+            goto Error;
         }
-#endif
+#endif /* SY_INTERNALSOCKETPOOL */
         staticData->freeND[i] = &staticData->slotsND[i];
         staticData->slotsND[i].idx = i;
     }
-    syMutexGive(&staticData->poolGuardND);
 
     /* Datagram Daemon sockets */
 
-    syMutexCreate(&staticData->poolGuardDD);
-    sySemaphoreCreate(&staticData->overflowGuardDD, UD_NS_NUMDDCHANNELS);
-
-    syMutexTake(&staticData->poolGuardDD);
     for (i=0; i<UD_NS_NUMDDCHANNELS; i++)
     {
 #ifdef SY_INTERNALSOCKETPOOL
         staticData->slotsDD[i].socket = syInvalidSocket();
         if (initInternalSocketHandle(&staticData->slotsDD[i].socket) == NQ_FAIL)
         {
-            syMutexGive(&staticData->poolGuardDD);
-            TRCE();
-            return NQ_FAIL;
+            goto Error;
         }
-#endif
+#endif /* SY_INTERNALSOCKETPOOL */
         staticData->freeDD[i] = &staticData->slotsDD[i];
         staticData->slotsDD[i].idx = i;
     }
+    result = NQ_SUCCESS;
+#ifdef SY_INTERNALSOCKETPOOL
+Error:
+#endif /* SY_INTERNALSOCKETPOOL */
     syMutexGive(&staticData->poolGuardDD);
+    syMutexGive(&staticData->poolGuardND);
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -181,7 +183,7 @@ nsExitInternalSockets(
 {
     NQ_INT     i;       /* just a counter */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     syMutexTake(&staticData->poolGuardND);
     syMutexTake(&staticData->poolGuardDD);
@@ -220,11 +222,11 @@ nsExitInternalSockets(
     /* release memory */
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
-        syFree(staticData);
+        cmMemoryFree(staticData);
     staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", NQ_SUCCESS);
 
     return NQ_SUCCESS;
 }
@@ -244,7 +246,9 @@ getInternalSocketND(
     void
     )
 {
-    InternalSocket* socket;  /* pointer to return */
+    InternalSocket* socket = NULL;  /* pointer to return */
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     sySemaphoreTake(staticData->overflowGuardND);
     syMutexTake(&staticData->poolGuardND);
@@ -258,9 +262,10 @@ getInternalSocketND(
 #ifndef SY_INTERNALSOCKETPOOL
     if (initInternalSocketHandle(&(socket->socket))==NQ_FAIL)
     {
-        return NULL;
+        socket = NULL;
     }
 #endif
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", socket);
     return socket;
 }
 
@@ -312,6 +317,8 @@ getInternalSocketDD(
 {
     InternalSocket* socket;  /* pointer to return */
 
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+
     sySemaphoreTake(staticData->overflowGuardDD);
     syMutexTake(&staticData->poolGuardDD);
 
@@ -324,10 +331,11 @@ getInternalSocketDD(
 #ifndef SY_INTERNALSOCKETPOOL
     if (initInternalSocketHandle(&(socket->socket))==NQ_FAIL)
     {
-        return NULL;
+        socket = NULL;
     }
 #endif
 
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", socket);
     return socket;
 }
 
@@ -379,34 +387,39 @@ initInternalSocketHandle(
     NQ_IPADDRESS localhost = CM_IPADDR_LOCAL;
     NQ_PORT port;      /* dynamic port number */
     NQ_IPADDRESS ip;   /* assigned IP */
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "socket:%p", socket);
 
     *socket = syCreateSocket(FALSE, CM_IPADDR_IPV4);    /* datagram socket */
     if(!syIsValidSocket(*socket))       /* error */
     {
-        TRCERR("Unable to create internal communication socket");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to create internal communication socket");
+        sySetLastError(NQ_ERR_SOCKETCREATE);
+        goto Exit;
     }
     if (syBindSocket(*socket, &localhost, 0) == NQ_FAIL)
     {
-        syCloseSocket(*socket);
-        TRCERR("Unable to bind internal communication socket");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to bind internal communication socket");
+        sySetLastError(NQ_ERR_SOCKETBIND);
+        goto Error;
     }
     syGetSocketPortAndIP(*socket, &ip, &port);
     if (port == 0)
     {
-        syCloseSocket(*socket);
-        TRCERR("Unable to get internal communication socket's port");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to get internal communication socket's port");
+        sySetLastError(NQ_ERR_SOCKETNAME);
+        goto Error;
     }
+    result = NQ_SUCCESS;
+    goto Exit;
 
-    TRCE();
-    return NQ_SUCCESS;
+Error:
+    syCloseSocket(*socket);
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 

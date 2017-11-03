@@ -22,6 +22,9 @@
 
 #include "nsapi.h"
 #include "cslaters.h"
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+#include "cmcapture.h"
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 
 
 typedef struct                  /* descriptor for a client socket */
@@ -31,11 +34,14 @@ typedef struct                  /* descriptor for a client socket */
     NQ_BOOL isSmb2;
 #endif /* UD_NQ_INCLUDESMB2 */
     NQ_IPADDRESS ip;            /* ip address on the next side */
-    NQ_TIME lastActivityTime;   /* time of the last activity on this socket */
+    NQ_UINT32 lastActivityTime;   /* time of the last activity on this socket */
 #ifdef UD_NQ_USETRANSPORTNETBIOS
-    NQ_TIME requestTimeout;     /* timestamp for waiting for NBT SESSION REQUEST */
+    NQ_UINT32 requestTimeout;     /* timestamp for waiting for NBT SESSION REQUEST */
     NQ_BOOL requestExpected;    /* newly connected waits for NBT SESSION REQUEST */
 #endif /* UD_NQ_USETRANSPORTNETBIOS */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    CMCaptureHeader		captureHdr; /* structure for internal capture */
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 }
 CSSocketDescriptor;
 
@@ -186,19 +192,21 @@ NQ_BOOL
 csDispatchDtAvailable(
 	);
 
-/* raise DT IN flag */
+/* set DT IN flag */
 void
-csDispatchSetDtIn(
+csDispatchSetDtIn(NQ_BOOL isOn
 	);
 
-/* raise DT OUT flag */
+/* set DT OUT flag */
 void
-csDispatchSetDtOut(
+csDispatchSetDtOut(NQ_BOOL isOn
 	);
 
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
 
-
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+CSSocketDescriptor * csGetClientSocketDescriptorBySocket(NSSocketHandle socket);
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 /*
     Command processors
     ------------------

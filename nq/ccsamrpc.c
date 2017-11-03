@@ -71,7 +71,7 @@ typedef struct
 CallbackParams;
 
 /* pipe descriptor */
-static const NQ_WCHAR pipeName[] = { cmWChar('s'), cmWChar('a'), cmWChar('m'), cmWChar('r'), cmWChar(0) };
+static const NQ_WCHAR pipeName[] = { cmWChar('s'), cmWChar('a'), cmWChar('m'), cmWChar('r'), cmWChar('\0') };
 static const CCDcerpcPipeDescriptor pipeDescriptor =
 { pipeName,
   {cmPack32(0x12345778),cmPack16(0x1234),cmPack16(0xabcd),{0xef,0x00},{0x01,0x23,0x45,0x67,0x89,0xac}},
@@ -82,7 +82,7 @@ static const CCDcerpcPipeDescriptor pipeDescriptor =
 
 static NQ_COUNT                /* count of outgoing data */
 connectRequestCallback (
-    NQ_BYTE* buffer,    /* ougoing data buffer */
+    NQ_BYTE* buffer,    /* outgoing data buffer */
     NQ_COUNT size,      /* room in the buffer */
     void* params,       /* abstract parameters */
     NQ_BOOL* moreData   /* put here TRUE when more outgoing data available */
@@ -95,14 +95,14 @@ connectResponseCallback (
     const NQ_BYTE* data,    /* data portion pointer */
     NQ_COUNT size,          /* data portion size */
     void* params,           /* abstract parameters */
-    NQ_BOOL moreData        /* TRUE when more data avaiable */
+    NQ_BOOL moreData        /* TRUE when more data available */
     );
 
 /* OpenDomain request callback */
 
 static NQ_COUNT                /* count of outgoing data */
 openDomainRequestCallback (
-    NQ_BYTE* buffer,    /* ougoing data buffer */
+    NQ_BYTE* buffer,    /* Outgoing data buffer */
     NQ_COUNT size,      /* room in the buffer */
     void* params,       /* abstract parameters */
     NQ_BOOL* moreData   /* put here TRUE when more outgoing data available */
@@ -115,12 +115,12 @@ openDomainResponseCallback (
     const NQ_BYTE* data,    /* data portion pointer */
     NQ_COUNT size,          /* data portion size */
     void* params,           /* abstract parameters */
-    NQ_BOOL moreData        /* TRUE when more data avaiable */
+    NQ_BOOL moreData        /* TRUE when more data available */
     );
 
 static NQ_COUNT                /* count of outgoing data */
 lookupDomainRequestCallback (
-    NQ_BYTE* buffer,    /* ougoing data buffer */
+    NQ_BYTE* buffer,    /* Outgoing data buffer */
     NQ_COUNT size,      /* room in the buffer */
     void* params,       /* abstract parameters */
     NQ_BOOL* moreData   /* put here TRUE when more outgoing data available */
@@ -133,14 +133,14 @@ lookupDomainResponseCallback (
     const NQ_BYTE* data,    /* data portion pointer */
     NQ_COUNT size,          /* data portion size */
     void* params,           /* abstract parameters */
-    NQ_BOOL moreData        /* TRUE when more data avaiable */
+    NQ_BOOL moreData        /* TRUE when more data available */
     );
 
 /* OpenUser request callback */
 
 static NQ_COUNT                /* count of outgoing data */
 openUserRequestCallback (
-    NQ_BYTE* buffer,    /* ougoing data buffer */
+    NQ_BYTE* buffer,    /* Outgoing data buffer */
     NQ_COUNT size,      /* room in the buffer */
     void* params,       /* abstract parameters */
     NQ_BOOL* moreData   /* put here TRUE when more outgoing data available */
@@ -153,14 +153,14 @@ openUserResponseCallback (
     const NQ_BYTE* data,    /* data portion pointer */
     NQ_COUNT size,          /* data portion size */
     void* params,           /* abstract parameters */
-    NQ_BOOL moreData        /* TRUE when more data avaiable */
+    NQ_BOOL moreData        /* TRUE when more data available */
     );
 
 /* GetGroupsForUser request callback */
 
 static NQ_COUNT                /* count of outgoing data */
 getGroupsForUserRequestCallback (
-    NQ_BYTE* buffer,    /* ougoing data buffer */
+    NQ_BYTE* buffer,    /* Outgoing data buffer */
     NQ_COUNT size,      /* room in the buffer */
     void* params,       /* abstract parameters */
     NQ_BOOL* moreData   /* put here TRUE when more outgoing data available */
@@ -173,14 +173,14 @@ getGroupsForUserResponseCallback (
     const NQ_BYTE* data,    /* data portion pointer */
     NQ_COUNT size,          /* data portion size */
     void* params,           /* abstract parameters */
-    NQ_BOOL moreData        /* TRUE when more data avaiable */
+    NQ_BOOL moreData        /* TRUE when more data available */
     );
 
 /* Close request callback */
 
 static NQ_COUNT                /* count of outgoing data */
 closeRequestCallback (
-    NQ_BYTE* buffer,    /* ougoing data buffer */
+    NQ_BYTE* buffer,    /* Outgoing data buffer */
     NQ_COUNT size,      /* room in the buffer */
     void* params,       /* abstract parameters */
     NQ_BOOL* moreData   /* put here TRUE when more outgoing data available */
@@ -193,7 +193,7 @@ closeResponseCallback (
     const NQ_BYTE* data,    /* data portion pointer */
     NQ_COUNT size,          /* data portion size */
     void* params,           /* abstract parameters */
-    NQ_BOOL moreData        /* TRUE when more data avaiable */
+    NQ_BOOL moreData        /* TRUE when more data available */
     );
 
 /*====================================================================
@@ -223,7 +223,7 @@ ccSamrConnect5(
 {
     CallbackParams p;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "samr:%p access:%u connect:%p", samr, access, connect);
 
     /* pass parameters */
     p.host = ((CCFile *)samr)->share->user->server->item.name;
@@ -238,10 +238,10 @@ ccSamrConnect5(
     else
     {
         p.status = (NQ_UINT32)NQ_ERR_NOACCESS;
-        TRCERR("SAMR::Connect5");
+        LOGERR(CM_TRC_LEVEL_ERROR, "SAMR::Connect5");
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", p.status);
     return p.status;
 }
 
@@ -259,7 +259,7 @@ ccSamrOpenDomain(
     CallbackParams p;
     CMSdAccessToken token;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "samr:%p connect:%p domain:%p access:%u open:%p", samr, connect, domain, access, open) ;
 
     /* token must be initialized with the supplied domain SID */
     token.domain = *domain;
@@ -279,10 +279,10 @@ ccSamrOpenDomain(
     else
     {
         p.status = (NQ_UINT32)NQ_ERR_BADPARAM;
-        TRCERR("SAMR::OpenDomain");
+        LOGERR(CM_TRC_LEVEL_ERROR, "SAMR::OpenDomain");
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", p.status);
     return p.status;
 }
 
@@ -314,7 +314,7 @@ composeCreateUser2 (
     NQ_UINT16 length = (NQ_UINT16)cmWStrlen(p->name);
     NQ_UINT16 sz = (NQ_UINT16)(length * sizeof(NQ_WCHAR));
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     cmBufferWriterInit(&w, buffer, size);
 
@@ -337,7 +337,7 @@ composeCreateUser2 (
 
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
     return cmBufferWriterGetDataCount(&w);
 }
 
@@ -352,7 +352,7 @@ processCreateUser2 (
     CMBufferReader r;
     ParamsSamrUserCreate2 *p = (ParamsSamrUserCreate2 *)params;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     cmBufferReaderInit(&r, data, size);
 
@@ -367,7 +367,7 @@ processCreateUser2 (
 
     cmBufferReadUint32(&r, &p->status);
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", p->status);
     return (NQ_STATUS)p->status;
 }
 
@@ -385,7 +385,7 @@ ccSamrCreateUser2(
 {
     ParamsSamrUserCreate2 p;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "samr:%p domain:%p name:%s flags:0x%x access:0x%x user:%p rid:%p granted:%p", samr, domain, cmWDump(name), flags, access, user, rid, granted);
 
     /* pass parameters */
     p.domain = domain;
@@ -400,10 +400,10 @@ ccSamrCreateUser2(
     if (!ccDcerpcCall(samr, composeCreateUser2, processCreateUser2, &p))
     {
         p.status = (NQ_UINT32)NQ_ERR_BADPARAM;
-        TRCERR("SAMR::CreateUser2");
+        LOGERR(CM_TRC_LEVEL_ERROR, "SAMR::CreateUser2");
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", p.status);
     return p.status;
 }
 
@@ -413,8 +413,8 @@ typedef struct {
     const CMRpcPolicyHandle *user;
     NQ_UINT16 level;
 /*    const NQ_BYTE *password; */
-/*    NQ_UINT16 size;	*/
-/*    NQ_BYTE expired;	*/
+/*    NQ_UINT16 size;    */
+/*    NQ_BYTE expired;    */
     NQ_BYTE *params;
     NQ_UINT32 status;
 }
@@ -433,7 +433,7 @@ composeLevel(
         case 16:
         {
             ParamsSamrUserSetInfo2Level16 *params = (ParamsSamrUserSetInfo2Level16 *)p->params;
-            
+
             cmBufferWriteUint32(w, params->flags);                  /* flags */
             break;
         }
@@ -461,7 +461,7 @@ static NQ_COUNT composeSetUserInfo2 (
     CMBufferWriter w;
     ParamsSamrUserSetInfo2 *p = (ParamsSamrUserSetInfo2 *)params;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     cmBufferWriterInit(&w, buffer, size);
     cmBufferWriteUint16(&w, SETUSERINFO2_OPNUM);   /* SetUserInfo2 opnum */
@@ -475,7 +475,7 @@ static NQ_COUNT composeSetUserInfo2 (
 
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
     return cmBufferWriterGetDataCount(&w);
 }
 
@@ -490,7 +490,7 @@ static NQ_COUNT composeGetUserInfo2 (
     CMBufferWriter w;
     ParamsSamrUserSetInfo2 *p = (ParamsSamrUserSetInfo2 *)params;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     cmBufferWriterInit(&w, buffer, size);
     cmBufferWriteUint16(&w, GETUSERINFO2_OPNUM);   /* GetUserInfo2 opnum */
@@ -504,7 +504,7 @@ static NQ_COUNT composeGetUserInfo2 (
 
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
     return cmBufferWriterGetDataCount(&w);
 }
 
@@ -518,12 +518,12 @@ static NQ_STATUS processGetUserInfo2 (
     CMBufferReader r;
     ParamsSamrUserSetInfo2 *p = (ParamsSamrUserSetInfo2 *)params;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     cmBufferReaderInit(&r, data, size);
     cmBufferReadUint32(&r, &p->status);
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", p->status);
     return (NQ_STATUS)p->status;
 }
 
@@ -537,12 +537,12 @@ static NQ_STATUS processSetUserInfo2 (
     CMBufferReader r;
     ParamsSamrUserSetInfo2 *p = (ParamsSamrUserSetInfo2 *)params;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     cmBufferReaderInit(&r, data, size);
     cmBufferReadUint32(&r, &p->status);
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", p->status);
     return (NQ_STATUS)p->status;
 }
 
@@ -556,7 +556,7 @@ ccSamrGetUserInfo2(
 {
     ParamsSamrUserSetInfo2 p;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "samr:%p user:%p level:%u parame:%p", samr, user, level, params);
 
     p.user = user;
     p.level = level;
@@ -567,10 +567,10 @@ ccSamrGetUserInfo2(
     if (!ccDcerpcCall(samr, composeGetUserInfo2, processGetUserInfo2, &p))
     {
         p.status = (NQ_UINT32)NQ_ERR_BADPARAM;
-        TRCERR("SAMR::GetUserInfo2");
+        LOGERR(CM_TRC_LEVEL_ERROR, "SAMR::GetUserInfo2");
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", p.status);
     return p.status;
 }
 
@@ -584,7 +584,7 @@ ccSamrSetUserInfo2(
 {
     ParamsSamrUserSetInfo2 p;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "samr:%p user:%p level:%u params:%p", samr, user, level, params);
 
     p.user = user;
     p.level = level;
@@ -595,10 +595,10 @@ ccSamrSetUserInfo2(
     if (!ccDcerpcCall(samr, composeSetUserInfo2, processSetUserInfo2, &p))
     {
         p.status = (NQ_UINT32)NQ_ERR_BADPARAM;
-        TRCERR("SAMR::SetUserInfo2");
+        LOGERR(CM_TRC_LEVEL_ERROR, "SAMR::SetUserInfo2");
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", p.status);
     return p.status;
 }
 
@@ -612,13 +612,16 @@ ccSamrSetUserPassword(
 {
     NQ_UINT32 status;
     NQ_BYTE buffer[516]; /* 512 bytes of RC4 encrypted password + 4 bytes length */
-    NQ_UINT16 size = (NQ_UINT16)(length * 2), 
+    NQ_UINT16 size = (NQ_UINT16)(length * 2),
               offset = (NQ_UINT16)(sizeof(buffer) - size - 4);
     CCUser * pUser = ((CCFile *)samr)->share->user;
     ParamsSamrUserSetInfo2Level24 params;
     CMBufferWriter w;
+#ifdef UD_NQ_INCLUDESMB3
+    CCServer    * pServer = ((CCFile *)samr)->share->user->server;
+#endif /* UD_NQ_INCLUDESMB3 */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "samr:%p user:%p pass:xxx len:%u", samr, user, length);
 
     cmBufferWriterInit(&w, buffer, sizeof(buffer));
 
@@ -628,20 +631,29 @@ ccSamrSetUserPassword(
     cmBufferWriteAsciiAsUnicodeN(&w, (const NQ_CHAR *)password, length, CM_BSF_NOFLAGS);
     cmBufferWriteUint32(&w, size);
     /* encrypt the entire password buffer */
-    cmArcfourCrypt(buffer, sizeof(buffer), pUser->macSessionKey.data, pUser->macSessionKey.len);
+#ifdef UD_NQ_INCLUDESMB3
+    if (pServer->smb->revision != CCCIFS_ILLEGALSMBREVISION && pServer->smb->revision >= 0x0300 /* SMB3 Dialect Revision */)
+    {
+        cmArcfourCrypt(buffer, sizeof(buffer), pUser->applicationKey.data, pUser->applicationKey.len);
+    }
+    else
+#endif /* UD_NQ_INCLUDESMB3 */
+    {
+        cmArcfourCrypt(buffer, sizeof(buffer), pUser->macSessionKey.data, pUser->macSessionKey.len);
+    }
     /* call SAMR::SetUserInfo2 with level 24 */
     params.password = buffer;
     params.size = sizeof(buffer);
-    status = ccSamrSetUserInfo2(samr, user, 24, (NQ_BYTE *)&params); 
+    status = ccSamrSetUserInfo2(samr, user, 24, (NQ_BYTE *)&params);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", status);
     return status;
 }
 
 typedef struct {
     const NQ_UINT32 *rid;
     CMRpcPolicyHandle *user;
-    NQ_UINT32 status;   
+    NQ_UINT32 status;
 }
 ParamsSamrOpenUser;
 
@@ -658,15 +670,15 @@ ccSamrOpenUser(
 {
     CallbackParams p;
     CMSdAccessToken token;
-   
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
 
-    p.domainId = domain->id;      
-    p.domainUuid = domain->uuid;  
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "samr:%p domain:%p rid:%p access:0x%x user:%p", samr, domain, rid, access, user);
+
+    p.domainId = domain->id;
+    p.domainUuid = domain->uuid;
     p.access = access;
     p.token = &token;
-    p.token->rids[0] = *rid;   
-    
+    p.token->rids[0] = *rid;
+
     /* call SAMR::OpenUser */
     if (ccDcerpcCall(samr, openUserRequestCallback, openUserResponseCallback, &p))
     {
@@ -676,10 +688,10 @@ ccSamrOpenUser(
     else
     {
         p.status = (NQ_UINT32)NQ_ERR_BADPARAM;
-        TRCERR("SAMR::OpenUser");
+        LOGERR(CM_TRC_LEVEL_ERROR, "SAMR::OpenUser");
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", p.status);
     return p.status;
 }
 
@@ -688,7 +700,7 @@ typedef struct {
     const NQ_WCHAR *name;
     NQ_UINT32 rid;
     NQ_UINT32 type;
-    NQ_UINT32 status;    
+    NQ_UINT32 status;
 }
 ParamsSamrLookupNames;
 
@@ -705,17 +717,17 @@ static NQ_COUNT composeLookupNames (
     NQ_UINT16 length = (NQ_UINT16)cmWStrlen(p->name);
     NQ_UINT16 sz = (NQ_UINT16)(length * sizeof(NQ_WCHAR));
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     cmBufferWriterInit(&w, buffer, size);
     cmBufferWriteUint16(&w, LOOKUPNAMES_OPNUM);  /* LookupNames opnum */
     /* domain policy handle */
     cmBufferWriteUint32(&w, p->domain->id);      /* id */
     cmRpcUuidWrite(&w, &p->domain->uuid);        /* uuid */
-    cmBufferWriteUint32(&w, 1);                  /* number of names */  
-    cmBufferWriteUint32(&w, 1000);               /* max count */  
+    cmBufferWriteUint32(&w, 1);                  /* number of names */
+    cmBufferWriteUint32(&w, 1000);               /* max count */
     cmBufferWriteUint32(&w, 0);                  /* offset */
-    cmBufferWriteUint32(&w, 1);                  /* actual count */  
+    cmBufferWriteUint32(&w, 1);                  /* actual count */
     /* account name */
     cmBufferWriteUint16(&w, sz);                 /* length in bytes */
     cmBufferWriteUint16(&w, sz);                 /* size in bytes */
@@ -727,7 +739,7 @@ static NQ_COUNT composeLookupNames (
 
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
     return cmBufferWriterGetDataCount(&w);
 }
 
@@ -742,8 +754,8 @@ static NQ_STATUS processLookupNames (
     ParamsSamrLookupNames *p = (ParamsSamrLookupNames *)params;
     NQ_UINT32 count;
 
-    TRCB();
-    
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
+
     cmBufferReaderInit(&r, data, size);
     cmBufferReadUint32(&r, &count);
     if (count == 0)
@@ -751,7 +763,7 @@ static NQ_STATUS processLookupNames (
         cmBufferReaderSkip(&r, 4);
     }
     else
-    {        
+    {
         cmBufferReaderSkip(&r, 2 * 4);
         cmBufferReadUint32(&r, &p->rid);    /* user rid */
     }
@@ -761,13 +773,13 @@ static NQ_STATUS processLookupNames (
         cmBufferReaderSkip(&r, 4);
     }
     else
-    {        
+    {
         cmBufferReaderSkip(&r, 2 * 4);
         cmBufferReadUint32(&r, &p->type);   /* user type */
     }
     cmBufferReadUint32(&r, &p->status);     /* status */
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", p->status);
     return (NQ_STATUS)p->status;
 }
 
@@ -784,7 +796,7 @@ ccSamrLookupNames(
 {
     ParamsSamrLookupNames p;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "samr:%p domain:%p name:%s rid:%p type:%p", samr, domain, name ? "TRUE" : "FALSE", rid, type);
 
     /* pass parameters */
     p.domain = domain;
@@ -799,10 +811,10 @@ ccSamrLookupNames(
     else
     {
         p.status = (NQ_UINT32)NQ_ERR_BADPARAM;
-        TRCERR("SAMR::LookupNames");
+        LOGERR(CM_TRC_LEVEL_ERROR, "SAMR::LookupNames");
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", p.status);
     return p.status;
 }
 
@@ -816,7 +828,7 @@ ccSamrClose(
 {
     CallbackParams p;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "samr:%p policy:%p", samr, policy);
 
     p.id = policy->id;
     p.uuid = &policy->uuid;
@@ -824,10 +836,10 @@ ccSamrClose(
     if (!ccDcerpcCall(samr, closeRequestCallback, closeResponseCallback, &p))
     {
         p.status = (NQ_UINT32)NQ_ERR_ERROR;
-        TRCERR("SAMR::Close");
+        LOGERR(CM_TRC_LEVEL_ERROR, "SAMR::Close");
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", p.status);
     return p.status;
 }
 
@@ -847,7 +859,7 @@ static NQ_COUNT composeDeleteUser(
     CMBufferWriter w;
     ParamsSamrDeleteUser *p = (ParamsSamrDeleteUser *)params;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     cmBufferWriterInit(&w, buffer, size);
     cmBufferWriteUint16(&w, DELETEUSER_OPNUM);   /* DeleteUser opnum */
@@ -857,7 +869,7 @@ static NQ_COUNT composeDeleteUser(
 
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
     return cmBufferWriterGetDataCount(&w);
 }
 
@@ -871,13 +883,13 @@ static NQ_STATUS processDeleteUser(
     CMBufferReader r;
     ParamsSamrDeleteUser *p = (ParamsSamrDeleteUser *)params;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" :"FALSE");
 
     cmBufferReaderInit(&r, data, size);
     cmBufferReaderSkip(&r, sizeof(CMRpcUuid));    /* skip uuid */
     cmBufferReadUint32(&r, &p->status);
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", p->status);
     return (NQ_STATUS)p->status;
 }
 
@@ -890,7 +902,7 @@ NQ_UINT32 ccSamrDeleteUser(
 {
     ParamsSamrDeleteUser p;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "samr:%p user:%p", samr, user);
 
     /* pass parameters */
     p.user = user;
@@ -899,17 +911,17 @@ NQ_UINT32 ccSamrDeleteUser(
     if (!ccDcerpcCall(samr, composeDeleteUser, processDeleteUser, &p))
     {
         p.status = (NQ_UINT32)NQ_ERR_ERROR;
-        TRCERR("SAMR::DeleteUser");
+        LOGERR(CM_TRC_LEVEL_ERROR, "SAMR::DeleteUser");
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", p.status);
     return p.status;
 
 }
 
 /*
  *====================================================================
- * PURPOSE: get user's groups by acount name
+ * PURPOSE: get user's groups by account name
  *--------------------------------------------------------------------
  * PARAMS:  IN pipe handle
  *          IN user name
@@ -931,9 +943,10 @@ ccSamGetUserGroups(
     )
 {
     CallbackParams params;      /* parameters for OpenPolciy2/Close */
-    NQ_BOOL res;           		/* operation result */
+    NQ_BOOL res;                /* operation result */
+    NQ_STATUS result = NQ_FAIL; /* return value */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "pipe:%p name:%s domain:%s token:%p", pipeHandle, cmWDump(name), cmWDump(domain), token);
 
     /* pass parameters */
     params.user = name;
@@ -943,79 +956,74 @@ ccSamGetUserGroups(
     params.access = CONNECT_ACCESSMASK;
 
     /* open SAMR policy handle */
-    res  = ccDcerpcCall(pipeHandle, connectRequestCallback, connectResponseCallback, &params);
+    res = ccDcerpcCall(pipeHandle, connectRequestCallback, connectResponseCallback, &params);
     if (!res)
     {
-        TRCERR("Error in processing Connect2");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing Connect2");
+        goto Exit;
     }
 
     params.access = 0x20285;
     /* open domain's policy handle */
-    res  = ccDcerpcCall(pipeHandle, openDomainRequestCallback, openDomainResponseCallback, &params);
+    res = ccDcerpcCall(pipeHandle, openDomainRequestCallback, openDomainResponseCallback, &params);
     if (!res)
     {
-        TRCERR("Error in processing OpenDomain");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing OpenDomain");
+        goto Exit;
     }
 
     params.access = 0x00000100;  /* get groups */
 
     /* open user's policy handle */
-    res  = ccDcerpcCall(pipeHandle, openUserRequestCallback, openUserResponseCallback, &params);
+    res = ccDcerpcCall(pipeHandle, openUserRequestCallback, openUserResponseCallback, &params);
     if (!res)
     {
-        TRCERR("Error in processing OpenUser");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing OpenUser");
+        goto Exit;
     }
 
     /* get groups */
-    res  = ccDcerpcCall(pipeHandle, getGroupsForUserRequestCallback, getGroupsForUserResponseCallback, &params);
+    res = ccDcerpcCall(pipeHandle, getGroupsForUserRequestCallback, getGroupsForUserResponseCallback, &params);
     if (!res)
     {
-        TRCERR("Error in processing GetGroupsForUser");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing GetGroupsForUser");
+        goto Exit; 
     }
 
     /* close user policy handle */
     params.id = params.userId;
     params.uuid = &params.userUuid;
-    res  = ccDcerpcCall(pipeHandle, closeRequestCallback, closeResponseCallback, &params);
+    res = ccDcerpcCall(pipeHandle, closeRequestCallback, closeResponseCallback, &params);
     if (!res)
     {
-        TRCERR("Error in processing Close for user");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing Close for user");
+        goto Exit;
     }
 
     /* close domain policy handle */
     params.id = params.domainId;
     params.uuid = &params.domainUuid;
-    res  = ccDcerpcCall(pipeHandle, closeRequestCallback, closeResponseCallback, &params);
+    res = ccDcerpcCall(pipeHandle, closeRequestCallback, closeResponseCallback, &params);
     if (!res)
     {
-        TRCERR("Error in processing Close for SAMR");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing Close for SAMR");
+        goto Exit;
     }
 
     /* close pipe policy handle */
     params.id = params.pipeId;
     params.uuid = &params.pipeUuid;
-    res  = ccDcerpcCall(pipeHandle, closeRequestCallback, closeResponseCallback, &params);
+    res = ccDcerpcCall(pipeHandle, closeRequestCallback, closeResponseCallback, &params);
     if (!res)
     {
-        TRCERR("Error in processing Close for SAMR");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing Close for SAMR");
+        goto Exit;
     }
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%d", result);
+    return result;
 }
 
 /*
@@ -1040,9 +1048,10 @@ ccSamGetDomainSid(
     )
 {
     CallbackParams params;      /* parameters for OpenPolciy2/Close */
-    NQ_BOOL res;           /* operation result */
+    NQ_BOOL res;                /* operation result */
+    NQ_STATUS result = NQ_FAIL; /* return value */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "pipe:%p domain:%s sid:%p", pipeHandle, cmWDump(domain), sid);
 
     /* pass parameters */
     params.domain = domain;
@@ -1051,36 +1060,35 @@ ccSamGetDomainSid(
     params.access = CONNECT_ACCESSMASK;
 
     /* open SAMR policy handle */
-    res  = ccDcerpcCall(pipeHandle, connectRequestCallback, connectResponseCallback, &params);
+    res = ccDcerpcCall(pipeHandle, connectRequestCallback, connectResponseCallback, &params);
     if (!res)
     {
-        TRCERR("Error in processing Connect2");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing Connect2");
+        goto Exit;
     }
 
     /* resolve domain */
-    res  = ccDcerpcCall(pipeHandle, lookupDomainRequestCallback, lookupDomainResponseCallback, &params);
+    res = ccDcerpcCall(pipeHandle, lookupDomainRequestCallback, lookupDomainResponseCallback, &params);
     if (!res)
     {
-        TRCERR("Error in processing LookupDomain");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing LookupDomain");
+        goto Exit;
     }
 
     /* close pipe policy handle */
     params.id = params.pipeId;
     params.uuid = &params.pipeUuid;
-    res  = ccDcerpcCall(pipeHandle, closeRequestCallback, closeResponseCallback, &params);
+    res = ccDcerpcCall(pipeHandle, closeRequestCallback, closeResponseCallback, &params);
     if (!res)
     {
-        TRCERR("Error in processing Close for SAMR");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing Close for SAMR");
+        goto Exit;
     }
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%d", result);
+    return result;
 }
 
 /*====================================================================
@@ -1114,7 +1122,7 @@ connectRequestCallback (
          cmWChar('\\'),  cmWChar('\\')
     };                  /* host name in Unicode, including two backslashes */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     refId = 1;
     callParams = (CallbackParams*)params;
@@ -1133,7 +1141,7 @@ connectRequestCallback (
     cmRpcPackUint32(&desc, 0);      /* undocumented */
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", (desc.current - desc.origin) + 2);
     return (NQ_COUNT)((desc.current - desc.origin) + 2);
 }
 
@@ -1162,15 +1170,15 @@ connectResponseCallback (
 {
     CMRpcPacketDescriptor desc;
     CallbackParams* callParams = (CallbackParams*)params;
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     if (size < (sizeof(CMRpcUuid) + 4 + 4 * 4))
     {
-        TRCERR("response too short");
-        TRC1P("  size: %d", size);
-        TRCE();
-        return (NQ_STATUS)NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "response too short");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "  size: %d", size);
+        goto Exit;
     }
 
     cmRpcSetDescriptor(&desc, (NQ_BYTE*)data, FALSE);
@@ -1178,9 +1186,11 @@ connectResponseCallback (
     cmRpcParseUint32(&desc, &callParams->pipeId);   /* policy ID */
     cmRpcParseUuid(&desc, &callParams->pipeUuid);   /* policy uuid */
     cmRpcParseUint32(&desc, &callParams->status);   /* status */
+    result = (NQ_STATUS)callParams->status;
 
-    TRCE();
-    return (NQ_STATUS)callParams->status;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*====================================================================
@@ -1209,12 +1219,12 @@ openDomainRequestCallback (
     CMRpcPacketDescriptor desc;         /* descriptor for SRVSVC request */
     CallbackParams* callParams;         /* casted parameters for callback */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     callParams = (CallbackParams*)params;
     cmRpcSetDescriptor(&desc, buffer, FALSE);
     cmRpcPackUint16(&desc, OPENDOMAIN_OPNUM);
-    desc.origin = desc.current;                 /* for alligment to 4 bytes */
+    desc.origin = desc.current;                 /* for alignment to 4 bytes */
     cmRpcPackUint32(&desc, callParams->pipeId); /* id of policy handle */
     cmRpcPackUuid(&desc, &callParams->pipeUuid);/* uuid of policy handle */
     cmRpcPackUint32(&desc, callParams->access); /* access mask */
@@ -1222,7 +1232,7 @@ openDomainRequestCallback (
     cmSdPackSid(&desc, &callParams->token->domain);
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", (desc.current - desc.origin) + 2);
     return (NQ_COUNT)((desc.current - desc.origin) + 2);
 }
 
@@ -1251,24 +1261,26 @@ openDomainResponseCallback (
 {
     CMRpcPacketDescriptor desc;         /* descriptor for SRVSVC request */
     CallbackParams* callParams = (CallbackParams*)params;
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     if (size < (sizeof(CMRpcUuid) + 4 + 4))
     {
-        TRCERR("response too short");
-        TRC1P("  size: %d", size);
-        TRCE();
-        return (NQ_STATUS)NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "response too short");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "  size: %d", size);
+        goto Exit;
     }
 
     cmRpcSetDescriptor(&desc, (NQ_BYTE*)data, FALSE);
     cmRpcParseUint32(&desc, &callParams->domainId);   /* policy ID */
     cmRpcParseUuid(&desc, &callParams->domainUuid);   /* policy uuid */
     cmRpcParseUint32(&desc, &callParams->status);     /* status */
+    result = (NQ_STATUS)callParams->status;
 
-    TRCE();
-    return (NQ_STATUS)callParams->status;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 
@@ -1299,13 +1311,13 @@ lookupDomainRequestCallback (
     CallbackParams* callParams;         /* casted parameters for callback */
     NQ_UINT32 refId;                    /* running referent ID */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     callParams = (CallbackParams*)params;
     cmRpcSetDescriptor(&desc, buffer, FALSE);
     refId = 1;
     cmRpcPackUint16(&desc, LOOKUPDOMAIN_OPNUM);
-    desc.origin = desc.current;                 /* for alligment to 4 bytes */
+    desc.origin = desc.current;                 /* for alignment to 4 bytes */
     cmRpcPackUint32(&desc, callParams->pipeId); /* id of policy handle */
     cmRpcPackUuid(&desc, &callParams->pipeUuid);/* uuid of policy handle */
     cmRpcPackUint16(&desc, (NQ_UINT16)(cmWStrlen(callParams->domain) * sizeof(NQ_WCHAR)));  /* length */
@@ -1315,7 +1327,7 @@ lookupDomainRequestCallback (
     cmRpcPackUnicode(&desc, callParams->domain, (CM_RP_SIZE32 | CM_RP_FRAGMENT32));
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", (desc.current - desc.origin) + 2);
     return (NQ_COUNT)((desc.current - desc.origin) + 2);
 }
 
@@ -1345,15 +1357,15 @@ lookupDomainResponseCallback (
     CMRpcPacketDescriptor desc;         /* descriptor for SRVSVC request */
     CallbackParams* callParams;         /* casted parameters for callback */
     NQ_UINT32 value;                    /* parsed long value */
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     if (size < (sizeof(CMRpcUuid) + 4 + 4))
     {
-        TRCERR("response too short");
-        TRC1P("  size: %d", size);
-        TRCE();
-        return (NQ_STATUS)NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "response too short");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "  size: %d", size);
+        goto Exit;
     }
     callParams = (CallbackParams*)params;
     cmRpcSetDescriptor(&desc, (NQ_BYTE*)data, FALSE);
@@ -1363,14 +1375,15 @@ lookupDomainResponseCallback (
     cmRpcParseUint32(&desc, &value);                    /* status */
     if (0 != value)
     {
-        TRCERR("unexpected status in response");
-        TRC1P("  status: %ld", value);
-        TRCE();
-        return (NQ_STATUS)NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "unexpected status in response");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "  status: %ld", value);
+        goto Exit;
     }
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 
@@ -1400,19 +1413,19 @@ openUserRequestCallback (
     CMRpcPacketDescriptor desc;         /* descriptor for SRVSVC request */
     CallbackParams* callParams;         /* casted parameters for callback */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     callParams = (CallbackParams*)params;
     cmRpcSetDescriptor(&desc, buffer, FALSE);
     cmRpcPackUint16(&desc, OPENUSER_OPNUM);
-    desc.origin = desc.current;                     /* for alligment to 4 bytes */
+    desc.origin = desc.current;                     /* for alignment to 4 bytes */
     cmRpcPackUint32(&desc, callParams->domainId);   /* id of policy handle */
     cmRpcPackUuid(&desc, &callParams->domainUuid);  /* uuid of policy handle */
     cmRpcPackUint32(&desc, callParams->access);     /* access mask */
     cmRpcPackUint32(&desc, callParams->token->rids[0]); /* rid */
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", (desc.current - desc.origin) + 2);
     return (NQ_COUNT)((desc.current - desc.origin) + 2);
 }
 
@@ -1441,15 +1454,15 @@ openUserResponseCallback (
 {
     CMRpcPacketDescriptor desc;         /* descriptor for SRVSVC request */
     CallbackParams* callParams;         /* casted parameters for callback */
+    NQ_STATUS result = NQ_FAIL;         /* return value */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     if (size < (sizeof(CMRpcUuid) + 4 + 4))
     {
-        TRCERR("response too short");
-        TRC1P("  size: %d", size);
-        TRCE();
-        return (NQ_STATUS)NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "response too short");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "  size: %d", size);
+        goto Exit;
     }
     callParams = (CallbackParams*)params;
     cmRpcSetDescriptor(&desc, (NQ_BYTE*)data, FALSE);
@@ -1458,13 +1471,15 @@ openUserResponseCallback (
     cmRpcParseUint32(&desc, &callParams->status);   /* status */
     if (0 != callParams->status)
     {
-        TRCERR("unexpected status in response");
-        TRC1P("  status: %ld", callParams->status);
-        TRCE();
-        return (NQ_STATUS)NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "unexpected status in response");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "  status: %ld", callParams->status);
+        goto Exit;
     }
-    TRCE();
-    return NQ_SUCCESS;
+    result = NQ_SUCCESS;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*====================================================================
@@ -1493,8 +1508,8 @@ closeRequestCallback (
     CMRpcPacketDescriptor desc;         /* descriptor for SRVSVC request */
     CallbackParams* callParams;         /* casted parameters for callback */
 
-    TRCB();
-    
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
+
     callParams = (CallbackParams*)params;
     cmRpcSetDescriptor(&desc, buffer, FALSE);
     cmRpcPackUint16(&desc, CLOSE_OPNUM);
@@ -1503,7 +1518,7 @@ closeRequestCallback (
     cmRpcPackUuid(&desc, callParams->uuid);     /* policy UUID */
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", (desc.current - desc.origin) + 2);
     return (NQ_COUNT)((desc.current - desc.origin) + 2);
 }
 
@@ -1518,7 +1533,7 @@ closeRequestCallback (
  *
  * RETURNS: NQ_SUCCESS or error code
  *
- * NOTES:   
+ * NOTES:
  *====================================================================
  */
 
@@ -1532,12 +1547,12 @@ closeResponseCallback (
 {
     CallbackParams* p;         /* casted parameters for callback */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     p = (CallbackParams*)params;
     p->status = NQ_SUCCESS;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", p->status);
     return (NQ_STATUS)p->status;
 }
 
@@ -1567,7 +1582,7 @@ getGroupsForUserRequestCallback (
     CMRpcPacketDescriptor desc;         /* descriptor for SRVSVC request */
     CallbackParams* callParams;         /* casted parameters for callback */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     callParams = (CallbackParams*)params;
     cmRpcSetDescriptor(&desc, buffer, FALSE);
@@ -1577,7 +1592,7 @@ getGroupsForUserRequestCallback (
     cmRpcPackUuid(&desc, &callParams->userUuid);    /* policy UUID */
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", (desc.current - desc.origin) + 2);
     return (NQ_COUNT)((desc.current - desc.origin) + 2);
 }
 
@@ -1609,8 +1624,9 @@ getGroupsForUserResponseCallback (
     CallbackParams* callParams;         /* casted parameters for callback */
     NQ_UINT32 cnt;                      /* parsed long value */
     NQ_COUNT idx;                       /* group index */
+    NQ_STATUS result = NQ_FAIL;         /* return value */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     callParams = (CallbackParams*)params;
     cmRpcSetDescriptor(&desc, (NQ_BYTE*)data, FALSE);
@@ -1619,9 +1635,9 @@ getGroupsForUserResponseCallback (
     cmRpcParseUint32(&desc, &cnt);              /* array - count */
     cmRpcParseSkip(&desc, 4);   /* array - ref id */
     cmRpcParseUint32(&desc, &cnt);              /* array - count */
-    if (cnt > UD_CS_MAXUSERGROUPS)
+    if (cnt > UD_CM_MAXUSERGROUPS)
     {
-        cnt = UD_CS_MAXUSERGROUPS;
+        cnt = UD_CM_MAXUSERGROUPS;
     }
     callParams->token->numRids = (NQ_UINT16)(cnt + 1);
     for (idx = 1; idx <= cnt; idx++)
@@ -1633,14 +1649,15 @@ getGroupsForUserResponseCallback (
     cmRpcParseUint32(&desc, &cnt);   /* status */
     if (0 != cnt)
     {
-        TRCERR("unexpected status in response");
-        TRC1P("  status: %ld", cnt);
-        TRCE();
-        return (NQ_STATUS)NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "unexpected status in response");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "  status: %ld", cnt);
+        goto Exit;
     }
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 #endif /* defined(UD_CC_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDEDOMAINMEMBERSHIP) || defined(UD_CS_INCLUDEPASSTHROUGH) */

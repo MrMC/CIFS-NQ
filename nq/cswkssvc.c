@@ -176,7 +176,7 @@ wkssvcNetWkstaGetInfo (
     /* parse input parameters */
 
     cmRpcParseSkip(in, 4);
-    cmRpcParseUnicode(in, &hostName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &hostName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseUint32(in, &infoLevel);
 
     TRC1P("info level: %ld", infoLevel);
@@ -275,7 +275,7 @@ wkssvcNetWkstaTransportEnum (
     /* parse input parameters */
 
     cmRpcParseSkip(in, 4);
-    cmRpcParseUnicode(in, &hostName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &hostName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcParseUint32(in, &infoLevel);
 
     TRC1P("info level: %ld", infoLevel);

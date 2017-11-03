@@ -27,15 +27,15 @@
 
 NQ_UINT32                                   /* SMB error or 0 */
 csFillFindEntry(
-    const NQ_TCHAR* pFileName,              /* file name */
-    SYFileInformation* fileInfo,            /* file infromation structure */
+    const NQ_WCHAR* pFileName,              /* file name */
+    SYFileInformation* fileInfo,            /* file information structure */
     NQ_BYTE** entry,                        /* IN: double pointer to the entry
                                                OUT: double pointer to the next entry */
     NQ_UINT16 level,                        /* information level as required by FIND */
     NQ_UINT32 fileIndex,                    /* file index in search */
     NQ_BOOL unicodeRequired,                /* whether UNICODE names ought to be returned */
     const NQ_BYTE* messageStart,            /* pointer to the beginning of the SMB message */
-    NQ_UINT maxLength,                      /* max response length */
+    NQ_UINT *length,                        /* IN: max response length, OUT: entry length before alignment */
     NQ_BOOL resumeKey,                      /* whether to return resume key for particular levels */
     NQ_BYTE** pNextEntryOffset              /* double pointer to nextEntryOffset field in the entry */
     );

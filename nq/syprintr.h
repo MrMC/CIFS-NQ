@@ -33,7 +33,7 @@
 
 SYPrinterHandle             /* printer handle */
 syGetPrinterHandle(
-    const NQ_TCHAR* name    /* printer name */
+    const NQ_WCHAR* name    /* printer name */
 );
 
 /* get printer info */
@@ -57,7 +57,7 @@ sySetPrinterInfo(
 NQ_STATUS                   /* NQ_SUCCESS or NQ_FAIL */
 syGetPrinterDriver(
     SYPrinterHandle handle, /* printer handle */
-    const NQ_TCHAR* os,     /* required OS */
+    const NQ_WCHAR* os,     /* required OS */
     SYPrinterDriver* info   /* pointer to the printer info */
 );
 
@@ -84,9 +84,9 @@ syPrinterGetSecurityDescriptor(
 NQ_UINT32                               /* job ID or zero for error */
 syStartPrintJob(
     SYPrinterHandle handle,             /* printer handle */
-    const NQ_TCHAR* name,               /* job (document) name */
-    const NQ_TCHAR* file,               /* file name */
-    const NQ_TCHAR* type,               /* data type or NULL */
+    const NQ_WCHAR* name,               /* job (document) name */
+    const NQ_WCHAR* file,               /* file name */
+    const NQ_WCHAR* type,               /* data type or NULL */
     const NQ_BYTE* sd,                  /* security descriptor */
     NQ_COUNT sdLen,                     /* security descriptor length */
     const void *pUser                   /* job owner */

@@ -44,8 +44,8 @@ typedef struct _ccvolumeinfo
 {
     NQ_UINT sectorsPerCluster;	/* Number of sectors per claster. */
     NQ_UINT bytesPerSector;		/* Number of bytes per sector. */
-    NQ_UINT freeClusters;		/* Number of free clusters. */
-    NQ_UINT totalClusters;		/* number of clusters on disk. */
+    NQ_UINT64 freeClusters;		/* Number of free clusters. */
+    NQ_UINT64 totalClusters;		/* number of clusters on disk. */
     NQ_UINT fsType;				/* File system type as disk or DC. */
     NQ_UINT serialNumber;		/* Disk serial number. */
 } CCVolumeInfo; /* Volume information structure. */

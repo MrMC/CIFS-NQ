@@ -27,8 +27,8 @@
 
 /* --- Static definitions, functions & data --- */
 
-#define NOPAYLOAD_BUFFERSIZE 1024	/* buffer size for messages with no call payload */ 
-#define MAX_FRAGMENT 65448			/* max fragment size for calls */ 
+#define NOPAYLOAD_BUFFERSIZE 1024     /* buffer size for messages with no call payload */
+#define MAX_FRAGMENT 65448            /* max fragment size for calls */
 
 static NQ_COUNT callId;     /* running number */
 
@@ -41,19 +41,19 @@ static const CMRpcDcerpcSyntaxId transferSyntax = {
 
 static NQ_BYTE * createFragmentHeader(CMBufferWriter * pWriter, NQ_BYTE type, NQ_UINT16 fragLength, NQ_BYTE fragType)
 {
-	NQ_BYTE * pFragLength;			/* pointer to the fragment length field */
-	
-	cmBufferWriteByte(pWriter, CM_RP_MAJORVERSION);	/* major vers */
-	cmBufferWriteByte(pWriter, CM_RP_MINORVERSION);	/* minor vers */
-	cmBufferWriteByte(pWriter, type);				/* packet type (e.g. - bind) */
-	cmBufferWriteByte(pWriter, fragType);			/* flags */
-	cmBufferWriteByte(pWriter, CM_RP_DREPLE);		/* data representation: LE byte order */
-	cmBufferWriteByte(pWriter, 0);					/* data representation: float point */
-	cmBufferWriteUint16(pWriter, 0);					/* data representation pad */
-	pFragLength = cmBufferWriterGetPosition(pWriter);
-	cmBufferWriteUint16(pWriter, fragLength);		/* fragment length */
-	cmBufferWriteUint16(pWriter, 0);					/* auth length */
-	cmBufferWriteUint32(pWriter, callId);			/* call ID */
+    NQ_BYTE * pFragLength;                              /* pointer to the fragment length field */
+
+    cmBufferWriteByte(pWriter, CM_RP_MAJORVERSION);     /* major vers */
+    cmBufferWriteByte(pWriter, CM_RP_MINORVERSION);     /* minor vers */
+    cmBufferWriteByte(pWriter, type);                   /* packet type (e.g. - bind) */
+    cmBufferWriteByte(pWriter, fragType);               /* flags */
+    cmBufferWriteByte(pWriter, CM_RP_DREPLE);           /* data representation: LE byte order */
+    cmBufferWriteByte(pWriter, 0);                      /* data representation: float point */
+    cmBufferWriteUint16(pWriter, 0);                    /* data representation pad */
+    pFragLength = cmBufferWriterGetPosition(pWriter);
+    cmBufferWriteUint16(pWriter, fragLength);           /* fragment length */
+    cmBufferWriteUint16(pWriter, 0);                    /* auth length */
+    cmBufferWriteUint32(pWriter, callId);               /* call ID */
     callId++;
     return pFragLength;
 }
@@ -62,63 +62,63 @@ static NQ_BYTE * createFragmentHeader(CMBufferWriter * pWriter, NQ_BYTE type, NQ
 
 static void setFragmentLength(CMBufferWriter * pWriter, NQ_BYTE * pFragLength)
 {
-	NQ_BYTE * pTemp;			/* temporary pointer in the writer */
-	NQ_UINT16 fragLength;		/* fragment length */
-	
-	fragLength = (NQ_UINT16)cmBufferWriterGetDataCount(pWriter);	
-	pTemp = cmBufferWriterGetPosition(pWriter);
-	cmBufferWriterSetPosition(pWriter, pFragLength);
-	cmBufferWriteUint16(pWriter, fragLength);		/* fragment length */
-	cmBufferWriterSetPosition(pWriter, pTemp);
+    NQ_BYTE * pTemp;             /* temporary pointer in the writer */
+    NQ_UINT16 fragLength;        /* fragment length */
+
+    fragLength = (NQ_UINT16)cmBufferWriterGetDataCount(pWriter);
+    pTemp = cmBufferWriterGetPosition(pWriter);
+    cmBufferWriterSetPosition(pWriter, pFragLength);
+    cmBufferWriteUint16(pWriter, fragLength);        /* fragment length */
+    cmBufferWriterSetPosition(pWriter, pTemp);
 }
 
 /* parse response fragment header and fill PDU descriptor */
 static NQ_INT parseFragmentHeader(const NQ_BYTE * data, CMRpcPacketDescriptor * pDesc, CMRpcDcerpcPacket * pPack)
 {
-	pPack->rpcVers = *data;						/* RPC version */ 
-	pPack->rpcVersMinor = *(data + 1);			/* RPC minor version */
-	pPack->packetType = *(data + 2);			/* packet type */
-	pPack->pfcFlags = *(data + 3);				/* packet flags */
-	pPack->drep.flags = *(data + 4);			/* data representation: flags - byte order */
-	/* now we have byte order so that we can build descriptor */
-	cmRpcSetDescriptor(pDesc, (NQ_BYTE *)data, 0 == (pPack->drep.flags & CM_RP_DREPLE));
-	cmRpcParseSkip(pDesc, 5);					/* already parsed */
-	cmRpcParseByte(pDesc, &pPack->drep.fp);		/* data representation: float point */
-	cmRpcParseUint16(pDesc, (NQ_UINT16 *)&pPack->drep.pad);	/* data representation: padding */
-	cmRpcParseUint16(pDesc, (NQ_UINT16 *)&pPack->fragLength);/* fragment length */
-	cmRpcParseUint16(pDesc, (NQ_UINT16 *)&pPack->authLength);/* auth length */
-	cmRpcParseUint32(pDesc, (NQ_UINT32 *)&pPack->callId);	/* call ID */
+    pPack->rpcVers = *data;                                    /* RPC version */
+    pPack->rpcVersMinor = *(data + 1);                         /* RPC minor version */
+    pPack->packetType = *(data + 2);                           /* packet type */
+    pPack->pfcFlags = *(data + 3);                             /* packet flags */
+    pPack->drep.flags = *(data + 4);                           /* data representation: flags - byte order */
+    /* now we have byte order so that we can build descriptor */
+    cmRpcSetDescriptor(pDesc, (NQ_BYTE *)data, 0 == (pPack->drep.flags & CM_RP_DREPLE));
+    cmRpcParseSkip(pDesc, 5);                                  /* already parsed */
+    cmRpcParseByte(pDesc, &pPack->drep.fp);                    /* data representation: float point */
+    cmRpcParseUint16(pDesc, (NQ_UINT16 *)&pPack->drep.pad);    /* data representation: padding */
+    cmRpcParseUint16(pDesc, (NQ_UINT16 *)&pPack->fragLength);  /* fragment length */
+    cmRpcParseUint16(pDesc, (NQ_UINT16 *)&pPack->authLength);  /* auth length */
+    cmRpcParseUint32(pDesc, (NQ_UINT32 *)&pPack->callId);      /* call ID */
     return pPack->packetType;
 }
 
-static NQ_HANDLE connectPipe(const NQ_WCHAR * hostName, const AMCredentialsW * pCredentials, const CCDcerpcPipeDescriptor * pipeDesc, NQ_BOOL doDfs)
+NQ_HANDLE connectPipe(const NQ_WCHAR * hostName, const AMCredentialsW * pCredentials, const CCDcerpcPipeDescriptor * pipeDesc, NQ_BOOL doDfs)
 {
-    CCServer * pServer = NULL;  	    /* pointer to server */
-    CCShare * pShare = NULL;		    /* pointer to IPC$ share */
-	CCFile * pFile;		                /* file handle */
-	CMRpcDcerpcPacket rpcHeader;   	    /* fragment header */
-	CMRpcPacketDescriptor rpcDescr;	    /* incoming packet parser */
-    CMBufferWriter writer;  		    /* writer for bind PDU */
-    NQ_BYTE * pBuf;					    /* read and write buffer */
-    NQ_COUNT dataLen;				    /* buffer length or data length into the buffer */
-    NQ_BYTE * pFragLength;			    /* pointer to the fragment length field in the header */
-    NQ_UINT16 maxLen;				    /* max fragment length (either xmit or recv) */
-    NQ_INT type;					    /* packet type in response */
-    NQ_BOOL security[] = {TRUE, FALSE}; /* whether to use extended security */
-    NQ_INT i;                           /* just a counter */
-    NQ_WCHAR * rpcNamePrefixed;         /* RPC pipe name with prefix */
-#define RPC_OPENACCESS 0x2019f          /* access mask for opening an RPC pipe as a file */ 
+    CCServer * pServer = NULL;             /* pointer to server */
+    CCShare * pShare = NULL;               /* pointer to IPC$ share */
+    CCFile * pFile = NULL;                 /* file handle */
+    CMRpcDcerpcPacket rpcHeader;           /* fragment header */
+    CMRpcPacketDescriptor rpcDescr;        /* incoming packet parser */
+    CMBufferWriter writer;                 /* writer for bind PDU */
+    NQ_BYTE * pBuf = NULL;                 /* read and write buffer */
+    NQ_COUNT dataLen;                      /* buffer length or data length into the buffer */
+    NQ_BYTE * pFragLength;                 /* pointer to the fragment length field in the header */
+    NQ_UINT16 maxLen;                      /* max fragment length (either xmit or recv) */
+    NQ_INT type;                           /* packet type in response */
+    NQ_BOOL security[] = {TRUE, FALSE};    /* whether to use extended security */
+    NQ_COUNT i;                            /* just a counter */
+    NQ_WCHAR * rpcNamePrefixed;            /* RPC pipe name with prefix */
+#define RPC_OPENACCESS 0x2019f             /* access mask for opening an RPC pipe as a file */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "host:%s credentials:%p pipe:%p dfs:%s", cmWDump(hostName), pCredentials, pipeDesc, doDfs ? "TRUE" : "FALSE");
 
     /* open file */
     for (i = 0; i < sizeof(security)/sizeof(security[0]); i++)
     {
-        const AMCredentialsW * oldCredentials = pCredentials;       /* saved credentials */ 
+        const AMCredentialsW * oldCredentials = pCredentials;       /* saved credentials */
         const AMCredentialsW * newCredentials = oldCredentials;     /* try these credentials first */
 
-    	pServer = ccServerFindOrCreate(hostName, security[i], NULL);
-	    if (NULL != pServer)
+        pServer = ccServerFindOrCreate(hostName, security[i], NULL);
+        if (NULL != pServer)
         {
             pShare = ccShareConnectIpc(pServer, &newCredentials);
             if (newCredentials != oldCredentials)
@@ -126,88 +126,85 @@ static NQ_HANDLE connectPipe(const NQ_WCHAR * hostName, const AMCredentialsW * p
                 /* new credentials were allocated */
                 cmMemoryFree(newCredentials);
             }
-	        if (NULL != pShare)
-	        {   
-	            cmListItemUnlock((CMItem *)pServer);
+            if (NULL != pShare)
+            {
+                cmListItemUnlock((CMItem *)pServer);
                 break;
-    	    }
+            }
             cmListItemUnlock((CMItem *)pServer);
         }
     }
-    
+
     if (NULL == pShare)
     {
-	    sySetLastError(NQ_ERR_SRVERROR);
-	    LOGERR(CM_TRC_LEVEL_ERROR, "Unable to connect to server");
-	    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	    return NULL;
+        sySetLastError((NULL == pServer) ? NQ_ERR_SRVERROR : NQ_ERR_LOGONFAILURE);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to connect to server");
+        goto Exit;
     }
 
-    rpcNamePrefixed = cmMemoryAllocate((NQ_UINT)((cmWStrlen (pipeDesc->name) + cmWStrlen(pServer->smb->rpcNamePrefix) + 1 ) * sizeof(NQ_WCHAR)));
+    rpcNamePrefixed = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)((cmWStrlen (pipeDesc->name) + cmWStrlen(pServer->smb->rpcNamePrefix) + 1 ) * sizeof(NQ_WCHAR)));
     if (NULL == rpcNamePrefixed)
     {
-	    sySetLastError(NQ_ERR_NOMEM);
-	    LOGERR(CM_TRC_LEVEL_ERROR, "Unable to connect to server");
-	    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	    return NULL;
+        sySetLastError(NQ_ERR_NOMEM);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+        goto Exit;
     }
     syWStrcpy(rpcNamePrefixed, pServer->smb->rpcNamePrefix);
     syWStrcat(rpcNamePrefixed, pipeDesc->name);
     pFile = ccFileCreateOnServer(
-				pShare, 
-				rpcNamePrefixed, 
-				FALSE,
-				RPC_OPENACCESS, 
-				FILE_SM_DENY_NONE,
-				0,
-				FALSE,
-				0,
-				FILE_CA_FAIL,
-				FILE_OA_OPEN,
-				TRUE
-				);
+                pShare,
+                rpcNamePrefixed,
+                FALSE,
+                RPC_OPENACCESS,
+                FILE_SM_DENY_NONE,
+                0,
+                FALSE,
+                0,
+                FILE_CA_FAIL,
+                FILE_OA_OPEN,
+                TRUE,
+				FILE_OPLOCK_LEVEL_BATCH
+                );
     cmMemoryFree(rpcNamePrefixed);
-	if (NULL == pFile)
-	{
-	    cmListItemUnlock((CMItem *)pShare);
-		LOGERR(CM_TRC_LEVEL_ERROR, "Unable to connect to %s", cmWDump(pipeDesc->name));
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NULL;
-	}
+    if (NULL == pFile)
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to connect to %s", cmWDump(pipeDesc->name));
+        goto Error1;
+    }
     cmListItemUnlock((CMItem *)pShare);
-	/* allocate buffer of enough size for both request and response */
-	pBuf = cmBufManTake(NOPAYLOAD_BUFFERSIZE);
-	if (NULL == pBuf)
-	{
-		sySetLastError(NQ_ERR_OUTOFMEMORY);
-		LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate buffer");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NULL;
-	}
-	
-	/* compose Bind request */
-	/*   header */ 
-	dataLen = NOPAYLOAD_BUFFERSIZE;
+    pShare = NULL;
+    /* allocate buffer of enough size for both request and response */
+    pBuf = cmBufManTake(NOPAYLOAD_BUFFERSIZE);
+    if (NULL == pBuf)
+    {
+        sySetLastError(NQ_ERR_OUTOFMEMORY);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate buffer");
+        goto Error2;
+    }
+
+    /* compose Bind request */
+    /*   header */
+    dataLen = NOPAYLOAD_BUFFERSIZE;
     cmBufferWriterInit(&writer, pBuf, dataLen);
     pFragLength = createFragmentHeader(
-					&writer, 
-					CM_RP_PKT_BIND, 
-					0,
-					CM_RP_PFCFLAG_FIRST | CM_RP_PFCFLAG_LAST
-	    );
+                    &writer,
+                    CM_RP_PKT_BIND,
+                    0,
+                    CM_RP_PFCFLAG_FIRST | CM_RP_PFCFLAG_LAST
+        );
     /*   build Bind PDU without context */
-    cmBufferWriteUint16(&writer, (NQ_UINT16)MAX_FRAGMENT);  /* max xmit fragment */
-    cmBufferWriteUint16(&writer, (NQ_UINT16)MAX_FRAGMENT); 	/* max recv fragment */
-    cmBufferWriteUint32(&writer, 0);           				/* assocGroupId */
-    cmBufferWriteByte(&writer, 1);             				/* num contexts */
+    cmBufferWriteUint16(&writer, (NQ_UINT16)MAX_FRAGMENT);     /* max xmit fragment */
+    cmBufferWriteUint16(&writer, (NQ_UINT16)MAX_FRAGMENT);     /* max recv fragment */
+    cmBufferWriteUint32(&writer, 0);                           /* assocGroupId */
+    cmBufferWriteByte(&writer, 1);                             /* num contexts */
     cmBufferWriterAlign(&writer, pBuf, 4);
     /*   buld context */
-    cmBufferWriteUint16(&writer, 0);                   		/* context ID */
-    cmBufferWriteByte(&writer, 1);                     		/* num transfer syntaxes */
+    cmBufferWriteUint16(&writer, 0);                           /* context ID */
+    cmBufferWriteByte(&writer, 1);                             /* num transfer syntaxes */
     cmBufferWriterAlign(&writer, pBuf, 4);
-    cmBufferWriteUuid(&writer, &pipeDesc->uuid);            /* pipe GUID */
-    cmBufferWriteUint32(&writer, pipeDesc->version);    /* major/minor version */
-    cmBufferWriteUuid(&writer, &transferSyntax.uuid);  		/* transfer syntax signature */
+    cmBufferWriteUuid(&writer, &pipeDesc->uuid);               /* pipe GUID */
+    cmBufferWriteUint32(&writer, pipeDesc->version);           /* major/minor version */
+    cmBufferWriteUuid(&writer, &transferSyntax.uuid);          /* transfer syntax signature */
     cmBufferWriteUint32(&writer, transferSyntax.interfaceVersion);  /* transfer syntax version */
     /*   update fragment length */
     setFragmentLength(&writer, pFragLength);
@@ -216,99 +213,120 @@ static NQ_HANDLE connectPipe(const NQ_WCHAR * hostName, const AMCredentialsW * p
     /* bind the pipe */
     if (!ccWriteFile(pFile, pBuf, dataLen, &dataLen))
     {
-        cmBufManGive(pBuf);
-		LOGERR(CM_TRC_LEVEL_ERROR, "Error sending Bind request");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NULL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error sending Bind request");
+        goto Error2;
     }
-    
+
     /* analyse the response */
     if (!ccReadFile(pFile, pBuf, NOPAYLOAD_BUFFERSIZE, &dataLen))
     {
-        cmBufManGive(pBuf);
-		LOGERR(CM_TRC_LEVEL_ERROR, "Error receiving Bind response");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NULL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error receiving Bind response");
+        goto Error2;
     }
     type = parseFragmentHeader(pBuf, &rpcDescr, &rpcHeader);
     if (type != CM_RP_PKT_BINDACK)
     {
-        cmBufManGive(pBuf);
-		LOGERR(CM_TRC_LEVEL_ERROR, "Unable to bind to the pipe");
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to bind to the pipe");
         sySetLastError(NQ_ERR_BADACCESS);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NULL;
+        goto Error2;
     }
-    cmRpcParseUint16(&rpcDescr, &maxLen);		/* max xmit gragment length */
-    pFile->maxRpcXmit = maxLen > MAX_FRAGMENT ? MAX_FRAGMENT : maxLen;
-    cmRpcParseUint16(&rpcDescr, &maxLen);		/* max recv gragment length */
-    pFile->maxRpcRecv = maxLen > MAX_FRAGMENT ? MAX_FRAGMENT : maxLen;
-    
+    cmRpcParseUint16(&rpcDescr, &maxLen);        /* max xmit gragment length */
+    pFile->maxRpcXmit = (NQ_UINT16)(maxLen > MAX_FRAGMENT ? MAX_FRAGMENT : maxLen);
+    cmRpcParseUint16(&rpcDescr, &maxLen);        /* max recv gragment length */
+    pFile->maxRpcRecv = (NQ_UINT16)(maxLen > MAX_FRAGMENT ? MAX_FRAGMENT : maxLen);
+
+Exit:
     cmBufManGive(pBuf);
-    
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pFile);
     return (NQ_HANDLE)pFile;
+
+Error2:
+    if(NULL != pFile)
+    {
+        cmListItemUnlock((CMItem *)pFile);
+        pFile = NULL;
+    }
+
+Error1:
+    if(NULL != pShare)
+        cmListItemUnlock((CMItem *)pShare);
+    goto Exit;
 }
 
 /* -- API functions -- */
 
 NQ_BOOL ccDcerpcStart(void)
 {
-	callId = 1;
-	return TRUE;
+    callId = 1;
+    return TRUE;
 }
 
 void ccDcerpcShutdown(void)
 {
-	
+
 }
 
 NQ_HANDLE ccDcerpcConnect(const NQ_WCHAR * hostName, const AMCredentialsW * pCredentials, const CCDcerpcPipeDescriptor * pipeDesc, NQ_BOOL doDfs)
 {
     NQ_HANDLE handle;           /* resulting handle */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "host:%s credentials:%p pipe:%p dfs:%s", cmWDump(hostName), pCredentials, pipeDesc, doDfs ? "TRUE" : "FALSE");
     handle = connectPipe(hostName, NULL != pCredentials ? pCredentials : ccUserGetAnonymousCredentials(), pipeDesc, doDfs);
     if (NULL == handle)
     {
         handle = connectPipe(hostName, NULL, pipeDesc, doDfs);
     }
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", handle);
     return handle;
 }
 
 NQ_BOOL ccDcerpcCall(NQ_HANDLE pipeHandle, CCDcerpcRequestCallback request, CCDcerpcResponseCallback response, void * callParams)
 {
-	CCFile * pFile;		        /* casted file handle */
-    NQ_BOOL res = TRUE;         /* operation result */
-    NQ_BOOL firstFrag = TRUE;   /* whether fragment is the first one */
-	NQ_BYTE * pBuf;				/* read and write buffer */
-    NQ_COUNT dataLen;			/* buffer length or data length into the buffer */
-    NQ_BOOL moreData;			/* whether application has more data */
-    NQ_STATUS status;			/* status of callback execution */
-    NQ_COUNT pduLen;			/* PDU length applied by the caller (in callback) */
+    CCFile * pFile;                /* casted file handle */
+    NQ_BOOL res = TRUE;            /* operation result */
+    NQ_BOOL firstFrag = TRUE;      /* whether fragment is the first one */
+    NQ_BYTE * pBuf;                /* read and write buffer */
+    NQ_COUNT dataLen;              /* buffer length or data length into the buffer */
+    NQ_BOOL moreData;              /* whether application has more data */
+    NQ_STATUS status;              /* status of callback execution */
+    NQ_COUNT pduLen;               /* PDU length applied by the caller (in callback) */
+    NQ_BOOL result = FALSE;        /* return value */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "pipe:%p req:%p res:%p params:%p", pipeHandle, request, response, callParams);
 
-	/* allocate buffer of enough size for the request */
-	pFile = (CCFile *)pipeHandle;
-    dataLen = pFile->maxRpcXmit;
-	pBuf = cmBufManTake(dataLen);
-	if (NULL == pBuf)
-	{
-		sySetLastError(NQ_ERR_OUTOFMEMORY);
-		LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate buffer");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
-	}
+    /* allocate buffer of enough size for the request */
 
-    do 
+    if (NULL == pipeHandle)
     {
-        CMBufferWriter writer;  		/* writer for bind PDU */
-        NQ_BYTE fragType;				/* first and/or last flags */
+        LOGERR(CM_TRC_LEVEL_ERROR , "Invalid Handle");
+        sySetLastError(NQ_ERR_INVALIDHANDLE);
+        goto Exit;
+    }
+
+    if (!ccValidateFileHandle(pipeHandle))
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR , "Invalid Handle");
+        sySetLastError(NQ_ERR_INVALIDHANDLE);
+        goto Exit;
+    }
+
+    pFile = (CCFile *)pipeHandle;
+    dataLen = pFile->maxRpcXmit;
+    pBuf = cmBufManTake(dataLen);
+    if (NULL == pBuf)
+    {
+        sySetLastError(NQ_ERR_OUTOFMEMORY);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate buffer");
+        goto Exit;
+    }
+
+    do
+    {
+        CMBufferWriter writer;          /* writer for bind PDU */
+        NQ_BYTE fragType;                /* first and/or last flags */
 
         /* build header (just to skip it) and build Request PDU stub data */
-    	cmBufferWriterInit(&writer, pBuf, dataLen);
+        cmBufferWriterInit(&writer, pBuf, dataLen);
         createFragmentHeader(&writer, CM_RP_PKT_REQUEST, 0, 0);
         cmBufferWriteUint32(&writer, 0);     /* alloc hint */
         cmBufferWriteUint16(&writer, 0);     /* context id */
@@ -316,75 +334,73 @@ NQ_BOOL ccDcerpcCall(NQ_HANDLE pipeHandle, CCDcerpcRequestCallback request, CCDc
         /* place stub data */
         moreData = FALSE;
         pduLen = (*request)(
-					cmBufferWriterGetPosition(&writer), 
-					dataLen - cmBufferWriterGetDataCount(&writer),
-					callParams,
-					&moreData
-					);
+                    cmBufferWriterGetPosition(&writer),
+                    dataLen - cmBufferWriterGetDataCount(&writer),
+                    callParams,
+                    &moreData
+                    );
         if (pduLen == 0)
         {
-        	sySetLastError(NQ_ERR_OUTOFMEMORY);
-        	res = FALSE;
-        	break;
+            sySetLastError(NQ_ERR_OUTOFMEMORY);
+            res = FALSE;
+            break;
         }
-        
+
         /* re-build header and set fragment length */
         fragType = 0;
         if (firstFrag)
         {
-        	fragType |= CM_RP_PFCFLAG_FIRST;
-        	firstFrag = FALSE;
+            fragType |= CM_RP_PFCFLAG_FIRST;
+            firstFrag = FALSE;
         }
         if (!moreData)
         {
-        	fragType |= CM_RP_PFCFLAG_LAST;
+            fragType |= CM_RP_PFCFLAG_LAST;
         }
         dataLen = cmBufferWriterGetDataCount(&writer) + pduLen;
         cmBufferWriterSetPosition(&writer, pBuf);
         createFragmentHeader(&writer, CM_RP_PKT_REQUEST, (NQ_UINT16)dataLen, fragType);
-    	res = ccWriteFile(pipeHandle, pBuf, dataLen, &dataLen);
-    } 
+        res = ccWriteFile(pipeHandle, pBuf, dataLen, &dataLen);
+    }
     while(res && moreData);
 
     cmBufManGive(pBuf);
-    
+
     if (!res)
     {
-    	LOGERR(CM_TRC_LEVEL_ERROR, "Error sending request");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error sending request");
+        goto Exit;
     }
 
-	/* allocate buffer of enough size for the response */
-	pFile = (CCFile *)pipeHandle;
+    /* allocate buffer of enough size for the response */
+    pFile = (CCFile *)pipeHandle;
     dataLen = pFile->maxRpcRecv;
-	pBuf = cmBufManTake(dataLen);
-	if (NULL == pBuf)
-	{
-		sySetLastError(NQ_ERR_OUTOFMEMORY);
-		LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate buffer");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
-	}
-	
-	/* loop on sending Read(AndX) SMB */
+    pBuf = cmBufManTake(dataLen);
+    if (NULL == pBuf)
+    {
+        sySetLastError(NQ_ERR_OUTOFMEMORY);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate buffer");
+        goto Exit;
+    }
+
+    /* loop on sending Read(AndX) SMB */
     do
     {
-    	CMRpcPacketDescriptor rpcDescr;	/* incoming packet parser */
-    	CMRpcDcerpcPacket rpcHeader;   	/* fragment header */
-    	NQ_BYTE cancelCount;			/* cancel count from PDU */
-        NQ_INT type;					/* packet type in response */
-    	           		   
+        CMRpcPacketDescriptor rpcDescr;    /* incoming packet parser */
+        CMRpcDcerpcPacket rpcHeader;       /* fragment header */
+        NQ_BYTE cancelCount;               /* cancel count from PDU */
+        NQ_INT type;                       /* packet type in response */
+
         res = ccReadFile(pipeHandle, pBuf, pFile->maxRpcRecv, &dataLen);
         if (!res)
         {
-        	break;
+            break;
         }
         /* parse header and withdraw packet type */
         type = parseFragmentHeader(pBuf, &rpcDescr, &rpcHeader);
         if (type != CM_RP_PKT_RESPONSE)
         {
-        	LOGERR(CM_TRC_LEVEL_ERROR, "Received packet is not Response");
+            LOGERR(CM_TRC_LEVEL_ERROR, "Received packet is not Response");
             sySetLastError(NQ_ERR_BADPARAM);
             res = FALSE;
             break;
@@ -395,7 +411,7 @@ NQ_BOOL ccDcerpcCall(NQ_HANDLE pipeHandle, CCDcerpcRequestCallback request, CCDc
         cmRpcParseByte(&rpcDescr, &cancelCount);
         if (0 != cancelCount)
         {
-        	LOGERR(CM_TRC_LEVEL_ERROR, "Packet received with cancel count: %d", cancelCount);
+            LOGERR(CM_TRC_LEVEL_ERROR, "Packet received with cancel count: %d", cancelCount);
             sySetLastError(NQ_ERR_BADPARAM);
             res = FALSE;
             break;
@@ -407,24 +423,26 @@ NQ_BOOL ccDcerpcCall(NQ_HANDLE pipeHandle, CCDcerpcRequestCallback request, CCDc
         status = (*response)(rpcDescr.current, (NQ_COUNT)(rpcHeader.fragLength) - (NQ_COUNT)(rpcDescr.current - rpcDescr.origin), callParams, moreData);
         if (NQ_SUCCESS != status)
         {
-        	sySetLastError((NQ_UINT32)status);
-        	res = FALSE;
-        	break;
+            sySetLastError((NQ_UINT32)status);
+            res = FALSE;
+            break;
         }
     }
     while (moreData && res);
 
     cmBufManGive(pBuf);
-    
-    if (NQ_FAIL == dataLen)
+
+    if ((NQ_COUNT) NQ_FAIL == dataLen)
     {
-    	LOGERR(CM_TRC_LEVEL_ERROR, "Error receiving response");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error receiving response");
+        goto Exit;
     }
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return res;
+    result = res;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+    return result;
 }
 
 NQ_STATUS ccDcerpcDisconnect(NQ_HANDLE pipeHandle)

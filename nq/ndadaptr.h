@@ -29,22 +29,18 @@ typedef struct
     NQ_UINT idx;                /* adapter index */
     NQ_IPADDRESS4 ip;            /* this adapter address (in NBO) */
     NQ_IPADDRESS4 bcast;         /* broadcast address already in NBO */
-    NQ_IPADDRESS4 wins;          /* WINS address already in NBO */
     NQ_INT status;              /* see values below */
     NQ_BOOL typeB;              /* broadcast registration (otherwise - use WINS) */
     SYSocketHandle nsSocket;    /* Name Service listening socket */
     SYSocketHandle dsSocket;    /* Datagram Service listening socket */
-#ifdef UD_NB_RETARGETSESSIONS
-    SYSocketHandle ssSocket;    /* Session Service listening socket */
-#endif
     SYSocketHandle newSocket;   /* Accepted dynamic socket (used in SS only) */
     NQ_UINT16 inPort;           /* sender port from the incoming message (in NBO) */
     NQ_IPADDRESS4 inIp;          /* sender address from the incoming message (in NBO) */
-    NQ_UINT16 inTranId;         /* sender Tran ID (not persdistent) */
+    NQ_UINT16 inTranId;         /* sender Tran ID (not persistent) */
     const NQ_BYTE* inMsg;       /* incoming message pointer */
     NQ_UINT inLen;              /* incoming message length */
     NQ_BYTE* outMsg;            /* outgoing message buffer */
-    NQ_BOOL bcastDest;          /* the destination of the incoming msg was broadcast */
+    NQ_BOOL bcastDest;          /* the destination of the incoming message was broadcast */
     NQ_IPADDRESS4 subnet;       /* subnet mask */
     NQ_BYTE mac[6];             /* MAC address (may be zeroed) */
 }
@@ -91,6 +87,11 @@ NDAdapterInfo*
 ndFindAdapter(
     NQ_IPADDRESS4 ip,
     NDAdapterInfo *internalAdapter
+    );
+
+NQ_UINT
+ndGetNumAdapters(
+    void
     );
 
 #endif  /* _NDADAPTR_H_ */

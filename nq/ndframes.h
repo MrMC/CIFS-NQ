@@ -31,7 +31,8 @@ ndGenerateNameWhateverRequest(
     CMNetBiosHeader* msgHdr,        /* pointer to the buffer of enough length */
     const CMNetBiosName name,       /* name to use in the request */
     NQ_UINT32 ip,                   /* name's IP in NBO */
-    NQ_BOOL nodeTypeB               /* TRUE for B type */
+    NQ_BOOL nodeTypeB,              /* TRUE for B type */
+	NQ_BOOL isGroupName				/* TRUE if its a group name */
     );
 
 /* Generate Name <whatever> Response packet */

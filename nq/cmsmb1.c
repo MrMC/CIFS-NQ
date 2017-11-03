@@ -16,7 +16,7 @@
 #include "cmsmb1.h"
 #include "cmfsutil.h"
 
-static const NQ_BYTE cmSmbProtocolId[4] = {0xFF, 0x53, 0x4D, 0x42};
+const NQ_BYTE cmSmbProtocolId[4] = {0xFF, 0x53, 0x4D, 0x42};
 
 static void smbHeaderInit(CMSmbHeader *header)
 {
@@ -53,6 +53,7 @@ void cmSmbHeaderRead(CMSmbHeader *header, CMBufferReader *reader)
 	
     /* set header start address in this buffer */
     header->_start = cmBufferReaderGetPosition(reader);
+    header->size = SMB_HEADERSIZE;
 
     cmBufferReaderSkip(reader, 4);                 /* protocol signature */
     cmBufferReadByte(reader, &header->command);

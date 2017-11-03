@@ -23,9 +23,7 @@
 
 typedef struct
 {
-    NQ_TCHAR fileName[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN)];    /* filename required */
-    NQ_TCHAR fullName[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN)];    /* full path filename to open */
-    NQ_TCHAR pipeName[7];                                               /* buffer for pipe name */
+    NQ_WCHAR pipeName[7];                                               /* buffer for pipe name */
 }
 StaticData;
 
@@ -53,19 +51,26 @@ cmCifsUtilsInit(
     void
     )
 {
-    TRCB();
+    NQ_STATUS result = NQ_FAIL;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
     if (NULL == staticData)
-       return NQ_FAIL;
+    {
+        sySetLastError(NQ_ERR_NOMEM);
+        goto Exit;
+    }
 #endif /* SY_FORCEALLOCATION */
 
-    cmAnsiToTchar(staticData->pipeName, "\\PIPE\\");
+    cmAnsiToUnicode(staticData->pipeName, "\\PIPE\\");
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -85,25 +90,27 @@ cmCifsUtilsExit(
     void
     )
 {
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     /* release memory */
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
-        syFree(staticData);
+        cmMemoryFree(staticData);
     staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 /*
  *====================================================================
  * PURPOSE: converts network filename to the host system filename
  *--------------------------------------------------------------------
- * PARAMS:  IN path to the filesystem (share mapping)
+ * PARAMS:  IN/OUT result buffer
+ *          IN path to the filesystem (share mapping)
  *          IN network filename
  *          IN true if the above name is UNICODE
+ *          IN true if special characters are allowed
  *
  * RETURNS: filename in the host format or NULL on error
  *
@@ -116,26 +123,22 @@ cmCifsUtilsExit(
  *====================================================================
  */
 
-NQ_TCHAR*
-cmCifsNtohFilename(
-    const NQ_TCHAR* shareName,
-    const NQ_TCHAR* netFilename,
-    NQ_BOOL unicodeRequired
-    )
+NQ_WCHAR * cmCifsNtohFilename(NQ_WCHAR * buffer, const NQ_WCHAR* shareName, const NQ_WCHAR* netFilename, NQ_BOOL unicodeRequired, NQ_BOOL isSpecialChars)
 {
-    NQ_UINT shareLen = (NQ_UINT)cmTStrlen(shareName);              /* partial string length */
-    NQ_UINT nameLen = (NQ_UINT)(unicodeRequired? 
-                    cmWStrlen((NQ_WCHAR*)netFilename) :
-                    syStrlen((NQ_CHAR*)netFilename));
+    NQ_UINT shareLen = NULL == shareName? 0: (NQ_UINT)cmWStrlen(shareName);              /* partial string length */
+    NQ_UINT nameLen = (NQ_UINT)(unicodeRequired? cmWStrlen((NQ_WCHAR*)netFilename) : syStrlen((NQ_CHAR*)netFilename));
+    NQ_WCHAR * pName;		/* pointer to file name after the share path */
+    NQ_WCHAR * pFileName = NULL;
+    NQ_WCHAR * pResult = NULL;
+    NQ_BOOL hasWildcards = FALSE;
 
-    TRCB();
-    
-    /* check that the result will fit into the maximum file name length of the 
-     * local file system */
-    if (nameLen + shareLen > UD_FS_FILENAMELEN) 
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buffer:%p, shareName:%p netFilename:%p unicodeRequired:%s", buffer, shareName, netFilename, unicodeRequired ? "TRUE" : "FALSE");
+ 
+    /* check that the result will fit into the maximum file name length of the local file system */
+    if (nameLen + shareLen > CM_MAXFILENAMELEN)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Local file name too long: %d", nameLen + shareLen);
-        return NULL;
+        goto Exit;
     }
 
     /* 1) convert filename to the host filesystem encoding
@@ -145,68 +148,97 @@ cmCifsNtohFilename(
 
     /* convert filename from whatever encoding into the host filesystem encoding */
     /* full local file name = local share path + separator + network file name */
-    /* max network file name length = UD_FS_FILENAMELEN - local share path length - separator length */
-
-    staticData->fileName[UD_FS_FILENAMELEN - shareLen - 1] = cmTChar('\0');
+    /* max network file name length = SY_MAXFILENAMELEN- local share path length - separator length */
 
     if (unicodeRequired)
     {
-        netFilename = (NQ_TCHAR*)cmAllignTwo(netFilename);
-        cmUnicodeToTcharN(staticData->fileName, (NQ_WCHAR*)netFilename, UD_FS_FILENAMELEN - shareLen - 1);
+        netFilename = (NQ_WCHAR*)cmAllignTwo(netFilename);
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "netFilename:%s", cmWDump(netFilename));
+        if (*netFilename != cmWChar(SY_PATHSEPARATOR) && *netFilename != cmWChar('\\') && NULL != shareName)
+        {
+            pName = buffer + shareLen + 1;
+        }
+        else
+        {
+            pName = buffer + shareLen;
+        }
+        cmWStrncpy(pName, (NQ_WCHAR*)netFilename, CM_MAXFILENAMELEN - shareLen - 1);
     }
     else
-        cmAnsiToTcharN(staticData->fileName, (NQ_CHAR*)netFilename, UD_FS_FILENAMELEN - shareLen - 1);
-
-    /* change SMB path separator (backslash) into host path separator */
-
     {
-        NQ_TCHAR* nextSeparator; /* pointer to the next separator in the string */
-
-        nextSeparator = staticData->fileName;
-
-        while ((nextSeparator = cmTStrchr(nextSeparator, cmTChar('\\'))) != NULL )
+        if ((NQ_CHAR)*netFilename != SY_PATHSEPARATOR && (NQ_CHAR)*netFilename != '\\' && NULL != shareName)
         {
-            *nextSeparator++ = cmTChar(SY_PATHSEPARATOR);
+            pName = buffer + shareLen + 1;
+        }
+        else
+        {
+            pName = buffer + shareLen;
+        }
+        cmAnsiToUnicodeN(pName, (NQ_CHAR*)netFilename, CM_MAXFILENAMELEN - shareLen - 1);
+    }
+   
+    /* change SMB path separator (backslash) into host path separator */
+    {
+        NQ_WCHAR* nextSeparator; /* pointer to the next separator in the string */
+
+        nextSeparator = pName;
+        pFileName = nextSeparator;
+
+        while ((nextSeparator = cmWStrchr(nextSeparator, cmWChar('\\'))) != NULL )
+        {
+            *nextSeparator++ = cmWChar(SY_PATHSEPARATOR);
+            pFileName = nextSeparator;
         }
     }
 
-    /* convert share path into filesystem encoding */
-
-    cmTStrcpy(staticData->fullName, shareName);
-
-    /* add leading path separator */
-
-    if (*staticData->fileName != cmTChar(SY_PATHSEPARATOR))
+    if (NULL != shareName)
     {
-        staticData->fullName[shareLen] = cmTChar(SY_PATHSEPARATOR);
-        staticData->fullName[shareLen + 1] = cmTChar('\0');
+        /* convert share path into file system encoding */
+    	cmWStrcpy(buffer, shareName);
+
+        /* add leading path separator */
+    	if (*pName != cmWChar(SY_PATHSEPARATOR))
+    	{
+    		buffer[shareLen] = cmWChar(SY_PATHSEPARATOR);
+    	}
     }
 
-    /* compose full name from filename and the share path */
-
-    cmTStrcat(staticData->fullName, staticData->fileName);
-
     /* remove possible trailing path separator */
-
     {
         NQ_INT len; /* name length */
 
-        len = (NQ_INT)cmTStrlen(staticData->fullName);
-        if (len > 0 && staticData->fullName[len - 1] == cmTChar(SY_PATHSEPARATOR))
+        len = (NQ_INT)cmWStrlen(buffer);
+        if (len > 0 && buffer[len - 1] == cmWChar(SY_PATHSEPARATOR))
         {
-            staticData->fullName[len - 1] = cmTChar('\0');
+        	buffer[len - 1] = cmWChar('\0');
         }
     }
 
-    if (!cmTStrncmp(staticData->fileName, staticData->pipeName, 6))
+    if (!cmWStrncmp(buffer, staticData->pipeName, 6))
     {
-        TRC("PIPE is requested. Pipes are not supported");
-        TRCB();
-        return NULL;
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "PIPE is requested. Pipes are not supported");
+        goto Exit;
     }
 
-    TRCE();
-    return staticData->fullName;
+    hasWildcards = pFileName && !isSpecialChars && (
+           (cmWStrchr(pFileName, cmWChar('*')) != NULL)
+        || (cmWStrchr(pFileName, cmWChar('?')) != NULL)
+        || (cmWStrchr(pFileName, cmWChar('<')) != NULL)
+        || (cmWStrchr(pFileName, cmWChar('>')) != NULL)
+        || (cmWStrchr(pFileName, cmWChar('"')) != NULL)
+		|| (cmWStrchr(pFileName, cmWChar('\\')) != NULL)
+		|| (cmWStrchr(pFileName, cmWChar('/')) != NULL))
+        ;
+    if (hasWildcards)
+    {
+    	LOGERR(CM_TRC_LEVEL_ERROR, "Local file name has illegal characters");
+        goto Exit;
+    }
+    pResult = buffer;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p %s", pResult, cmWDump(pResult));
+    return pResult;
 }
 
 /*
@@ -224,14 +256,14 @@ cmCifsNtohFilename(
 
 void
 cmCifsHtonFilename(
-    NQ_TCHAR* pFileName
-    )
+	NQ_WCHAR* pFileName
+	)
 {
     /* convert path separators into '\' */
 
-    while ((pFileName = cmTStrchr(pFileName, cmTChar(SY_PATHSEPARATOR))) != NULL )
+    while ((pFileName = cmWStrchr(pFileName, cmWChar(SY_PATHSEPARATOR))) != NULL )
     {
-        *pFileName++ = cmTChar('\\');
+        *pFileName++ = cmWChar('\\');
     }
 }
 
@@ -247,14 +279,14 @@ cmCifsHtonFilename(
  *====================================================================
  */
 
-const NQ_TCHAR*
+const NQ_WCHAR*
 cmCifsExtractFilenameFromFullName(
-    const NQ_TCHAR* fullName
+    const NQ_WCHAR* fullName
     )
 {
-    NQ_TCHAR* fName; /* the result */
+    NQ_WCHAR* fName; /* the result */
 
-    fName = cmTStrrchr(fullName, cmTChar(SY_PATHSEPARATOR));
+    fName = cmWStrrchr(fullName, cmWChar(SY_PATHSEPARATOR));
 
     return (fName == NULL)? fullName: fName + 1;
 }
@@ -275,28 +307,63 @@ cmCifsExtractFilenameFromFullName(
 
 void
 cmCifsTimeToSmbTime(
-    NQ_UINT32 time,
+    NQ_TIME time,
     NQ_UINT16* smbTime,
     NQ_UINT16* smbDate
     )
 {
     SYTimeFragments frag;      /* time, decomposed */
+    NQ_UINT32 tmpTime = cmTimeConvertMSecToSec(&time);
 
-    /* if time is les then Jan 1, 1980, convert it to Jan 1, 1980 */
+    /* if time is less then Jan 1, 1980, convert it to Jan 1, 1980 */
 
-    if (time < (60 * 60 * 24 * (365 * 10 + 3)))
+    if (tmpTime < (60 * 60 * 24 * (365 * 10 + 3)))
     {
-        time = 60 * 60 * 24 * (365 * 10 + 3);
+    	tmpTime = 60 * 60 * 24 * (365 * 10 + 3);
     }
 
     /* decompose into fragments */
 
-    syDecomposeTime(time, &frag);
+    syDecomposeTime(tmpTime, &frag);
 
     *smbTime = (NQ_UINT16) ((frag.hour << 11) | (frag.min << 5) | (frag.sec + 1) / 2);
     *smbDate = (NQ_UINT16) (((frag.year + 1900 - 1980) << 9) | ((frag.month + 1) << 5) | frag.day);
 }
 
+NQ_UINT32
+cmTimeConvertMSecToSec(
+	NQ_TIME * t
+    )
+{
+	NQ_UINT32 a0;        /* 16 bit, low    bits */
+	NQ_UINT32 a1;        /* 16 bit, medium bits */
+	NQ_UINT32 a2;        /* 32 bit, high   bits */
+
+	/* Copy the time values to a2/a1/a0 */
+
+	a2 =  t->high;
+	a1 = t->low >> 16;
+	a0 = t->low & 0xffff;
+
+	/* divide a by 1000 (a = a2/a1/a0), put the rest into r. */
+
+	a1 += (a2 % 1000) << 16;
+	a2 /=       1000;
+	a0 += (a1 % 1000) << 16;
+	a1 /=       1000;
+	a0 /=       1000;
+
+	return (a1 << 16) + a0;
+}
+
+NQ_TIME cmTimeConvertSecToMSec(NQ_UINT32 secTime)
+{
+	NQ_TIME curTime;
+
+	cmU64MultU32U32(&curTime, secTime, 1000);
+
+	return curTime;
+}
 /*
  *====================================================================
  * PURPOSE: converts SMB time & date into UNIX style time
@@ -347,7 +414,7 @@ cmCifsSmbTimeToTime(
 
 void
 cmCifsTimeToUTC(
-    NQ_UINT32 time,
+    NQ_TIME timeConv,
     NQ_UINT32* low,
     NQ_UINT32* high
     )
@@ -371,10 +438,11 @@ cmCifsTimeToUTC(
     NQ_UINT32 a1;          /* 16 bit, medium bits */
     NQ_UINT32 a2;          /* 32 bit, high   bits */
     NQ_UINT32 accuracy;    /* system timer accuracy - adds a number of units to the result */
+    NQ_TIME zero = {0, 0};
 
     /* zero-time remains unconverted */
     
-    if (time == 0)
+    if (!cmU64Cmp(&zero, &timeConv))
     {
         *low = 0;
         *high = 0;
@@ -385,22 +453,15 @@ cmCifsTimeToUTC(
 
     /* copy the time to a2/a1/a0 */
 
-    a0 =  time & 0xffff;
-    a1 = (time >> 16) & 0xffff;
-    a2 = 0;
+    a0 = timeConv.low & 0xffff;
+    a1 = (timeConv.low >> 16) & 0xffff;
+    a2 = timeConv.high;
 
-    /* multiply 'a' by 10000000 (a = a2/a1/a0)
-       split the factor into 10000 * 1000 which are both less than 0xffff. */
+    /* multiply 'a' by 10000 (a = a2/a1/a0). */
 
     a0 *= 10000;
     a1 = a1 * 10000 + (a0 >> 16);
     a2 = a2 * 10000 + (a1 >> 16);
-    a0 &= 0xffff;
-    a1 &= 0xffff;
-
-    a0 *= 1000;
-    a1 = a1 * 1000 + (a0 >> 16);
-    a2 = a2 * 1000 + (a1 >> 16);
     a0 &= 0xffff;
     a1 &= 0xffff;
 
@@ -431,7 +492,7 @@ cmCifsTimeToUTC(
  *====================================================================
  */
 
-NQ_UINT32
+NQ_TIME
 cmCifsUTCToTime(
     NQ_UINT32 low,
     NQ_UINT32 high
@@ -444,6 +505,7 @@ cmCifsUTCToTime(
 
     NQ_UINT carry;       /* carry bit for subtraction */
     NQ_BOOL negative;    /* whether a represents a negative value */
+    NQ_TIME time;
 
     /* Copy the time values to a2/a1/a0 */
 
@@ -489,8 +551,7 @@ cmCifsUTCToTime(
         a2 = ~a2;
     }
 
-    /* divide a by 10000000 (a = a2/a1/a0), put the rest into r.
-       split the divisor into 10000 * 1000 which are both less than 0xffff. */
+    /* divide a by 10000 (a = a2/a1/a0), put the rest into r. */
 
     a1 += (a2 % 10000) << 16;
     a2 /=       10000;
@@ -498,13 +559,6 @@ cmCifsUTCToTime(
     a1 /=       10000;
     r   =  a0 % 10000;
     a0 /=       10000;
-
-    a1 += (a2 % 1000) << 16;
-    a2 /=       1000;
-    a0 += (a1 % 1000) << 16;
-    a1 /=       1000;
-    r  += (a0 % 1000) * 10000;
-    a0 /=       1000;
 
     /* if a was negative, replace a by (-1-a) and r by (9999999 - r) */
 
@@ -519,12 +573,40 @@ cmCifsUTCToTime(
         r  = 9999999 - r;
     }
 
-    /* do not replace this by << 32, it gives a compiler warning and it does
-       not work. */
+    time.low = (a1 << 16) + a0;
+    time.high = a2;
 
-    return ((((NQ_UINT32)a2) << 16) << 16) + (a1 << 16) + a0;
+    return time;
 }
 
+
+/*
+ *====================================================================
+ * PURPOSE: Convert NQ_UINT time to UTC time as string
+ *--------------------------------------------------------------------
+ * PARAMS:  OUT time string
+ *          IN system time
+ *
+ * RETURNS: TRUE in success FALSE in fail.
+ *
+ * NOTES: the format is : "@GMT-YYYY.MM.DD-HH.MM.SS"
+ *====================================================================
+ */
+#ifdef CM_NQ_STORAGE
+NQ_BOOL
+cmU64TimeToString(
+    NQ_BYTE * strTime,			  /* utc time as string */
+    NQ_UINT64 time				  /* system time */
+    )
+{
+	NQ_TIME t;
+    const char* fmt = "@GMT-%Y.%m.%d-%H.%M.%S";
+
+    t = cmCifsUTCToTime(time.low, time.high);
+
+    return syGmtToString(strTime, 200, t.low, fmt);
+}
+#endif
 /*
  *====================================================================
  * PURPOSE: Increment a 64 bit unsigned integer structure
@@ -634,6 +716,8 @@ cmU64AddU64(
     /* check for overflow */
     if (u->low < low || u->low < a->low)
        u->high++;
+
+    u->high += a->high;
 }
 
 /*
@@ -682,13 +766,69 @@ cmU64Cmp(
     NQ_UINT64 *j
     )
 {
+    NQ_INT32 result;
+
     if (i->high == j->high)
         if (i->low == j->low)
-            return 0;
+            result = 0;
         else
-          return i->low > j->low ? 1 : -1;
+          result = i->low > j->low ? 1 : -1;
     else
-        return i->high > j->high ? 1 : -1;
+        result = i->high > j->high ? 1 : -1;
+
+    return result;
+}
+
+/*
+ *====================================================================
+ * PURPOSE: Return lower value for two 64 bit unsigned integer values
+ *--------------------------------------------------------------------
+ * PARAMS:  IN pointer to the first 64 bit unsigned integer structure
+ *          IN pointer to the second 64 bit unsigned integer structure
+ *
+ * RETURNS: Smaller between i and j
+ *
+ * NOTES:
+ *====================================================================
+ */
+
+NQ_UINT64
+cmU64Min(
+    NQ_UINT64 *i,
+    NQ_UINT64 *j
+    )
+{
+    if (i->high == j->high)
+        if (i->low == j->low)
+            return *i;
+        else
+          return i->low > j->low ? *j : *i;
+    else
+        return i->high > j->high ? *j : *i;
+}
+
+/*
+ *====================================================================
+ * PURPOSE: Assignment two 64 bit unsigned integer values (d = s)
+ *--------------------------------------------------------------------
+ * PARAMS:  OUT result
+ * 			IN  64 bit unsigned integer dst
+ *          IN  64 bit unsigned integer src
+ *
+ * RETURNS: NONE
+ *
+ * NOTES:   Changes the 64 bit unsigned int value
+ *====================================================================
+ */
+
+void
+cmU64AssignU64(
+    NQ_UINT64 *d,
+    const NQ_UINT64 *s
+    )
+{
+	d->low  = s->low;
+	d->high = s->high;
 }
 
 /*
@@ -781,5 +921,33 @@ void cmU128MultU64U64(
     resultHigh->high = highWord.high;
 }
 
+/*
+  *====================================================================
+ * PURPOSE: get value from 64 bit integer to 32 bit integer
+ *--------------------------------------------------------------------
+ * PARAMS:  IN pointer to the 64 bit unsigned integer structure
+ *
+ * RETURNS: value in 32 bit unsigned integer, if its too high returns max integer.
+ *
+ * NOTES:
+ *====================================================================
+*/
 
+NQ_UINT
+cmNQ_UINT64toU32(NQ_UINT64 j)
+{
+	if (j.high > 0)
+		return (0xFFFFFFFFL);
+	return j.low;
+}
+
+#ifdef SY_INT64
+NQ_UINT
+cmU64toU32(SY_UINT64 j)
+{
+ if ((j >> 32) > 0)
+    	return (0xFFFFFFFFL);
+    return (NQ_UINT) j;
+}
+#endif
 

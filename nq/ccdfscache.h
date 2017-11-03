@@ -17,9 +17,15 @@
 #define _CCDFSCACHE_H_
 
 #include "cmapi.h"
+#include "ccdfs.h"
+
+/* -- Constants definitions -- */
+
+#define DFS_ROOT_TARGET 0x0001
+#define DFS_LINK_TARGET 0x0000
+
 
 /* -- Structures -- */
-
 
 /* Description
    This structure describes a DFS cache entry.
@@ -36,12 +42,13 @@
      * when NQ shuts down and calls <link ccDfsCacheShutdown, ccDfsCacheShutdown()>   */
 typedef struct _ccdfscacheentry
 {
-    CMItem item;                /* List item. (contains DFS path from request) */
-    CMList * refList;           /* List of DFS referrals (i.e. the actual path) */
-    NQ_UINT16 numPathConsumed;  /* number of referral path characters consumed */
-    NQ_BOOL isRoot;             /* root target or link target otherwise (server type) */
-    NQ_UINT32 ttl;              /* time to live */
-    NQ_BOOL isExactMatch;       /* exact match */
+    CMItem item;                    /* List item. (contains DFS path from request) */
+    CMList * refList;               /* List of DFS referrals (i.e. the actual path) */
+    NQ_UINT16 numPathConsumed;      /* number of referral path characters consumed */
+    NQ_BOOL isRoot;                 /* root target or link target otherwise (server type) */
+    NQ_UINT32 ttl;                  /* time to live */
+    NQ_BOOL isExactMatch;           /* exact match */
+    NQ_STATUS lastIOStatus;         /* last status of IO operation */
 } CCDfsCacheEntry; /* DFS cache entry. */
 
 /* -- API Functions */
@@ -90,14 +97,11 @@ void ccDfsCacheRemovePath(const NQ_WCHAR * path);
    Parameters
    path :      Remote path, containing host name and share path.
                This may be a DFS path.
-   referral :  A path to be used as a referral to the path above.
-   ttl : Time to live in seconds
-   isRoot   :   Referral type (root or link)
-   numPathConsumed : number of path characters consumed 
+   referral :  Pointer to referral structure (see <link CCDfsReferral>).
    Returns
    Pointer to newly created DFS cache entry or NULL on error
    (although not expected).                                       */
-CCDfsCacheEntry * ccDfsCacheAddPath(const NQ_WCHAR * path, const NQ_WCHAR * referral, NQ_UINT32 ttl, NQ_BOOL isRoot, NQ_UINT16 numPathConsumed);
+CCDfsCacheEntry * ccDfsCacheAddPath(const NQ_WCHAR * path, const CCDfsReferral * referral);
 
 /* Description
    Find cache entry by domain name.

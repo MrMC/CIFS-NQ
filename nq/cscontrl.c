@@ -50,17 +50,17 @@ doTransact(
 /* add share: structures and functions */
 typedef struct
 {
-    const NQ_TCHAR* name;       /* share name */
-    const NQ_TCHAR* path;       /* share path */
+    const NQ_WCHAR* name;       /* share name */
+    const NQ_WCHAR* path;       /* share path */
     NQ_BOOL isPrinter;          /* TRUE for print queue */
-    const NQ_TCHAR* comment;     /* share descripton */
+    const NQ_WCHAR* comment;     /* share descripton */
 } AddShareParams;
 static NQ_STATUS                /* NQ_SUCCESS or error code */
-addShareT(
-    const NQ_TCHAR* name,       /* share name */
-    const NQ_TCHAR* path,       /* share path */
+addShare(
+    const NQ_WCHAR* name,       /* share name */
+    const NQ_WCHAR* path,       /* share path */
     NQ_BOOL isPrinter,          /* TRUE for print queue */
-    const NQ_TCHAR* comment     /* share descripton */
+    const NQ_WCHAR* comment     /* share descripton */
     );
 static void 
 addSharePacker(
@@ -71,11 +71,11 @@ addSharePacker(
 /* remove share: structures and functions */
 typedef struct
 {
-    const NQ_TCHAR* name;       /* share name */
+    const NQ_WCHAR* name;       /* share name */
 } RemoveShareParams;
 static NQ_STATUS                /* NQ_SUCCESS or error code */
-removeShareT(
-    const NQ_TCHAR* name        /* share name */
+removeShare(
+    const NQ_WCHAR* name        /* share name */
     );
 static void 
 removeSharePacker(
@@ -87,18 +87,18 @@ removeSharePacker(
 /* add user: structures and functions */
 typedef struct
 {
-    const NQ_TCHAR* name;           /* logon name */
-    const NQ_TCHAR* fullName;       /* full name */
-    const NQ_TCHAR* description;    /* user descripton */
-    const NQ_TCHAR* password;       /* password */
+    const NQ_WCHAR* name;           /* logon name */
+    const NQ_WCHAR* fullName;       /* full name */
+    const NQ_WCHAR* description;    /* user descripton */
+    const NQ_WCHAR* password;       /* password */
     NQ_BOOL isAdmin;                /* TRUE for Admistrator rights */
 } AddUserParams;
 static NQ_STATUS                    /* NQ_SUCCESS or error code */
 addUserT(
-    const NQ_TCHAR* name,           /* logon name */
-    const NQ_TCHAR* fullName,       /* full name */
-    const NQ_TCHAR* description,    /* user descripton */
-    const NQ_TCHAR* password,       /* password */
+    const NQ_WCHAR* name,           /* logon name */
+    const NQ_WCHAR* fullName,       /* full name */
+    const NQ_WCHAR* description,    /* user descripton */
+    const NQ_WCHAR* password,       /* password */
     NQ_BOOL isAdmin                 /* TRUE for Admistrator rights */
     );
 static void 
@@ -110,11 +110,11 @@ addUserPacker(
 /* remove user: structures and functions */
 typedef struct
 {
-    const NQ_TCHAR* name;           /* logon name */
+    const NQ_WCHAR* name;           /* logon name */
 } RemoveUserParams;
 static NQ_STATUS                    /* NQ_SUCCESS or error code */
 removeUserT(
-    const NQ_TCHAR* name            /* logon name */
+    const NQ_WCHAR* name            /* logon name */
     );
 static void 
 removeUserPacker(
@@ -126,12 +126,12 @@ removeUserPacker(
 /* clean user connections: structures and functions */
 typedef struct
 {
-    const NQ_TCHAR* name;           /* user name */
+    const NQ_WCHAR* name;           /* user name */
     NQ_BOOL isDomainUser;           /* domain or local user */
 } CleanUserConsParams;
 static NQ_STATUS                    /* NQ_SUCCESS or error code */
 cleanUserConsT(
-    const NQ_TCHAR* name,           /* user name */
+    const NQ_WCHAR* name,           /* user name */
     NQ_BOOL isDomainUser            /* domain or local user */
     );
 static void 
@@ -145,9 +145,9 @@ cleanUserConsPacker(
 typedef struct
 {
     NQ_INDEX index;        /* share index */
-    NQ_TCHAR* name;        /* user name */
-    NQ_TCHAR* fullName;    /* full name */
-    NQ_TCHAR* description; /* user descripton */
+    NQ_WCHAR* name;        /* user name */
+    NQ_WCHAR* fullName;    /* full name */
+    NQ_WCHAR* description; /* user descripton */
     NQ_BOOL* isAdmin;      /* TRUE Admistrator rights */
 } EnumUsersParams;
 static void 
@@ -166,10 +166,10 @@ enumUsersParser(
 typedef struct
 {
     NQ_INDEX index;       /* share index */
-    NQ_TCHAR* name;       /* share name */
-    NQ_TCHAR* path;       /* share path */
+    NQ_WCHAR* name;       /* share name */
+    NQ_WCHAR* path;       /* share path */
     NQ_BOOL isPrinter;    /* TRUE for print queue */
-    NQ_TCHAR* comment;    /* share descripton */
+    NQ_WCHAR* comment;    /* share descripton */
 } EnumSharesParams;
 
 static void 
@@ -188,7 +188,7 @@ typedef struct
 {
 	NQ_INDEX 		index;
 	NQ_IPADDRESS*	ip;
-	NQ_BOOL		*	isSMB2;
+	NQ_UINT16	*	dialect;
 } EnumClientsParams;
 
 static void
@@ -228,6 +228,29 @@ setMsgSgnPacker(
 		);
 
 #endif /* UD_CS_MESSAGESIGNINGPOLICY*/
+
+/* enum shares: structures and functions */
+typedef struct
+{
+    NQ_INDEX 	index;       /* share index */
+    NQ_IPADDRESS*	ip;
+    NQ_WCHAR* 	name;       /* share name */
+    NQ_WCHAR* 	userName;    /* share descripton */
+    NQ_BOOL 	isDir;    /* TRUE for print queue */
+} EnumFilesParams;
+
+static void
+enumFilesPacker(
+    CMBufferWriter * writer,
+    const void * params
+    );
+
+static void
+enumFilesParser(
+    CMBufferReader * reader,
+    void * params
+    );
+
 /*
  *====================================================================
  * PURPOSE: Stop server
@@ -290,14 +313,14 @@ csCtrlAddShareA(
     const NQ_CHAR* comment
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXSHARELEN)];
-    NQ_TCHAR tpath[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXPATHLEN)];
-    NQ_TCHAR tcomment[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXDESCRIPTIONLEN)];
+    NQ_WCHAR nameW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXSHARELEN)];
+    NQ_WCHAR pathW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXPATHLEN)];
+    NQ_WCHAR commentW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXDESCRIPTIONLEN)];
 
-    cmAnsiToTchar(tname, name);
-    cmAnsiToTchar(tpath, path);
-    cmAnsiToTchar(tcomment, comment);
-    return addShareT(tname, tpath, isPrinter, tcomment);
+    syAnsiToUnicode(nameW, name);
+    syAnsiToUnicode(pathW, path);
+    syAnsiToUnicode(commentW, comment);
+    return addShare(nameW, pathW, isPrinter, commentW);
 }
 
 /*====================================================================
@@ -322,14 +345,7 @@ csCtrlAddShareW(
     const NQ_WCHAR* comment
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXSHARELEN)];
-    NQ_TCHAR tpath[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXPATHLEN)];
-    NQ_TCHAR tcomment[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXDESCRIPTIONLEN)];
-
-    cmUnicodeToTchar(tname, name);
-    cmUnicodeToTchar(tpath, path);
-    cmUnicodeToTchar(tcomment, comment);
-    return addShareT(tname, tpath, isPrinter, tcomment);
+    return addShare(name, path, isPrinter, comment);
 }
 
 /*====================================================================
@@ -347,11 +363,11 @@ csCtrlAddShareW(
  */
 
 static NQ_STATUS
-addShareT(
-    const NQ_TCHAR* name,
-    const NQ_TCHAR* path,
+addShare(
+    const NQ_WCHAR* name,
+    const NQ_WCHAR* path,
     NQ_BOOL isPrinter,
-    const NQ_TCHAR* comment
+    const NQ_WCHAR* comment
     )
 {
     AddShareParams params;
@@ -381,13 +397,13 @@ addSharePacker(
     )
 {
     AddShareParams * p = (AddShareParams *)params;
-    cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(p->name));
-    cmBufferWriteTString(writer, p->name);
-    cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(p->path));
-    cmBufferWriteTString(writer, p->path);
+    cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(p->name));
+    cmBufferWriteUnicode(writer, p->name);
+    cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(p->path));
+    cmBufferWriteUnicode(writer, p->path);
     cmBufferWriteUint16(writer, p->isPrinter? 1 : 0);
-    cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(p->comment));
-    cmBufferWriteTString(writer, p->comment);
+    cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(p->comment));
+    cmBufferWriteUnicode(writer, p->comment);
 }
 
 /*====================================================================
@@ -406,10 +422,10 @@ csCtrlRemoveShareA(
     const NQ_CHAR* name
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXSHARELEN)];
+    NQ_WCHAR nameW[UD_FS_MAXSHARELEN];
 
-    cmAnsiToTchar(tname, name);
-    return removeShareT(tname);
+    syAnsiToUnicode(nameW, name);
+    return removeShare(nameW);
 }
 
 /*====================================================================
@@ -428,10 +444,7 @@ csCtrlRemoveShareW(
     const NQ_WCHAR* name
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXSHARELEN)];
-
-    cmUnicodeToTchar(tname, name);
-    return removeShareT(tname);
+    return removeShare(name);
 }
 
 /*====================================================================
@@ -446,8 +459,8 @@ csCtrlRemoveShareW(
  */
 
 static NQ_STATUS
-removeShareT(
-    const NQ_TCHAR* name
+removeShare(
+    const NQ_WCHAR* name
     )
 {
     RemoveShareParams params;
@@ -474,8 +487,8 @@ removeSharePacker(
     )
 {
     RemoveShareParams * p = (RemoveShareParams *)params;
-    cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(p->name));
-    cmBufferWriteTString(writer, p->name);
+    cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(p->name));
+    cmBufferWriteUnicode(writer, p->name);
 }
 
 #ifdef UD_CS_INCLUDELOCALUSERMANAGEMENT
@@ -504,15 +517,15 @@ csCtrlAddUserA(
     NQ_BOOL isAdmin             
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
-    NQ_TCHAR tfullname[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
-    NQ_TCHAR tdescription[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
-    NQ_TCHAR tpassword[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
+    NQ_WCHAR tname[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
+    NQ_WCHAR tfullname[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
+    NQ_WCHAR tdescription[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
+    NQ_WCHAR tpassword[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
 
-    cmAnsiToTchar(tname, name);
-    cmAnsiToTchar(tfullname, fullName);
-    cmAnsiToTchar(tdescription, description);
-    cmAnsiToTchar(tpassword, password);
+    syAnsiToUnicode(tname, name);
+    syAnsiToUnicode(tfullname, fullName);
+    syAnsiToUnicode(tdescription, description);
+    syAnsiToUnicode(tpassword, password);
     return addUserT(tname, tfullname, tdescription, tpassword, isAdmin);
 }
 
@@ -540,15 +553,15 @@ csCtrlAddUserW(
     NQ_BOOL isAdmin             
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
-    NQ_TCHAR tfullname[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
-    NQ_TCHAR tdescription[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
-    NQ_TCHAR tpassword[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
+    NQ_WCHAR tname[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
+    NQ_WCHAR tfullname[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
+    NQ_WCHAR tdescription[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
+    NQ_WCHAR tpassword[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
 
-    cmUnicodeToTchar(tname, name);
-    cmUnicodeToTchar(tfullname, fullName);
-    cmUnicodeToTchar(tdescription, description);
-    cmUnicodeToTchar(tpassword, password);
+    syWStrcpy(tname, name);
+    syWStrcpy(tfullname, fullName);
+    syWStrcpy(tdescription, description);
+    syWStrcpy(tpassword, password);
     return addUserT(tname, tfullname, tdescription, tpassword, isAdmin);
 }
 
@@ -569,10 +582,10 @@ csCtrlAddUserW(
 
 static NQ_STATUS
 addUserT(
-    const NQ_TCHAR* name,  
-    const NQ_TCHAR* fullName, 
-    const NQ_TCHAR* description,
-    const NQ_TCHAR* password,   
+    const NQ_WCHAR* name,
+    const NQ_WCHAR* fullName,
+    const NQ_WCHAR* description,
+    const NQ_WCHAR* password,
     NQ_BOOL isAdmin             
     )
 {
@@ -604,14 +617,14 @@ addUserPacker(
     )
 {
     AddUserParams * p = (AddUserParams *)params;
-    cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(p->name));
-    cmBufferWriteTString(writer, p->name);
-    cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(p->fullName));
-    cmBufferWriteTString(writer, p->fullName);
-    cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(p->description));
-    cmBufferWriteTString(writer, p->description);
-    cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(p->password));
-    cmBufferWriteTString(writer, p->password);
+    cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(p->name));
+    cmBufferWriteUnicode(writer, p->name);
+    cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(p->fullName));
+    cmBufferWriteUnicode(writer, p->fullName);
+    cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(p->description));
+    cmBufferWriteUnicode(writer, p->description);
+    cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(p->password));
+    cmBufferWriteUnicode(writer, p->password);
     cmBufferWriteUint16(writer, p->isAdmin? 1 : 0);
 }
 
@@ -631,9 +644,9 @@ csCtrlRemoveUserA(
     const NQ_CHAR* name
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXSHARELEN)];
+    NQ_WCHAR tname[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXSHARELEN)];
 
-    cmAnsiToTchar(tname, name);
+    syAnsiToUnicode(tname, name);
     return removeUserT(tname);
 }
 
@@ -653,9 +666,9 @@ csCtrlRemoveUserW(
     const NQ_WCHAR* name
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXSHARELEN)];
+    NQ_WCHAR tname[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXSHARELEN)];
 
-    cmUnicodeToTchar(tname, name);
+    syWStrcpy(tname, name);
     return removeUserT(tname);
 }
 
@@ -672,7 +685,7 @@ csCtrlRemoveUserW(
 
 static NQ_STATUS
 removeUserT(
-    const NQ_TCHAR* name
+    const NQ_WCHAR* name
     )
 {
     RemoveUserParams params;
@@ -699,8 +712,8 @@ removeUserPacker(
     )
 {
     RemoveUserParams * p = (RemoveUserParams *)params;
-    cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(p->name));
-    cmBufferWriteTString(writer, p->name);
+    cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(p->name));
+    cmBufferWriteUnicode(writer, p->name);
 }
 
 
@@ -711,9 +724,9 @@ csCtrlCleanUserConnectionsA(
     NQ_BOOL isDomainUser       /* domain or local user */
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
+    NQ_WCHAR tname[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
 
-    cmAnsiToTchar(tname, name);
+    syAnsiToUnicode(tname, name);
     return cleanUserConsT(tname, isDomainUser);
 }
 
@@ -723,9 +736,9 @@ csCtrlCleanUserConnectionsW(
     NQ_BOOL isDomainUser       /* domain or local user */
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
+    NQ_WCHAR tname[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
 
-    cmUnicodeToTchar(tname, name);
+    syWStrcpy(tname, name);
     return cleanUserConsT(tname, isDomainUser);   
 }
 
@@ -743,7 +756,7 @@ csCtrlCleanUserConnectionsW(
 
 static NQ_STATUS
 cleanUserConsT(
-    const NQ_TCHAR* name,
+    const NQ_WCHAR* name,
     NQ_BOOL isDomainUser
     )
 {
@@ -773,8 +786,8 @@ cleanUserConsPacker(
 {
     CleanUserConsParams * p = (CleanUserConsParams *)params;
     cmBufferWriteUint16(writer, p->isDomainUser? 1 : 0);
-    cmBufferWriteUint16(writer, (NQ_UINT16)cmTStrlen(p->name));
-    cmBufferWriteTString(writer, p->name);
+    cmBufferWriteUint16(writer, (NQ_UINT16)syWStrlen(p->name));
+    cmBufferWriteUnicode(writer, p->name);
 }
 
 
@@ -815,14 +828,14 @@ enumUsersParser(
 
     /* parse the command */
     cmBufferReadUint16(reader, &len);
-    cmTStrncpy(p->name, (const NQ_TCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    syWStrncpy(p->name, (const NQ_WCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     cmBufferReadUint16(reader, &len);
-    cmTStrncpy(p->fullName,(const NQ_TCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    syWStrncpy(p->fullName,(const NQ_WCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     cmBufferReadUint16(reader, &len);
-    cmTStrncpy(p->description,(const NQ_TCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    syWStrncpy(p->description,(const NQ_WCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     cmBufferReadUint16(reader, &len);
     *p->isAdmin = len == 1? TRUE : FALSE;
 }
@@ -882,15 +895,15 @@ enumSharesParser(
 
     /* parse the command */
     cmBufferReadUint16(reader, &len);
-    cmTStrncpy(p->name, (const NQ_TCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    syWStrncpy(p->name, (const NQ_WCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     cmBufferReadUint16(reader, &len);
-    cmTStrncpy(p->path,(const NQ_TCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
-    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    syWStrncpy(p->path,(const NQ_WCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
     cmBufferReadUint16(reader, &len);
     p->isPrinter = len == 1? TRUE : FALSE;
     cmBufferReadUint16(reader, &len);
-    cmTStrncpy(p->comment,(const NQ_TCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_TCHAR)));
+    syWStrncpy(p->comment,(const NQ_WCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
 }
 
 /*====================================================================
@@ -915,7 +928,7 @@ csCtrlEnumClients(
 	NQ_STATUS status;
     EnumClientsParams params;
     params.index = index;
-    params.isSMB2 = &clientEntry->isSmb2;
+    params.dialect = &clientEntry->dialect;
     params.ip = &clientEntry->ip;
     status =  doTransact(CS_CONTROL_ENUMCLIENTS, enumClientsPacker, enumClientsParser, &params, SHORT_TIMEOUT);
 
@@ -950,11 +963,75 @@ enumClientsParser(
     	return;
     cmAsciiToIp(ip , p->ip);
     cmMemoryFree(ip);
-    cmBufferReaderSkip(reader , (len+1)*2);
+    cmBufferReaderSkip(reader , (NQ_UINT)(len+1)*2);
     cmBufferReadUint16(reader , &len);
-    *p->isSMB2 = len ? TRUE : FALSE;
+    *p->dialect = len;
 }
 
+/*====================================================================
+ * PURPOSE: Enumerate files
+ *--------------------------------------------------------------------
+ * PARAMS:  IN file entry struct
+ *          IN file index
+ *
+ * RETURNS: NQ_SUCCESS or NQ_FAIL
+ *
+ * NOTES:   This function returns NQ_FAIL when no more share entries
+ *          exist
+ *====================================================================
+ */
+
+NQ_STATUS                      /* NQ_SUCCESS or NQ_FAIL */
+csCtrlEnumFiles(
+    CsCtrlFile *fileEntry,
+    NQ_INDEX index
+    )
+{
+	NQ_STATUS status;
+    EnumFilesParams params;
+
+    params.index = index;
+    params.name = fileEntry->name;
+    params.userName = fileEntry->userName;
+    params.ip = &fileEntry->ip;
+    status =  doTransact(CS_CONTROL_ENUMFILES, enumFilesPacker, enumFilesParser, &params, SHORT_TIMEOUT);
+    fileEntry->isDirectory = params.isDir;
+	return status;
+}
+
+static void
+enumFilesPacker(
+    CMBufferWriter * writer,
+    const void * params
+    )
+{
+    EnumFilesParams * p = (EnumFilesParams *)params;
+    cmBufferWriteUint16(writer, (NQ_UINT16)p->index);
+}
+
+static void
+enumFilesParser(
+    CMBufferReader * reader,
+    void * params
+    )
+{
+    NQ_UINT16 len;              /* string length */
+
+    EnumFilesParams * p = (EnumFilesParams *)params;
+
+    /* parse the command */
+    cmBufferReadUint16(reader, &len);
+	cmAsciiToIp((NQ_CHAR *)cmBufferReaderGetPosition(reader), p->ip);
+	cmBufferReaderSkip(reader , (NQ_UINT)syStrlen((NQ_CHAR *)cmBufferReaderGetPosition(reader)) + 1);
+    cmBufferReadUint16(reader, &len);
+    syWStrncpy(p->name, (const NQ_WCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
+    cmBufferReadUint16(reader, &len);
+    syWStrncpy(p->userName,(const NQ_WCHAR*)cmBufferReaderGetPosition(reader), (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
+    cmBufferReaderSkip(reader, (NQ_UINT)((NQ_UINT)(len + 1) * sizeof(NQ_WCHAR)));
+    cmBufferReadUint16(reader, &len);
+    p->isDir = len == 1? TRUE : FALSE;
+}
 
 NQ_STATUS
 csCtrlSetEncryptionMethods(
@@ -1049,7 +1126,7 @@ doTransact(
     CMBufferReader reader;                      /* for composing the command */
     NQ_INT result;                              /* sent/received/select result */
     SYSocketSet  socketSet;                     /* set for reading from this socket */
-    NQ_INT 	i;
+    NQ_COUNT i;
     NQ_UINT transArr[] = {
 #ifdef UD_NQ_USETRANSPORTIPV6
            NS_TRANSPORT_IPV6,

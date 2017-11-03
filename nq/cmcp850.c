@@ -120,12 +120,16 @@ cp850UnicodeToAnsi(
     else
     {
         if (!aStr)
-            return 0;
+        {
+            length = 0;
+            goto Exit;
+        }
     }
     /* not enough space in provided buff */
     if (ignoreOutLength || (length < outLength))
         *pA = '\0';
 
+Exit:
     return length;
 }
 /*

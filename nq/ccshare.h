@@ -22,8 +22,10 @@
 
 /* -- Defines -- */
 
-/* Set when share is in DFS */
-#define CC_SHARE_IN_DFS 1
+/* Share capabilities */
+
+#define CC_SHARE_IN_DFS     1   /* Set when share is in DFS. */
+#define CC_SHARE_SCALEOUT   2   /* Set when share is has faster recovery of durable handles.*/  
 
 /* -- Structures -- */
 
@@ -45,9 +47,9 @@ typedef struct _ccshare
 	             			     * Print
 	             			   This field is available in SMB2 only and is formatted as
 	             			   defined in the SMB2 spec.
-	             			   
-	             			   \ \                                                      */
+	             			                                                        */
 	NQ_UINT32 flags;		/* Flags in this field are dialect-specific.  */
+    NQ_UINT32 capabilities; /* Share capabilities. */
 	NQ_UINT32 access;		/* Maximal access in NT access format. */
 	CMList files;			/* Open files. */
 	CMList searches;		/* Open Searches*/
@@ -55,6 +57,8 @@ typedef struct _ccshare
 	                              	   in DFS and non-NULL when the share is in DFS.               */
 	NQ_BOOL connected;		/* TRUE when the share was successfully connected */
 	NQ_BOOL isIpc;			/* TRUE when the share is IPC$ */
+	NQ_BOOL isPrinter;		/* TRUE when the share is a printer share */
+	NQ_BOOL encrypt;
 } CCShare; /* Remote share. */
 
 /* -- API Functions */
@@ -161,7 +165,7 @@ CCShare * ccShareFind(CCServer * pServer, const NQ_WCHAR * path, const NQ_WCHAR 
      * after the call compare the same variable with the
        original pointer
      * if they do not match, consider freeing new credentials.                             */
-CCShare * ccShareConnect(const NQ_WCHAR * path, const AMCredentialsW ** pCredentials, NQ_BOOL doDfs);
+CCShare * ccShareConnect(const NQ_WCHAR * path, void *pMount, const AMCredentialsW ** pCredentials, NQ_BOOL doDfs);
 
 /* Description
    Connect to the remote IPC share by server.
@@ -237,7 +241,7 @@ void ccShareDisconnect(CCShare * pShare);
    doDfs : Whether to perform DFS resolution.
    Returns
    TRUE on success or FALSE on failure. */
-NQ_BOOL ccShareConnectExisting(CCShare * pShare, NQ_BOOL doDfs);
+NQ_BOOL ccShareConnectExisting(CCShare * pShare, void *pMount, NQ_BOOL doDfs);
 
 /* Description
    Reopen file objects. 
@@ -246,7 +250,7 @@ NQ_BOOL ccShareConnectExisting(CCShare * pShare, NQ_BOOL doDfs);
    pShare : Pointer to share object to use. 
    Returns
    None. */
-void ccShareReopenFiles(CCShare * pShare);
+NQ_BOOL ccShareReopenFiles(CCShare * pShare);
 /* Description
    Echoes the server to which the share points to 
    

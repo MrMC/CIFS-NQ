@@ -28,6 +28,8 @@
 
 #ifdef UD_NQ_INCLUDECIFSSERVER
 
+static NQ_WCHAR fileNameBuff[CM_MAXFILENAMELEN];
+
 /* This code implements file close, delete and rename commands
 */
 
@@ -59,7 +61,7 @@ csComClose(
     CMCifsStatus error;                     /* for composing DOS-style error */
     CSFile* pFile;                          /* pointer to file descriptor */
     SYFileInformation fileInfo;             /* for changing file information */
-    const NQ_TCHAR *pFileName;              /* file name pointer */
+    const NQ_WCHAR *pFileName;              /* file name pointer */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     const CSUser* pUser;                    /* user structure pointer */
     UDFileAccessEvent eventInfo;            /* share event information */
@@ -162,7 +164,7 @@ csComClose(
                     return error;
                 }
 
-                fileInfo.lastAccessTime = writeTime;
+                fileInfo.lastAccessTime = cmTimeConvertSecToMSec(writeTime);
                 csSetFileInformation(pFile, pFileName, &fileInfo);
 
                 /* errors are ignored as required by CIFS */
@@ -189,7 +191,7 @@ csComClose(
 			{				
 				NQ_IPADDRESS zeroIP = CM_IPADDR_ZERO;
 				
-				pName->deletingUserRid = pUser ? csGetUserRid(pUser) : CS_ILLEGALID;
+				pName->deletingUserRid = csGetUserRid(pUser);
 				pName->deletingTid = pFile->tid;
 				cmIpToAscii(pName->deletingIP, pUser ? pUser->ip : &zeroIP);
 			}
@@ -208,9 +210,9 @@ csComClose(
 
     /* complete oplock break operation (send late response) if required */
 
-    if (pFile->oplockGranted && pFile->pFileOplockBreaker)
+    if (pFile->oplockGranted && pFile->isBreakingOpLock)
     {
-        csBreakComplete(&pFile->pFileOplockBreaker->breakContext, pHeaderOut);
+        csBreakComplete(pFile, pHeaderOut, 0);
         csReleaseFile(pFile->fid);
         TRC("Oplock break completed");
         TRCE();
@@ -336,7 +338,7 @@ csComDelete(
     NQ_BOOL unicodeRequired;                    /* whether client requires UNICODE */
     CMCifsStatus error;                         /* for composing DOS-style error */
     const CSShare* pShare;                      /* pointer to the share */
-    NQ_TCHAR* pFileName;                        /* filename to delete */
+    NQ_WCHAR* pFileName;                        /* filename to delete */
     CSTid tid;                                  /* tree ID for access check */
     CSUid uid;                                  /* user ID for access check */
     NQ_UINT16 searchAttributes;                 /* allowed attributes of the file */
@@ -405,9 +407,11 @@ csComDelete(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+    					fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(deleteRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(deleteRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -470,7 +474,7 @@ csComDelete(
 		);
 	eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-    if (!csCheckPath(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPath(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 		udEventLog(
@@ -495,7 +499,7 @@ csComDelete(
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("Path does not exists");
-        TRC1P(" path: %s", cmTDump(pFileName));
+        TRC1P(" path: %s", cmWDump(pFileName));
         return csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath);
     }
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
@@ -513,12 +517,12 @@ csComDelete(
 
     delCount = 0;
 
-    TRC1P("Required to delete: %s", cmTDump(pFileName));
+    TRC1P("Required to delete: %s", cmWDump(pFileName));
 
     searchAttributes = cmLtoh16(cmGetSUint16(deleteRequest->searchAttributes));
 
     {
-        const NQ_TCHAR* nextFile;   /* next file name to delete */
+        const NQ_WCHAR* nextFile;   /* next file name to delete */
 
         csEnumerateSourceName(&fileEnumeration, pFileName, pUser->preservesCase);
         fileEnumeration.bringLinks = FALSE;
@@ -537,7 +541,7 @@ csComDelete(
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
         while ((nextFile = csNextSourceName(&fileEnumeration)) != NULL)
         {
-            TRC1P("next file to delete: %s", cmTDump(nextFile));
+            TRC1P("next file to delete: %s", cmWDump(nextFile));
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 			udEventLog(
 				UD_LOG_MODULE_CS,
@@ -703,7 +707,7 @@ csComDelete(
 					);
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
                 TRCERR("Unable to delete a directory or readonly file");
-                TRC1P(" file name: %s", cmTDump(nextFile));
+                TRC1P(" file name: %s", cmWDump(nextFile));
                 TRCE();
                 return csErrorReturn(SMB_STATUS_ACCESS_DENIED, DOS_ERRnoaccess);
             }
@@ -712,7 +716,7 @@ csComDelete(
 
             if (csMatchFileAttributes(searchAttributes, (NQ_UINT16)fileInfo.attributes))
             {
-                TRC1P("deleting file: %s", cmTDump(nextFile));
+                TRC1P("deleting file: %s", cmWDump(nextFile));
 
                 /* check whether this file is opened by this or another client and is marked for
                    deletion. If so, do nothing, else - delete it now */
@@ -772,7 +776,7 @@ csComDelete(
 					);
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
                         TRCERR("Unable to delete file");
-                        TRC1P(" file name: %s", cmTDump(nextFile));
+                        TRC1P(" file name: %s", cmWDump(nextFile));
                         TRCE();
                         return error;
                     }
@@ -869,13 +873,13 @@ csComRename(
     NQ_UINT32 returnValue;                      /* error code in NT format or 0 for no error */
     NQ_BOOL unicodeRequired;                    /* whether client requires UNICODE */
     const CSShare* pShare;                      /* pointer to the share */
-    NQ_TCHAR* pFileName;                        /* filename pointer */
+    NQ_WCHAR* pFileName;                        /* filename pointer */
     CSTid tid;                                  /* tree ID for access check */
     CSUid uid;                                  /* user ID for access check */
     CSUser* pUser;                              /* pointer to the user descriptor */
-    NQ_STATIC NQ_TCHAR srcName[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN + 1)];
+    NQ_STATIC NQ_WCHAR srcName[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];
                                                 /* source file name */
-    NQ_STATIC NQ_TCHAR dstName[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN + 1)];
+    NQ_STATIC NQ_WCHAR dstName[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];
                                                 /* destination file name */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDFileAccessEvent eventInfo;                /* share event information */
@@ -968,9 +972,11 @@ csComRename(
 
         msgPtr = (NQ_BYTE*)(renameRequest + 1);
         pFileName = cmCifsNtohFilename(
+        					fileNameBuff,
                             pShare->map,
-                            (NQ_TCHAR*)msgPtr,
-                            unicodeRequired
+                            (NQ_WCHAR*)msgPtr,
+                            unicodeRequired,
+							TRUE
                             );
         if (pFileName == NULL)
         {
@@ -992,7 +998,7 @@ csComRename(
             TRCE();
             return csErrorReturn(SMB_STATUS_OBJECT_NAME_INVALID, DOS_ERRinvalidname);
         }
-        cmTStrcpy(srcName, pFileName);
+        syWStrcpy(srcName, pFileName);
 #ifdef UD_NQ_INCLUDEEVENTLOG
         eventInfo.fileName = srcName;
         eventInfo.access = 0;
@@ -1014,9 +1020,11 @@ csComRename(
             return csErrorReturn(SMB_STATUS_UNSUCCESSFUL, SRV_ERRerror);
         }
         pFileName = cmCifsNtohFilename(
+        					fileNameBuff,
                             pShare->map,
-                            (NQ_TCHAR*)msgPtr,
-                            unicodeRequired
+                            (NQ_WCHAR*)msgPtr,
+                            unicodeRequired,
+							TRUE
                             );
         if (pFileName == NULL)
         {
@@ -1035,7 +1043,7 @@ csComRename(
             TRCE();
             return csErrorReturn(SMB_STATUS_OBJECT_NAME_INVALID, DOS_ERRinvalidname);
         }
-        cmTStrcpy(dstName, pFileName);
+        syWStrcpy(dstName, pFileName);
 #ifdef UD_NQ_INCLUDEEVENTLOG
         eventInfo.newName = dstName;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
@@ -1084,8 +1092,8 @@ csRenameFile(
     const CSShare* pShare,                      
     NQ_BOOL unicodeRequired,                    
     NQ_UINT16 searchAttributes,                 
-    NQ_TCHAR* srcName,                        
-    NQ_TCHAR* dstName                         
+    NQ_WCHAR* srcName,                        
+    NQ_WCHAR* dstName                         
     )
 {
     SYFileInformation fileInfo;                 /* for querying file information */
@@ -1094,13 +1102,15 @@ csRenameFile(
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDFileAccessEvent eventInfo;                /* share event information */
     CSTree	*		  pTree;
+    NQ_WCHAR noName[] = CM_WCHAR_NULL_STRING;
+    NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     TRCB();
     
     /* check situation where source and destination are identical */
     
-    if (0 == cmTStrcmp(srcName, dstName))
+    if (0 == syWStrcmp(srcName, dstName))
     {
         TRCE();
         return NQ_SUCCESS;
@@ -1108,12 +1118,20 @@ csRenameFile(
     
 #ifdef UD_NQ_INCLUDEEVENTLOG
     pTree = csGetNextTreeByShare(pShare , CS_ILLEGALID);
-    while (pTree->uid != pUser->uid)
-	{
-		pTree = csGetNextTreeByShare(pShare, pTree->tid);
-	}
-    eventInfo.tid = (pTree != NULL) ? pTree->tid : CS_ILLEGALID;
-	eventInfo.rid = csGetUserRid(pUser);
+    if (pUser)
+    {
+        while (pTree->uid != pUser->uid)
+      	{
+		    pTree = csGetNextTreeByShare(pShare, pTree->tid);
+	    }
+        eventInfo.tid = (NQ_UINT32)((pTree != NULL) ? pTree->tid : CS_ILLEGALID);
+	    eventInfo.rid = csGetUserRid(pUser);
+    }
+    else
+    {
+    	eventInfo.tid = CS_ILLEGALID;
+    	eventInfo.rid = (NQ_UINT32)-1;
+    }
     eventInfo.fileName = srcName;
     eventInfo.newName = dstName;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
@@ -1125,22 +1143,23 @@ csRenameFile(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
 		UD_LOG_FILE_QUERYDIRECTORY,
-		pUser->name,
-		pUser->ip,
+		pUser? pUser->name : noName,
+		pUser? pUser->ip : &noIP,
 		0,
 		(const NQ_BYTE*)&eventInfo
 		);
 	eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-    if (!csCheckPath(pShare, srcName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPath(pShare, srcName, (NQ_UINT)syWStrlen(pShare->map),
+    		pUser? pUser->preservesCase : ((UD_FS_FILESYSTEMATTRIBUTES & CM_FS_CASESENSITIVESEARCH) == 0)))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_QUERYDIRECTORY,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath),
 			(const NQ_BYTE*)&eventInfo
 			);
@@ -1150,13 +1169,13 @@ csRenameFile(
             UD_LOG_MODULE_CS,
             UD_LOG_CLASS_FILE,
             UD_LOG_FILE_RENAME,
-            pUser->name,
-            pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
             csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath),
             (const NQ_BYTE*)&eventInfo
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-        TRCERR("Source path does not exist: %s", cmTDump(srcName));
+        TRCERR("Source path does not exist: %s", cmWDump(srcName));
         TRCE();
         return csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath);
     }
@@ -1165,8 +1184,8 @@ csRenameFile(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
 		UD_LOG_FILE_QUERYDIRECTORY,
-		pUser->name,
-		pUser->ip,
+		pUser? pUser->name : noName,
+		pUser? pUser->ip : &noIP,
 		0,
 		(const NQ_BYTE*)&eventInfo
 		);
@@ -1175,17 +1194,17 @@ csRenameFile(
     /* check destination path */
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 	{
-		NQ_TCHAR * tempName;
+		NQ_WCHAR * tempName;
 
-		tempName = (NQ_TCHAR *)eventInfo.fileName;
+		tempName = (NQ_WCHAR *)eventInfo.fileName;
 		eventInfo.fileName = eventInfo.newName;
 		eventInfo.before = TRUE;
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_QUERYDIRECTORY,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE*)&eventInfo
 			);
@@ -1193,20 +1212,21 @@ csRenameFile(
 		eventInfo.fileName = tempName;
 	}
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-    if (!csCheckPath(pShare, dstName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPath(pShare, dstName, (NQ_UINT)syWStrlen(pShare->map),
+    		pUser? pUser->preservesCase : ((UD_FS_FILESYSTEMATTRIBUTES & CM_FS_CASESENSITIVESEARCH) == 0)))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
     	{
-			NQ_TCHAR * tempName;
+			NQ_WCHAR * tempName;
 
-			tempName = (NQ_TCHAR *)eventInfo.fileName;
+			tempName = (NQ_WCHAR *)eventInfo.fileName;
 			eventInfo.fileName = eventInfo.newName;
 			udEventLog(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_QUERYDIRECTORY,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath),
 				(const NQ_BYTE*)&eventInfo
 				);
@@ -1220,29 +1240,29 @@ csRenameFile(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_RENAME,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath),
 				(const NQ_BYTE*)&eventInfo
 			);
 		}
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-        TRCERR("Destination path does not exist: %s", cmTDump(dstName));
+        TRCERR("Destination path does not exist: %s", cmWDump(dstName));
         TRCE();
         return csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath);
     }
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
     {
-		NQ_TCHAR * tempName;
+		NQ_WCHAR * tempName;
 
-		tempName = (NQ_TCHAR *)eventInfo.fileName;
+		tempName = (NQ_WCHAR *)eventInfo.fileName;
 		eventInfo.fileName = eventInfo.newName;
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_QUERYDIRECTORY,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE*)&eventInfo
 			);
@@ -1251,23 +1271,24 @@ csRenameFile(
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
     /* enumerate and rename file(s) */
 
-    TRC1P("Start enumerating rename op from %s, to %s", cmTDump(srcName), cmTDump(dstName));
+    TRC1P("Start enumerating rename op from %s, to %s", cmWDump(srcName), cmWDump(dstName));
 
     {
-        NQ_TCHAR* nextSrcFile;  /* next file name to rename */
-        NQ_TCHAR* nextDstFile;  /* new file name */
+        NQ_WCHAR* nextSrcFile;  /* next file name to rename */
+        NQ_WCHAR* nextDstFile;  /* new file name */
 
         renameCount = 0;
 
-        csEnumerateSourceAndDestinationName(srcName, dstName, pUser->preservesCase);
+        csEnumerateSourceAndDestinationName(srcName, dstName,
+        		pUser? pUser->preservesCase : ((UD_FS_FILESYSTEMATTRIBUTES & CM_FS_CASESENSITIVESEARCH) == 0));
 #ifdef UD_NQ_INCLUDEEVENTLOG
 		eventInfo.before = TRUE;
 			udEventLog(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_QUERYDIRECTORY,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				0,
 				(const NQ_BYTE*)&eventInfo
 				);
@@ -1289,8 +1310,8 @@ csRenameFile(
 					UD_LOG_MODULE_CS,
 					UD_LOG_CLASS_FILE,
 					UD_LOG_FILE_QUERYDIRECTORY,
-					pUser->name,
-					pUser->ip,
+					pUser? pUser->name : noName,
+					pUser? pUser->ip : &noIP,
 					0,
 					(const NQ_BYTE*)&eventInfo
 					);
@@ -1301,7 +1322,7 @@ csRenameFile(
              * */
             
 #ifdef UD_NQ_INCLUDESMB2
-            pSession = csGetSessionById(pUser->session);
+            pSession = pUser? csGetSessionById(pUser->session) : NULL;
             if (NULL == pSession)
             {
                 TRCERR("Unknown session");
@@ -1311,7 +1332,7 @@ csRenameFile(
 #endif /* UD_NQ_INCLUDESMB2 */
             if (
 #ifdef UD_NQ_INCLUDESMB2
-                !pSession->smb2 &&
+                pSession->dialect == CS_DIALECT_SMB1 &&
 #endif /* UD_NQ_INCLUDESMB2 */
                 (pName = csGetNameByName(nextSrcFile)) != NULL
                ) /* SMB(1) file opened */
@@ -1325,8 +1346,8 @@ csRenameFile(
                         UD_LOG_MODULE_CS,
                         UD_LOG_CLASS_FILE,
                         UD_LOG_FILE_RENAME,
-                        pUser->name,
-                        pUser->ip,
+						pUser? pUser->name : noName,
+						pUser? pUser->ip : &noIP,
                         csErrorReturn(SMB_STATUS_ACCESS_VIOLATION, DOS_ERRbadaccess),
                         (const NQ_BYTE*)&eventInfo
                     );
@@ -1337,8 +1358,8 @@ csRenameFile(
 							UD_LOG_MODULE_CS,
 							UD_LOG_CLASS_FILE,
 							UD_LOG_FILE_CLOSE,
-							pUser->name,
-							pUser->ip,
+							pUser? pUser->name : noName,
+							pUser? pUser->ip : &noIP,
 							0,
 							(const NQ_BYTE*)&eventInfo
 							);
@@ -1350,8 +1371,8 @@ csRenameFile(
 						UD_LOG_MODULE_CS,
 						UD_LOG_CLASS_FILE,
 						UD_LOG_FILE_CLOSE,
-						pUser->name,
-						pUser->ip,
+						pUser? pUser->name : noName,
+						pUser? pUser->ip : &noIP,
 						0,
 						(const NQ_BYTE*)&eventInfo
 						);
@@ -1368,8 +1389,8 @@ csRenameFile(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				0,
 				(const NQ_BYTE*)&eventInfo
 			);
@@ -1383,8 +1404,8 @@ csRenameFile(
 					UD_LOG_MODULE_CS,
 					UD_LOG_CLASS_FILE,
 					UD_LOG_FILE_ATTRIBGET,
-					pUser->name,
-					pUser->ip,
+					pUser? pUser->name : noName,
+					pUser? pUser->ip : &noIP,
 					error,
 					(const NQ_BYTE*)&eventInfo
 				);
@@ -1394,8 +1415,8 @@ csRenameFile(
                     UD_LOG_MODULE_CS,
                     UD_LOG_CLASS_FILE,
                     UD_LOG_FILE_RENAME,
-                    pUser->name,
-                    pUser->ip,
+					pUser? pUser->name : noName,
+					pUser? pUser->ip : &noIP,
                     error,
                     (const NQ_BYTE*)&eventInfo
                 );
@@ -1406,8 +1427,8 @@ csRenameFile(
 						UD_LOG_MODULE_CS,
 						UD_LOG_CLASS_FILE,
 						UD_LOG_FILE_CLOSE,
-						pUser->name,
-						pUser->ip,
+						pUser? pUser->name : noName,
+						pUser? pUser->ip : &noIP,
 						0,
 						(const NQ_BYTE*)&eventInfo
 						);
@@ -1419,8 +1440,8 @@ csRenameFile(
 					UD_LOG_MODULE_CS,
 					UD_LOG_CLASS_FILE,
 					UD_LOG_FILE_CLOSE,
-					pUser->name,
-					pUser->ip,
+					pUser? pUser->name : noName,
+					pUser? pUser->ip : &noIP,
 					0,
 					(const NQ_BYTE*)&eventInfo
 					);
@@ -1434,18 +1455,18 @@ csRenameFile(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				0,
 				(const NQ_BYTE*)&eventInfo
 			);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-            TRC1P("About to rename file: %s to %s", cmTDump(nextSrcFile), cmTDump(nextDstFile));
+            TRC1P("About to rename file: %s to %s", cmWDump(nextSrcFile), cmWDump(nextDstFile));
 
             if (csMatchFileAttributes(searchAttributes, (NQ_UINT16)fileInfo.attributes))
             {
                 /* the destination file name may be in different case letters */
-                if (cmTStricmp(nextSrcFile, nextDstFile) == 0)
+                if (cmWStricmp(nextSrcFile, nextDstFile) == 0)
                 {
                     /* renaming file to the same name with difference in case */
                     if (!(UD_FS_FILESYSTEMATTRIBUTES & CM_FS_CASESENSITIVESEARCH))
@@ -1458,17 +1479,17 @@ csRenameFile(
                 {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
                 	{
-                		NQ_TCHAR * tempName;
+                		NQ_WCHAR * tempName;
 
-                		tempName = (NQ_TCHAR *)eventInfo.fileName;
+                		tempName = (NQ_WCHAR *)eventInfo.fileName;
                 		eventInfo.fileName = eventInfo.newName;
 						eventInfo.before = TRUE;
 						udEventLog(
 									UD_LOG_MODULE_CS,
 									UD_LOG_CLASS_FILE,
-									(pUser->preservesCase || (pShare != NULL && cmTStrcmp(pShare->map , nextDstFile) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
-									pUser->name,
-									pUser->ip,
+									(pUser->preservesCase || (pShare != NULL && syWStrcmp(pShare->map , nextDstFile) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+									pUser? pUser->name : noName,
+									pUser? pUser->ip : &noIP,
 									0,
 									(const NQ_BYTE*)&eventInfo
 								);
@@ -1477,20 +1498,21 @@ csRenameFile(
                 	}
 #endif
                     /* destination file should not exist */
-                    if (csCheckFile(pShare, nextDstFile, pUser->preservesCase))
+                    if (csCheckFile(pShare, nextDstFile, pUser? pUser->preservesCase :
+                    		((UD_FS_FILESYSTEMATTRIBUTES & CM_FS_CASESENSITIVESEARCH) == 0)))
                     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
                     	{
-                    		NQ_TCHAR * tempName;
+                    		NQ_WCHAR * tempName;
 
-							tempName = (NQ_TCHAR *)eventInfo.fileName;
+							tempName = (NQ_WCHAR *)eventInfo.fileName;
 							eventInfo.fileName = eventInfo.newName;
 							udEventLog(
 										UD_LOG_MODULE_CS,
 										UD_LOG_CLASS_FILE,
-										(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , nextDstFile) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
-										pUser->name,
-										pUser->ip,
+										((pUser? pUser->preservesCase : FALSE) || (pShare != NULL && syWStrcmp(pShare->map , nextDstFile) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+										pUser? pUser->name : noName,
+										pUser? pUser->ip : &noIP,
 										csErrorReturn(SMB_STATUS_OBJECT_NAME_COLLISION, DOS_ERRalreadyexists),
 										(const NQ_BYTE*)&eventInfo
 									);
@@ -1502,8 +1524,8 @@ csRenameFile(
                             UD_LOG_MODULE_CS,
                             UD_LOG_CLASS_FILE,
                             UD_LOG_FILE_RENAME,
-                            pUser->name,
-                            pUser->ip,
+							pUser? pUser->name : noName,
+							pUser? pUser->ip : &noIP,
                             csErrorReturn(SMB_STATUS_OBJECT_NAME_COLLISION, DOS_ERRalreadyexists),
                             (const NQ_BYTE*)&eventInfo
                         );
@@ -1514,8 +1536,8 @@ csRenameFile(
 								UD_LOG_MODULE_CS,
 								UD_LOG_CLASS_FILE,
 								UD_LOG_FILE_CLOSE,
-								pUser->name,
-								pUser->ip,
+								pUser? pUser->name : noName,
+								pUser? pUser->ip : &noIP,
 								0,
 								(const NQ_BYTE*)&eventInfo
 								);
@@ -1527,8 +1549,8 @@ csRenameFile(
 							UD_LOG_MODULE_CS,
 							UD_LOG_CLASS_FILE,
 							UD_LOG_FILE_CLOSE,
-							pUser->name,
-							pUser->ip,
+							pUser? pUser->name : noName,
+							pUser? pUser->ip : &noIP,
 							0,
 							(const NQ_BYTE*)&eventInfo
 							);
@@ -1539,16 +1561,16 @@ csRenameFile(
                     }
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
                 	{
-                		NQ_TCHAR * tempName;
+                		NQ_WCHAR * tempName;
 
-                		tempName = (NQ_TCHAR *)eventInfo.fileName;
+                		tempName = (NQ_WCHAR *)eventInfo.fileName;
                 		eventInfo.fileName = eventInfo.newName;
 						udEventLog(
 									UD_LOG_MODULE_CS,
 									UD_LOG_CLASS_FILE,
-									(pUser->preservesCase || (pShare != NULL && cmTStrcmp(pShare->map , nextDstFile) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
-									pUser->name,
-									pUser->ip,
+									((pUser? pUser->preservesCase : FALSE) || (pShare != NULL && syWStrcmp(pShare->map , nextDstFile) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+									pUser? pUser->name : noName,
+									pUser? pUser->ip : &noIP,
 									0,
 									(const NQ_BYTE*)&eventInfo
 								);
@@ -1558,15 +1580,15 @@ csRenameFile(
                 }   
 
                 /* destination file name should not be too long */
-                if (cmTStrlen(nextDstFile) >= UD_FS_FILENAMELEN)
+                if (syWStrlen(nextDstFile) >= UD_FS_FILENAMELEN)
                 {
 #ifdef UD_NQ_INCLUDEEVENTLOG
                     udEventLog(
                         UD_LOG_MODULE_CS,
                         UD_LOG_CLASS_FILE,
                         UD_LOG_FILE_RENAME,
-                        pUser->name,
-                        pUser->ip,
+						pUser? pUser->name : noName,
+						pUser? pUser->ip : &noIP,
                         csErrorReturn(SMB_STATUS_OBJECT_NAME_COLLISION, DOS_ERRalreadyexists),
                         (const NQ_BYTE*)&eventInfo
                     );
@@ -1577,8 +1599,8 @@ csRenameFile(
 							UD_LOG_MODULE_CS,
 							UD_LOG_CLASS_FILE,
 							UD_LOG_FILE_CLOSE,
-							pUser->name,
-							pUser->ip,
+							pUser? pUser->name : noName,
+							pUser? pUser->ip : &noIP,
 							0,
 							(const NQ_BYTE*)&eventInfo
 							);
@@ -1590,8 +1612,8 @@ csRenameFile(
 							UD_LOG_MODULE_CS,
 							UD_LOG_CLASS_FILE,
 							UD_LOG_FILE_CLOSE,
-							pUser->name,
-							pUser->ip,
+							pUser? pUser->name : noName,
+							pUser? pUser->ip : &noIP,
 							0,
 							(const NQ_BYTE*)&eventInfo
 							);
@@ -1611,8 +1633,8 @@ csRenameFile(
                         UD_LOG_MODULE_CS,
                         UD_LOG_CLASS_FILE,
                         UD_LOG_FILE_RENAME,
-                        pUser->name,
-                        pUser->ip,
+						pUser? pUser->name : noName,
+						pUser? pUser->ip : &noIP,
                         csErrorReturn(SMB_STATUS_NO_SUCH_FILE, DOS_ERRbadfile),
                         (const NQ_BYTE*)&eventInfo
                     );
@@ -1623,8 +1645,8 @@ csRenameFile(
 							UD_LOG_MODULE_CS,
 							UD_LOG_CLASS_FILE,
 							UD_LOG_FILE_CLOSE,
-							pUser->name,
-							pUser->ip,
+							pUser? pUser->name : noName,
+							pUser? pUser->ip : &noIP,
 							0,
 							(const NQ_BYTE*)&eventInfo
 							);
@@ -1636,26 +1658,26 @@ csRenameFile(
 							UD_LOG_MODULE_CS,
 							UD_LOG_CLASS_FILE,
 							UD_LOG_FILE_CLOSE,
-							pUser->name,
-							pUser->ip,
+							pUser? pUser->name : noName,
+							pUser? pUser->ip : &noIP,
 							0,
 							(const NQ_BYTE*)&eventInfo
 							);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-                    TRCERR("File is marked for deletion: %s", cmTDump(nextSrcFile));
+                    TRCERR("File is marked for deletion: %s", cmWDump(nextSrcFile));
                     TRCE();
                     return csErrorReturn(SMB_STATUS_NO_SUCH_FILE, DOS_ERRbadfile);
                 }
 
-                TRC1P("Renaming file: %s to: %s", cmTDump(nextSrcFile), cmTDump(nextDstFile));
+                TRC1P("Renaming file: %s to: %s", cmWDump(nextSrcFile), cmWDump(nextDstFile));
 #ifdef UD_NQ_INCLUDEEVENTLOG
                 eventInfo.before = TRUE;
                 udEventLog(
             			UD_LOG_MODULE_CS,
             			UD_LOG_CLASS_FILE,
             			UD_LOG_FILE_RENAME,
-            			pUser->name,
-            			pUser->ip,
+						pUser? pUser->name : noName,
+						pUser? pUser->ip : &noIP,
             			0,
             			(const NQ_BYTE*)&eventInfo
             		);
@@ -1669,8 +1691,8 @@ csRenameFile(
                         UD_LOG_MODULE_CS,
                         UD_LOG_CLASS_FILE,
                         UD_LOG_FILE_RENAME,
-                        pUser->name,
-                        pUser->ip,
+						pUser? pUser->name : noName,
+						pUser? pUser->ip : &noIP,
                         error,
                         (const NQ_BYTE*)&eventInfo
                     );
@@ -1681,8 +1703,8 @@ csRenameFile(
 							UD_LOG_MODULE_CS,
 							UD_LOG_CLASS_FILE,
 							UD_LOG_FILE_CLOSE,
-							pUser->name,
-							pUser->ip,
+							pUser? pUser->name : noName,
+							pUser? pUser->ip : &noIP,
 							0,
 							(const NQ_BYTE*)&eventInfo
 							);
@@ -1694,8 +1716,8 @@ csRenameFile(
 							UD_LOG_MODULE_CS,
 							UD_LOG_CLASS_FILE,
 							UD_LOG_FILE_CLOSE,
-							pUser->name,
-							pUser->ip,
+							pUser? pUser->name : noName,
+							pUser? pUser->ip : &noIP,
 							0,
 							(const NQ_BYTE*)&eventInfo
 							);
@@ -1709,8 +1731,8 @@ csRenameFile(
                     UD_LOG_MODULE_CS,
                     UD_LOG_CLASS_FILE,
                     UD_LOG_FILE_RENAME,
-                    pUser->name,
-                    pUser->ip,
+					pUser? pUser->name : noName,
+					pUser? pUser->ip : &noIP,
                     0,
                     (const NQ_BYTE*)&eventInfo
                 );
@@ -1725,8 +1747,8 @@ csRenameFile(
 					UD_LOG_MODULE_CS,
 					UD_LOG_CLASS_FILE,
 					UD_LOG_FILE_QUERYDIRECTORY,
-					pUser->name,
-					pUser->ip,
+					pUser? pUser->name : noName,
+					pUser? pUser->ip : &noIP,
 					0,
 					(const NQ_BYTE*)&eventInfo
 					);

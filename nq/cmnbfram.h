@@ -86,14 +86,14 @@ CMNetBiosHeader;
 #define CM_NB_OPCODE_QUERY          0<<_OPCODE_SHIFT    /* standard query */
 #define CM_NB_OPCODE_REGISTRATION   5<<_OPCODE_SHIFT    /* registration */
 #define CM_NB_OPCODE_RELEASE        6<<_OPCODE_SHIFT    /* release name */
-#define CM_NB_OPCODE_WACK           7<<_OPCODE_SHIFT    /* wait for acknowledgement */
+#define CM_NB_OPCODE_WACK           7<<_OPCODE_SHIFT    /* wait for acknowledgment */
 #define CM_NB_OPCODE_REFRESH        8<<_OPCODE_SHIFT    /* refresh registration */
 #define CM_NB_OPCODE_REFRESHALT     9<<_OPCODE_SHIFT    /* refresh registration (alternate opcode) */
 #define CM_NB_OPCODE_MHREGISTRATION 15<<_OPCODE_SHIFT   /* multi-homed registration */
 
 /*
-    NM_FLASG (NB_FLAGS):
- NM_FLAGS of the header and NB_FLASG of an Addr Entry have the same bitset.
+    NM_FLAGS (NB_FLAGS):
+ NM_FLAGS of the header and NB_FLAGS of an Address Entry have the same bitset.
  Some bits are relevant for a response only
  */
 
@@ -102,6 +102,7 @@ CMNetBiosHeader;
 #define CM_NB_NAMEFLAGS_ONT_B   (0<<13) /* B-mode node */
 #define CM_NB_NAMEFLAGS_ONT_P   (1<<13) /* P-mode node */
 #define CM_NB_NAMEFLAGS_ONT_M   (2<<13) /* M-mode node */
+#define CM_NB_NAMEFLAGS_ONT_H   CM_NB_NAMEFLAGS_ONT_M /* H-mode node */
 #define CM_NB_NAMEFLAGS_DRG     (1<<12) /* name is being deregistered */
 #define CM_NB_NAMEFLAGS_CNF     (1<<11) /* name is in conflict */
 #define CM_NB_NAMEFLAGS_ACT     (1<<10) /* name is active */
@@ -153,7 +154,7 @@ CMNetBiosHeader;
 
 typedef SY_PACK_PREFIX struct  /* fields following the name */
 {
-    NQ_SUINT16 questionType;    /* question tupe */
+    NQ_SUINT16 questionType;    /* question type */
     NQ_SUINT16 questionClass;   /* question class */
 } SY_PACK_ATTR
 CMNetBiosQuestion;
@@ -180,7 +181,7 @@ CMNetBiosResourceRecord;
 /*
     Name offset pointer
     -------------------
- This format applies to an NB name that is a pointer to a prevously specified name
+ This format applies to an NB name that is a pointer to a previously specified name
 
  */
 
@@ -225,6 +226,7 @@ CMNetBiosAddrEntry;
 #define CM_NB_NAMEREGISTRATIONREQUEST   (CM_NB_OPCODE_REGISTRATION | CM_NB_NAMEFLAGS_RD)
 #define CM_NB_NAMERELEASEREQUEST        (CM_NB_OPCODE_RELEASE)
 #define CM_NB_NAMEQUERYREQUEST          (CM_NB_OPCODE_QUERY)
+#define CM_NB_INTERNALREFRESHLIST		12<<11
 
 /*
     Name Flags for NODE NQ_STATUS RESPONSE
@@ -294,7 +296,7 @@ typedef SY_PACK_PREFIX struct
 {
     NQ_SBYTE type;              /* packet type */
     NQ_SBYTE flags;             /* packet flags */
-    NQ_SUINT16 length;          /* length of the rest of the paket */
+    NQ_SUINT16 length;          /* length of the rest of the packet */
 } SY_PACK_ATTR
 CMNetBiosSessionMessage;
 
@@ -382,11 +384,12 @@ CMNetBiosDatagramError;
 
 /* flags */
 
-#define CM_NB_DATAGRAM_MOREFLAG  0x1     /* this datagram is not the lsat fragment */
+#define CM_NB_DATAGRAM_MOREFLAG  0x1     /* this datagram is not the last fragment */
 #define CM_NB_DATAGRAM_FIRSTFLAG 0x2     /* this datagram is the first fragment */
 #define CM_NB_DATAGRAM_BNODE    0x0<<2   /* B node */
 #define CM_NB_DATAGRAM_PNODE    0x1<<2   /* P node */
 #define CM_NB_DATAGRAM_MNODE    0x2<<2   /* M node */
+#define CM_NB_DATAGRAM_HNODE    CM_NB_DATAGRAM_MNODE   /* H node */
 
 #include "sypackof.h"
 
@@ -403,7 +406,7 @@ cmNetBiosGetNextTranId(
 
 NQ_BYTE
 cmNetBiosSetDatagramFlags(
-    NQ_BYTE flags              /* add necessary datagrm flags */
+    NQ_BYTE flags              /* add necessary datagarm flags */
     );
 
 #endif /* _CMNBFRAM_H_ */

@@ -29,7 +29,7 @@
     -----------
  */
 
-static NQ_UINT16 nextTranId = 0;
+static NQ_UINT16 nextTranId = 1;
 
 /*
  *====================================================================
@@ -71,11 +71,11 @@ cmNetBiosSetDatagramFlags(
     NQ_BYTE flags
     )
 {
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "flags:0x%x", flags);
 
     /* we are adding the node type */
 
-    TRC1P("node type: 0x%x", cmNetBiosGetNodeType());
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "node type: 0x%x", cmNetBiosGetNodeType());
 
     switch (cmNetBiosGetNodeType())
     {
@@ -85,14 +85,14 @@ cmNetBiosSetDatagramFlags(
     case CM_NB_NAMEFLAGS_ONT_P:
         flags |= CM_NB_DATAGRAM_PNODE;
         break;
-    case CM_NB_NAMEFLAGS_ONT_M:
-        flags |= CM_NB_DATAGRAM_MNODE;
-        break;
+	case CM_NB_NAMEFLAGS_ONT_H: /* same as CM_NB_NAMEFLAGS_ONT_M */
+		flags |= CM_NB_DATAGRAM_HNODE;
+		break;
     default:
-        TRCERR("Illegal node type");
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal node type");
         break;
     }
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:0x%x", flags);
     return flags;
 }

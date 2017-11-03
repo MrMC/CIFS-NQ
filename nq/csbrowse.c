@@ -40,7 +40,7 @@
 
 typedef struct
 {
-    NQ_TIME nextAnnouncementInterval;   /* next interval between announcements, this value
+    NQ_UINT32 nextAnnouncementInterval;   /* next interval between announcements, this value
 					                                        will raise up to CM_FS_MINHOSTANNOUNCEMENTINTERVAL */
     NSSocketHandle ddSocket;            /* socket for connecting to DD */
     CMNetBiosNameInfo dcName;           /* NetBIOS name (domain controller) to send announcment to */
@@ -140,7 +140,7 @@ csInitBrowse(
 {
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(*staticData));
     if (NULL == staticData)
        return NQ_FAIL;
 #endif /* SY_FORCEALLOCATION */
@@ -219,12 +219,12 @@ csStopBrowse(
  *====================================================================
  */
 
-NQ_TIME
+NQ_UINT32
 csAnnounceServer(
     void
     )
 {
-    NQ_TIME announcementInterval;     /* this announcement interval */
+    NQ_UINT32 announcementInterval;     /* this announcement interval */
 
     TRCB();
 
@@ -249,7 +249,7 @@ csAnnounceServer(
 	    {
 	        TRCERR("Failed to send broadcast to DD");
 	        TRCE();
-	        return (NQ_TIME)NQ_FAIL;
+	        return (NQ_UINT32)NQ_FAIL;
 	    }
 	}
 #endif
@@ -350,7 +350,7 @@ static void initializeFrame()
 
     staticData->frameReady = TRUE;
 
-    syMemcpy(&staticData->frame, sCifsServerAnnouncementRequest, sizeof(CMCifsServerAnnouncementRequest));
+    syMemcpy(&staticData->frame, sCifsServerAnnouncementRequest, sizeof(sCifsServerAnnouncementRequest));
 
     /* write in constant values for the first time */
 

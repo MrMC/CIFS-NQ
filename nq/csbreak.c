@@ -23,7 +23,6 @@
 #include "cscreate.h"
 #include "cssignin.h"
 #include "csutils.h"
-#include "csbreak.h"
 #include "cs2disp.h"
 
 #ifdef UD_NQ_INCLUDECIFSSERVER
@@ -42,7 +41,7 @@ static NQ_BOOL breakSmb(CSFile *pFile);
 It uses functions from cmsmb2 to compose and send a break request. The request is composed in a static buffer.
  */
 static NQ_BOOL breakSmb2(CSFile *pFile);
-#endif
+#endif /* #ifdef UD_NQ_INCLUDESMB2 */
 
 
 /*API function NQ_BOOL csBreakCheck(CSFile * pFile). This function enumerates CSFile structures of the same CSName and looks for  oplockGranted. 
@@ -75,7 +74,7 @@ csBreakCheck(
     pName = csGetNameByNid(pFile->nid);
     if (pName == NULL)
     {
-        LOGERR(CM_TRC_LEVEL_ERROR, "Internal error: file name descriptor not found");
+    	LOGERR(CM_TRC_LEVEL_ERROR, "Internal error: file name descriptor not found. Nid: %d", pFile->nid);
         LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
         return FALSE;
     }    
@@ -85,60 +84,77 @@ csBreakCheck(
     {
         if (pFilePrevGranted->oplockGranted)
         {
-            /* save fid of the file that breaks */
-            pFilePrevGranted->pFileOplockBreaker = pFile;
-            /* save header of late response */
-            csDispatchSaveResponseContext(&pFile->breakContext); 
+        	 /* mark breaking file as create pending and save header for late response */
+        	pFile->isCreatePending = TRUE;
+        	csDispatchSaveResponseContext(&pFile->breakContext);
 
 #ifdef UD_NQ_INCLUDESMB2
-            if (pFile->breakContext.isSmb2)
-            {
-                /* save command data */
-                pFile->breakContext.prot.smb2.commandData.oplockBreak.fid = pParams->file->fid;
-                pFile->breakContext.prot.smb2.commandData.oplockBreak.createAction = pParams->takenAction;
-                pFile->breakContext.prot.smb2.commandData.oplockBreak.fileInfo = pParams->fileInfo;
-                pFile->breakContext.prot.smb2.commandData.oplockBreak.context = pParams->context;
-            }
-                else
+			if (pFile->breakContext.isSmb2)
+			{
+				/* save command data */
+				pFile->breakContext.prot.smb2.commandData.oplockBreak.fid = pParams->file->fid;
+				pFile->breakContext.prot.smb2.commandData.oplockBreak.createAction = pParams->takenAction;
+				pFile->breakContext.prot.smb2.commandData.oplockBreak.fileInfo = pParams->fileInfo;
+				pFile->breakContext.prot.smb2.commandData.oplockBreak.context = pParams->context;
+			}
+			else
 #endif /* UD_NQ_INCLUDESMB2 */
-            {
-                
-                /* save command data */
-                pFile->breakContext.prot.smb1.commandData.lockingAndX.fid = pParams->file->fid;
-                pFile->breakContext.prot.smb1.commandData.lockingAndX.createAction = pParams->takenAction;
-                pFile->breakContext.prot.smb1.commandData.lockingAndX.fileInfo = pParams->fileInfo;
-            }
-            result = 
+			{
+				/* save command data */
+				pFile->breakContext.prot.smb1.commandData.lockingAndX.fid = pParams->file->fid;
+				pFile->breakContext.prot.smb1.commandData.lockingAndX.createAction = pParams->takenAction;
+				pFile->breakContext.prot.smb1.commandData.lockingAndX.fileInfo = pParams->fileInfo;
+			}
+
+			if (pFilePrevGranted->isBreakingOpLock != TRUE)
+			{
+				/* mark this file as breaking its oplock */
+				pFilePrevGranted->isBreakingOpLock = TRUE;
+
+				result =
 #ifdef UD_NQ_INCLUDESMB2
-                pFilePrevGranted->breakContext.isSmb2?  breakSmb2(pFilePrevGranted) : 
+						pFilePrevGranted->breakContext.isSmb2?  breakSmb2(pFilePrevGranted) :
 #endif /* UD_NQ_INCLUDESMB2 */
-                                                        breakSmb(pFilePrevGranted);
-            /* mark name as oplock broken once */
-            pName->wasOplockBroken = TRUE;            
+																breakSmb(pFilePrevGranted);
+				/* mark this file name as oplock broken once */
+				pName->wasOplockBroken = TRUE;
+        	}
+        	else
+        	{
+        		/* file is already breaking its oplock */
+        		result = TRUE;
+        	}
         }
     }
     LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
     return result;
 }
 
+
 /*
-It should compose and send an NTCreateAndX/Create response according to the protocol. This is done in a static buffer using the pContext's pFile.  
+Compose and send an NTCreateAndX/Create response according to the protocol. This is done in a static buffer using the pContext's pFile.
 */
-NQ_BOOL csBreakComplete(CSLateResponseContext * pContext, void * pHeaderOut)
+static NQ_BOOL csSignalPendingCreate(CSLateResponseContext * pContext, void * pHeaderOut, NQ_UINT32 headerInFlags)
 {
     CMBufferWriter writer;                  /* used to compose either of two responses */
     NQ_COUNT dataLength;                    /* response length */
     NQ_BOOL result = FALSE;                 /* operation result */
     CSSession *pBrokenSession = NULL;       /* session whose response was postponed */
-    CSFile *pFile = NULL;                   /* context file */
-#ifdef UD_CS_MESSAGESIGNINGPOLICY
     CSSession *pBreakingSession = NULL;     /* session that is causing postponed response */ 
-    CSUser * pUser;							/* context user */
-    NQ_BOOL closeCalled = FALSE;    /* whether Close resposne was sent */
+    CSFile *pFile = NULL;                   /* context file */
+#ifdef UD_NQ_INCLUDESMB3
+    NQ_BYTE	encryptBuf[200 + SMB2_TRANSFORMHEADER_SIZE];
+    NQ_BOOL doEncrypt = pContext->doEncrypt;
+#endif
+#ifdef UD_CS_MESSAGESIGNINGPOLICY
+	CSUser * pUser;                     	/* context user */
 #ifdef UD_NQ_INCLUDESMB2
     CMSmb2Header * pHeaderOut2 = (CMSmb2Header *)pHeaderOut; /* pointer to SMB2 header */
 #endif /* UD_NQ_INCLUDESMB2 */
 #endif /* UD_CS_MESSAGESIGNINGPOLICY */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    CSSocketDescriptor * sockDescr;
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 
     LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
 
@@ -149,42 +165,111 @@ NQ_BOOL csBreakComplete(CSLateResponseContext * pContext, void * pHeaderOut)
     if (pHeaderOut)                             /* send close response */
     {
         LOGMSG(CM_TRC_LEVEL_MESS_ALWAYS, "send Close response");
+        pBreakingSession = csGetSessionBySocket();
         cmBufferWriterInit(&writer, buffer + sizeof(CMNetBiosSessionMessage), sizeof(buffer));
-        cmBufferWriteBytes(&writer, (NQ_BYTE *)pHeaderOut, 124); /* copy response to local buffer */
+        cmBufferWriteBytes(&writer, (NQ_BYTE *)pHeaderOut, pBreakingSession->dialect == CS_DIALECT_SMB1 ? 35 :124); /* copy response to local buffer */
+        if (pBreakingSession->dialect == CS_DIALECT_SMB1)
+        {
+        	if (csDispatchIsNtError())
+        	{
+        		CMSmbHeader hdr;
+				CMBufferReader	reader;
+				CMBufferWriter	writer;
+
+				cmBufferReaderInit(&reader , (NQ_BYTE *)&buffer[4] , 32);
+				cmSmbHeaderRead(&hdr, &reader);
+        		hdr.flags2 = hdr.flags2 | cmHtol16(SMB_FLAGS2_32_BIT_ERROR_CODES);
+        		cmBufferWriterInit(&writer , (NQ_BYTE *)&buffer[4] , 32);
+        		cmSmbHeaderWrite(&hdr , &writer);
+        	}
+        }
+
         dataLength = cmBufferWriterGetDataCount(&writer);
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
-        pBreakingSession = csGetSessionBySocket();
         /* sign outgoing message */ 
-        if (NULL != pBreakingSession)
-        {
-            pUser = csGetUserBySession(pBreakingSession);
-#ifdef UD_NQ_INCLUDESMB2
-            if (pBreakingSession->smb2)
-                csCreateMessageSignatureSMB2(pHeaderOut2->sid.low, cmBufferWriterGetStart(&writer), (NQ_COUNT)dataLength);
-            else
-#endif /* UD_NQ_INCLUDESMB2 */
-            {
-                pBreakingSession->sequenceNumRes = pContext->sequenceNum;
-                if (pBreakingSession == pBrokenSession)
-                    pBreakingSession->sequenceNumRes += 2;  /* count the broken command */
-                csCreateMessageSignatureSMB(pBreakingSession, pUser, cmBufferWriterGetStart(&writer), (NQ_COUNT)dataLength);
-                pBreakingSession->sequenceNum = pContext->sequenceNum + 1;
-                pBreakingSession->sequenceNumRes = pContext->sequenceNum + 2;
-            }
-        }
-#endif /* UD_CS_MESSAGESIGNINGPOLICY */
 
-        if (dataLength != nsSendFromBuffer(csDispatchGetSocket(), buffer, dataLength, dataLength, NULL))
+		pUser = csGetUserBySession(pBreakingSession);
+#ifdef UD_NQ_INCLUDESMB2
+		if (pBreakingSession->dialect != CS_DIALECT_SMB1)
+		{
+			CMBufferReader	reader;
+			CMBufferWriter	writer;
+			CMSmb2Header hdr;
+			cmBufferReaderInit(&reader , (NQ_BYTE *)&buffer[4] , 64);
+			cmSmb2HeaderRead(&hdr, &reader);
+			if (headerInFlags & SMB2_FLAG_SIGNED)
+				hdr.flags |= SMB2_FLAG_SIGNED;
+			cmBufferWriterInit(&writer , (NQ_BYTE *)&buffer[4] , 65);
+			cmSmb2HeaderWrite(&hdr , &writer);
+		}
+#ifdef UD_NQ_INCLUDESMB3
+		if (pBreakingSession->dialect >= CS_DIALECT_SMB30)
+		{
+			if (!doEncrypt)
+				csCreateMessageSignatureSMB3(pHeaderOut2->sid.low, cmBufferWriterGetStart(&writer), (NQ_COUNT)dataLength);
+		}
+#endif /* UD_NQ_INCLUDESMB3 */
+		else if((pBreakingSession->dialect == CS_DIALECT_SMB2) || (pBreakingSession->dialect == CS_DIALECT_SMB210))
+		{
+			csCreateMessageSignatureSMB2(pHeaderOut2->sid.low, cmBufferWriterGetStart(&writer), (NQ_COUNT)dataLength);
+		}
+		else
+#endif /* UD_NQ_INCLUDESMB2 */
+		{
+			csCreateMessageSignatureSMB(pBreakingSession, pUser, cmBufferWriterGetStart(&writer), (NQ_COUNT)dataLength);
+		}
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+        {
+        	NSSocketHandle	sock = csDispatchGetSocket();
+			sockDescr = csGetClientSocketDescriptorBySocket(sock);
+			if (sockDescr != NULL)
+			{
+				sockDescr->captureHdr.receiving = FALSE;
+				cmCapturePacketWriteStart(&sockDescr->captureHdr , dataLength);
+				cmCapturePacketWritePacket(buffer + 4, dataLength);
+				cmCapturePacketWriteEnd();
+			}
+        }
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+#ifdef UD_CS_MESSAGESIGNINGPOLICY
+#ifdef UD_NQ_INCLUDESMB3
+       if ((pBreakingSession->dialect >= CS_DIALECT_SMB30) && doEncrypt)
+		{
+        	syMemset(&encryptBuf , 0 , sizeof(encryptBuf));
+			syMemcpy(&encryptBuf[sizeof(CMNetBiosSessionMessage)] , &buffer[sizeof(CMNetBiosSessionMessage)] , dataLength);
+			cs2TransformHeaderEncrypt( pUser, &encryptBuf[sizeof(CMNetBiosSessionMessage)] , dataLength);
+
+			dataLength = dataLength + SMB2_TRANSFORMHEADER_SIZE;
+		}
+#endif /* UD_NQ_INCLUDESMB3 */
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */
+       dataLength = nsPrepareNBBuffer(
+#ifdef UD_NQ_INCLUDESMB3
+    		   	   	   doEncrypt ? encryptBuf :
+#endif
+    				   buffer, dataLength, dataLength);
+
+	    if(0 == dataLength)
+	    {
+	    	LOGERR(CM_TRC_LEVEL_ERROR, "Error prepare buffer for Close response");
+	    }
+	    else if ((NQ_INT)dataLength != nsSendFromBuffer(csDispatchGetSocket(),
+#ifdef UD_NQ_INCLUDESMB3
+											doEncrypt ? encryptBuf :
+#endif
+											buffer,
+											dataLength,
+											dataLength,
+											NULL))
         {
             LOGERR(CM_TRC_LEVEL_ERROR, "Error sending Close response");
         }
-#ifdef UD_CS_MESSAGESIGNINGPOLICY
-        closeCalled = TRUE;
-#endif /* UD_CS_MESSAGESIGNINGPOLICY */
     }
-
     if (NULL != pBrokenSession)
+    {
         csDispatchSetSocket(pContext->socket);
+    }
 #ifdef UD_NQ_INCLUDESMB2
     if (pContext->isSmb2)
     {
@@ -278,13 +363,6 @@ NQ_BOOL csBreakComplete(CSLateResponseContext * pContext, void * pHeaderOut)
         {
             LOGERR(CM_TRC_LEVEL_ERROR, "Error sending late NtCreateAndX response");
         }
-#ifdef UD_CS_MESSAGESIGNINGPOLICY
-        if (closeCalled && pBreakingSession == pBrokenSession)
-        {
-            pBreakingSession->sequenceNum = pContext->sequenceNum + 3;
-            pBreakingSession->sequenceNumRes = pContext->sequenceNum + 4;
-        }
-#endif /* UD_CS_MESSAGESIGNINGPOLICY */
     }
     /* release fake file */
     if (NQ_SUCCESS != pContext->status && NULL != pFile)
@@ -294,6 +372,30 @@ NQ_BOOL csBreakComplete(CSLateResponseContext * pContext, void * pHeaderOut)
     LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
     return result;
 } 
+
+/*
+Traverse file list. see files with pending create and write final create response
+*/
+NQ_BOOL csBreakComplete(CSFile *pFile, void * pHeaderOut, NQ_UINT32 headerInFlags)
+{
+	NQ_BOOL result = TRUE;
+	CSName *pName;
+
+	/* start with first file in this list */
+	pName = csGetNameByNid(pFile->nid);
+	pFile = pName->first;
+
+	for(;pFile != NULL; pFile = pFile->next)
+	{
+		if (pFile->isCreatePending)
+		{
+			csSignalPendingCreate(&pFile->breakContext, pHeaderOut, headerInFlags);
+			pFile->isCreatePending = FALSE;
+		}
+	}
+
+	return result;
+}
 
 
 #ifdef UD_NQ_INCLUDESMB2
@@ -325,6 +427,13 @@ NQ_UINT32 csSmb2OnOplockBreak(CMSmb2Header *in, CMSmb2Header *out, CMBufferReade
     CSFid   fid;
     CSFile *pFile;
     CMBufferWriter stWriter;
+#ifdef UD_NQ_INCLUDESMB3
+    NQ_BOOL			doEncrypt;
+    NQ_BYTE			encryptBuf[200 + SMB2_TRANSFORMHEADER_SIZE];
+#endif
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    CSSocketDescriptor * sockDescr;
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
     
     LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
    
@@ -339,6 +448,9 @@ NQ_UINT32 csSmb2OnOplockBreak(CMSmb2Header *in, CMSmb2Header *out, CMBufferReade
         LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
         return SMB_STATUS_FILE_CLOSED;
     }
+#ifdef UD_NQ_INCLUDESMB3
+    doEncrypt = pFile->breakContext.doEncrypt;
+#endif
 
     /* compose Oplock Break Response packet in a static buffer */
     if (pFile->oplockGranted)
@@ -356,7 +468,49 @@ NQ_UINT32 csSmb2OnOplockBreak(CMSmb2Header *in, CMSmb2Header *out, CMBufferReade
 
         /* send */  
         packetLen = cmBufferWriterGetDataCount(&stWriter);
-        if (packetLen != nsSendFromBuffer(pFile->breakContext.socket, buffer, packetLen, packetLen, NULL))
+
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+		sockDescr = csGetClientSocketDescriptorBySocket(pFile->breakContext.socket);
+		if (sockDescr != NULL)
+		{
+			sockDescr->captureHdr.receiving = FALSE;
+			cmCapturePacketWriteStart(&sockDescr->captureHdr , packetLen);
+			cmCapturePacketWritePacket(buffer + 4, packetLen);
+			cmCapturePacketWriteEnd();
+		}
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+#ifdef UD_NQ_INCLUDESMB3
+		if (doEncrypt)
+		{
+			syMemset(&encryptBuf , 0 , sizeof(encryptBuf));
+			syMemcpy(&encryptBuf[sizeof(CMNetBiosSessionMessage) + SMB2_TRANSFORMHEADER_SIZE] , &buffer[sizeof(CMNetBiosSessionMessage)] , packetLen);
+			cs2TransformHeaderEncrypt( session, &encryptBuf[sizeof(CMNetBiosSessionMessage)] , packetLen);
+
+			packetLen = packetLen + SMB2_TRANSFORMHEADER_SIZE;
+		}
+#endif  /* UD_NQ_INCLUDESMB3 */
+	    packetLen = nsPrepareNBBuffer(
+#ifdef UD_NQ_INCLUDESMB3
+	    								doEncrypt ? encryptBuf :
+#endif
+	    								buffer,
+										packetLen,
+										packetLen);
+		if(0 == packetLen)
+		{
+            LOGERR(CM_TRC_LEVEL_ERROR, "Error prepare buffer for OPLOCK_BREAK response");
+            LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
+            return FALSE;
+		}
+
+        if ((NQ_INT)packetLen != nsSendFromBuffer(pFile->breakContext.socket,
+#ifdef UD_NQ_INCLUDESMB3
+        									doEncrypt ? encryptBuf :
+#endif
+      										buffer,
+        									packetLen,
+											packetLen,
+											NULL))
         {
             LOGERR(CM_TRC_LEVEL_ERROR, "Error sending OPLOCK_BREAK response");
             LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
@@ -364,8 +518,9 @@ NQ_UINT32 csSmb2OnOplockBreak(CMSmb2Header *in, CMSmb2Header *out, CMBufferReade
         }
 
         /* send Create response */
-        csBreakComplete(&pFile->pFileOplockBreaker->breakContext, NULL);
+        csBreakComplete(pFile, NULL, in->flags);
         pFile->oplockGranted = FALSE;
+        pFile->isBreakingOpLock = FALSE;
         LOGMSG(CM_TRC_LEVEL_MESS_ALWAYS, "Oplock break completed");
         LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
         return SMB_STATUS_NORESPONSE;
@@ -381,10 +536,17 @@ static NQ_BOOL breakSmb2(CSFile *pFile)
     CMSmb2Header header;
     CMBufferWriter writer;
     NQ_COUNT packetLen;
+#ifdef UD_NQ_INCLUDESMB3
+    NQ_BYTE			encryptBuf[200 + SMB2_TRANSFORMHEADER_SIZE];
+    NQ_BOOL			doEncrypt = pFile->breakContext.doEncrypt;
+#endif
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    CSSocketDescriptor * sockDescr;
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_TOOL, "Fid: %d", pFile->fid);
 
-    /* compose Oplock Break request */  
+    /* compose Oplock Break response */
     cmBufferWriterInit(&writer, buffer + sizeof(CMNetBiosSessionMessage), sizeof(buffer));
 
     /* header - unsolicited response */
@@ -393,20 +555,76 @@ static NQ_BOOL breakSmb2(CSFile *pFile)
     header.credits = 0;
     header.mid.low = 0xFFFFFFFF;
     header.mid.high = 0xFFFFFFFF;
+    header.sid.low = (NQ_UINT32)uidToSessionId(pFile->uid);
+    header.tid = pFile->tid;
     cmSmb2HeaderWrite(&header, &writer);
 
     /* data */
     cmBufferWriteUint16(&writer, OPLOCK_BREAK_RESPONSE_LENGTH); 
-    cmBufferWriteByte(&writer, SMB2_OPLOCK_NONE); /* new oplock level for client: no oplock (can be level II)*/
+    cmBufferWriteByte(&writer, SMB2_OPLOCK_LEVEL_NONE); /* new oplock level for client: no oplock (can be level II)*/
     cmBufferWriteZeroes(&writer, 5);          /* reserved */
     cmBufferWriteUint16(&writer, pFile->fid); /* fid */
     cmBufferWriteZeroes(&writer, 14);         /* fid */
 
-    /* send */  
-    packetLen = cmBufferWriterGetDataCount(&writer);
-    if (packetLen != nsSendFromBuffer(pFile->breakContext.socket, buffer, packetLen, packetLen, NULL))
+    /* send */
+	packetLen = cmBufferWriterGetDataCount(&writer);
+
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    sockDescr = csGetClientSocketDescriptorBySocket(pFile->breakContext.socket);
+    if (sockDescr != NULL)
     {
-        LOGERR(CM_TRC_LEVEL_ERROR, "Error sending OPLOCK_BREAK response");
+		sockDescr->captureHdr.receiving = FALSE;
+		cmCapturePacketWriteStart(&sockDescr->captureHdr , packetLen);
+		cmCapturePacketWritePacket(buffer + 4, packetLen);
+		cmCapturePacketWriteEnd();
+    }
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+#ifdef UD_NQ_INCLUDESMB3
+    if (doEncrypt)
+    {
+    	CSUser 		* 	pUser;
+
+    	pUser = (pFile->user != NULL) ? pFile->user : csGetUserByUid(pFile->uid);
+
+    	if (NULL == pUser)
+    	{
+    		LOGERR(CM_TRC_LEVEL_ERROR, "No user, can't encrypt packet. Not sending break.");
+    		LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
+    		return FALSE;
+    	}
+    	/* encryptNonce shouldn't repeat in a session. usually we copy nonce from request to user data and use in in response.
+    	 * For break there is no request so nonce will be same as previous packet.
+    	 * Solution: create new nonce in user data. */
+    	cmCreateRandomByteSequence(pUser->encryptNonce, SMB2_AES128_GCM_NONCE_SIZE);
+    	syMemset(&encryptBuf , 0 , sizeof(encryptBuf));
+    	syMemcpy(&encryptBuf[sizeof(CMNetBiosSessionMessage) + SMB2_TRANSFORMHEADER_SIZE], &buffer[sizeof(CMNetBiosSessionMessage)], packetLen);
+    	cs2TransformHeaderEncrypt( pUser, &encryptBuf[sizeof(CMNetBiosSessionMessage)] , packetLen);
+    	packetLen = packetLen + SMB2_TRANSFORMHEADER_SIZE;
+
+    }
+#endif /* UD_NQ_INCLUDESMB3 */
+    packetLen = nsPrepareNBBuffer(
+#ifdef UD_NQ_INCLUDESMB3
+    		doEncrypt ? encryptBuf :
+#endif
+    				buffer, packetLen, packetLen);
+    if(0 == packetLen)
+    {
+    	LOGERR(CM_TRC_LEVEL_ERROR, "Error prepare buffer for OPLOCK_BREAK response");
+        LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
+        return FALSE;
+    }
+
+    if ((NQ_INT)packetLen != nsSendFromBuffer(pFile->breakContext.socket,
+#ifdef UD_NQ_INCLUDESMB3
+									doEncrypt ? encryptBuf :
+#endif
+											buffer,
+									packetLen,
+									packetLen,
+									NULL))
+    {
+    	LOGERR(CM_TRC_LEVEL_ERROR, "Error sending OPLOCK_BREAK response");
         LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
         return FALSE;
     }
@@ -421,6 +639,9 @@ static NQ_BOOL breakSmb(CSFile *pFile)
     CMSmbHeader header;  
     CMBufferWriter writer;
     NQ_COUNT packetLen;
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    CSSocketDescriptor * sockDescr;
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 
     LOGFB(CM_TRC_LEVEL_FUNC_TOOL);
 
@@ -432,6 +653,7 @@ static NQ_BOOL breakSmb(CSFile *pFile)
     header.tid = pFile->tid;
     header.uid = pFile->uid;
     header.mid = 0xFFFF;
+    header.pid = 0xFFFF;
     cmSmbHeaderWrite(&header, &writer);
 
     /* data */
@@ -446,9 +668,29 @@ static NQ_BOOL breakSmb(CSFile *pFile)
     cmBufferWriteUint16(&writer, 0);            /* number of locks: 0  */ 
     cmBufferWriteUint16(&writer, 0);            /* byte count */ 
     
-    /* send */  
+    /* send */
     packetLen = cmBufferWriterGetDataCount(&writer);
-    if (packetLen != nsSendFromBuffer(pFile->breakContext.socket, buffer, packetLen, packetLen, NULL))
+
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    sockDescr = csGetClientSocketDescriptorBySocket(pFile->breakContext.socket);
+    if (sockDescr != NULL)
+    {
+		sockDescr->captureHdr.receiving = FALSE;
+		cmCapturePacketWriteStart(&sockDescr->captureHdr , packetLen);
+		cmCapturePacketWritePacket(buffer + 4, packetLen);
+		cmCapturePacketWriteEnd();
+    }
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+
+    packetLen = nsPrepareNBBuffer(buffer, packetLen, packetLen);
+    if(0 == packetLen)
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error prepare buffer for SMB_COM_LOCKING_ANDX request");
+        LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
+        return FALSE;
+    }
+
+    if ((NQ_INT)packetLen != nsSendFromBuffer(pFile->breakContext.socket, buffer, packetLen, packetLen, NULL))
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Error sending SMB_COM_LOCKING_ANDX request");
         LOGFE(CM_TRC_LEVEL_FUNC_TOOL);

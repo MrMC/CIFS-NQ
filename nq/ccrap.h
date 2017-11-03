@@ -35,7 +35,7 @@
 #define SV_TYPE_NOVELL              0x00000080  /* Novell servers */
 #define SV_TYPE_DOMAIN_MEMBER       0x00000100  /* Domain Member */
 #define SV_TYPE_PRINTQ_SERVER       0x00000200  /* Server sharing print queue */
-#define SV_TYPE_DIALIN_SERVER       0x00000400  /* Server running dialin service. */
+#define SV_TYPE_DIALIN_SERVER       0x00000400  /* Server running dialing service. */
 #define SV_TYPE_XENIX_SERVER        0x00000800  /* Xenix server */
 #define SV_TYPE_NT                  0x00001000  /* NT server */
 #define SV_TYPE_WFW                 0x00002000  /* Server running Windows for Workgroups */
@@ -46,6 +46,7 @@
 #define SV_TYPE_DOMAIN_MASTER       0x00080000  /* Domain Master Browser server */
 #define SV_TYPE_LOCAL_LIST_ONLY     0x40000000  /* Enumerate only entries marked "local" */
 #define SV_TYPE_DOMAIN_ENUM         0x80000000  /* Enumerate Domains. The pszServer and pszDomain parameters must be NULL. */
+#define SV_TYPE_ALL                 0xFFFFFFFF  /* Enumerate all. */
 
 typedef struct {
     NQ_CHAR     netName[NET_NAME_MAX_SIZE];
@@ -56,15 +57,15 @@ typedef struct {
 }ShareInfo1;
 
 typedef struct {
-    NQ_WCHAR  srvName[CM_BUFFERLENGTH(NQ_TCHAR, NET_SRVR_MAX_SIZE)];
+    NQ_WCHAR  srvName[CM_BUFFERLENGTH(NQ_WCHAR, NET_SRVR_MAX_SIZE)];
 } ServerInfo0;
 
 typedef struct {
-    NQ_WCHAR  srvName[CM_BUFFERLENGTH(NQ_TCHAR, NET_SRVR_MAX_SIZE)];
+    NQ_WCHAR  srvName[CM_BUFFERLENGTH(NQ_WCHAR, NET_SRVR_MAX_SIZE)];
     NQ_BYTE   versionMajor;
     NQ_BYTE   versionMinor;
     NQ_UINT32 type;
-    NQ_TCHAR   comment[CM_BUFFERLENGTH(NQ_TCHAR, NET_DESC_MAX_SIZE)];
+    NQ_WCHAR   comment[CM_BUFFERLENGTH(NQ_WCHAR, NET_DESC_MAX_SIZE)];
 } ServerInfo1;
 
 /* callback function for storing different names during enumeration */

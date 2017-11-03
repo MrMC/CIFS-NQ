@@ -27,8 +27,8 @@ csRenameFile(
     const CSShare* pShare,                      /* pointer to the share */
     NQ_BOOL unicodeRequired,                    /* whether client requires UNICODE */
     NQ_UINT16 searchAttributes,                 /* allowed attributes of the file */
-    NQ_TCHAR* srcName,                          /* source file name in host filename format */
-    NQ_TCHAR* dstName                           /* destination file name in host filename format */
+    NQ_WCHAR* srcName,                          /* source file name in host filename format */
+    NQ_WCHAR* dstName                           /* destination file name in host filename format */
     );
 
 #endif /* _CSDELETE_H_ */

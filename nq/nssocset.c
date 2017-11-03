@@ -42,21 +42,41 @@
 
 NQ_BOOL
 nsAddSocketToSet(
-    NSSocketSet* set,
+	NSSocketSet * set,
     NSSocketHandle socket
     )
 {
-    SocketSlot *slot = (SocketSlot *)socket;
+    NQ_BOOL    result = TRUE;
+    SocketSlot *slot  = (SocketSlot *)socket;
+#ifdef UD_NQ_INCLUDETRACE
+    NSSocketSet *sockSet;
 
-    if (!syIsValidSocket(slot->socket))
+#ifdef CM_NQ_STORAGE
+    /* below cast is valied becaue we only print the pointer. */
+    sockSet = (NSSocketSet *)&set->socketSet;
+#else
+    sockSet = set;
+#endif
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "set:%p socket:%p",
+            sockSet,
+   			socket);
+
+#endif
+
+    if (!syIsValidSocket(slot->socket)  || !syIsSocketAlive(slot->socket))
     {
-        TRCERR("Illegal socket passed to nsAddSocketToSet");
-        return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal socket passed to nsAddSocketToSet");
+
+        result = FALSE; 
+        goto Exit;
     }
 
     syAddSocketToSet(slot->socket, set);
 
-    return TRUE;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE"); 
+    return result;
 }
 
 /*
@@ -76,18 +96,29 @@ nsSocketInSet(
     NSSocketHandle socket
     )
 {
+    NQ_BOOL result = FALSE;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "set:%p socket:%p", set, socket);
+
     if (socket == NULL)
-        return FALSE;
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "NULL socket");
+        goto Exit;
+    }
 
 #if SY_DEBUGMODE
     if (!syIsValidSocket(((SocketSlot*)socket)->socket))
     {
-        TRCERR("Illegal socket passed to nsIsSocketInSet");
-        return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal socket passed to nsIsSocketInSet");
+        goto Exit;
     }
 #endif
 
-    return syIsSocketSet(((SocketSlot*)socket)->socket, set);
+    result = syIsSocketSet(((SocketSlot*)socket)->socket, set);
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE " : "FALSE");
+    return result;
 }
 
 /*
@@ -102,8 +133,27 @@ nsSocketInSet(
 
 void
 nsClearSocketSet(
-    NSSocketSet* set
+	NSSocketSet * set
     )
 {
     syClearSocketSet(set);
+}
+
+/*
+ *====================================================================
+ * PURPOSE: remove a socket from a set
+ *--------------------------------------------------------------------
+ * PARAMS:  socket set
+ *
+ * RETURNS: NONE
+ *====================================================================
+ */
+
+void
+nsClearSocketFromSet(
+    NSSocketSet* set,
+    NSSocketHandle socket
+    )
+{
+    syClearSocketFromSet(((SocketSlot*)socket)->socket, set);
 }

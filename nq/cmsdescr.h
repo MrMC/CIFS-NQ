@@ -26,8 +26,8 @@
 
 typedef struct
 {
-    NQ_UINT32   length;
-    NQ_BYTE     data[UD_CS_SECURITYDESCRIPTORLENGTH];
+	NQ_BYTE     data[UD_CM_SECURITYDESCRIPTORLENGTH];
+	NQ_UINT32   length;
 }
 CMSdSecurityDescriptor;
 
@@ -140,6 +140,14 @@ SY_PACK_ATTR CMSdSecurityDescriptorHeader;
 #define CM_SD_RIDALIASGUEST     546     /* any guests */
 #define CM_SD_RIDALIASACCOUNTOP 548     /* account operators */
 
+/* Security Information Flags */
+
+#define CM_SD_OWNER		0x00000001
+#define CM_SD_GROUP		0x00000002
+#define CM_SD_DACL		0x00000004
+#define CM_SD_SACL		0x00000008
+#define CM_SD_LABLE		0x00000010
+
 /* RID/name types */
 
 #define CM_SD_RIDTYPE_USENONE    0  /* NOTUSED */
@@ -161,8 +169,8 @@ typedef struct
 {
     CMSdDomainSid domain;                  /* domain SID */
     NQ_UINT16 numRids;                     /* actual number of rids */
-    CMSdRid rids[UD_CS_MAXUSERGROUPS + 1]; /* user and group RIDs */
-    NQ_BOOL isAnon;							/* is user anonymous */
+    CMSdRid rids[UD_CM_MAXUSERGROUPS + 1]; /* user and group RIDs */
+    NQ_BOOL isAnon;						   /* is user anonymous */
 }
 CMSdAccessToken;
 
@@ -192,13 +200,20 @@ cmSdIsValid(
     const CMSdSecurityDescriptor* pSd   /* decriptor to check */
     );
 
-/* determine user�s access by ACL */
+/* determine user's access by ACL */
 NQ_BOOL                     /* TRUE when allowed */
 cmSdHasAccess(
     const CMSdAccessToken* token,      /* user access token (may be NULL) */
     const NQ_BYTE* sd,                 /* security descriptor data */
     CMSdAccessFlags access             /* desired access flags */
     );
+
+/* determine user access by ACL */
+NQ_UINT32 cmSdGetAccess(const CMBlob * sd, void * token      	/* user access token (may be NULL) */
+    );
+
+/* create new ACl from a parent ACL */
+void cmSdInherit(const CMBlob * oldSd, CMBlob * newSd, void * token);
 
 /* determine if this user has administrative access */
 NQ_BOOL                     /* TRUE when allowed */
@@ -209,6 +224,21 @@ cmSdIsAdministrator(
 /* get default SD with no owner */
 NQ_BOOL                                 /* TRUE on success */
 cmSdGetDefaultSecurityDescriptor(
+    CMSdSecurityDescriptor* pSd         /* buffer for descriptor */
+    );
+
+
+
+
+/* get SD with owner (and DACL) */
+NQ_BOOL                                 /* TRUE on success */
+cmSdGetOwnerAndDaclSecurityDescriptor(
+    CMSdSecurityDescriptor* pSd         /* buffer for descriptor */
+    );
+
+/* get SD with group (and DACL) */
+NQ_BOOL                                 /* TRUE on success */
+cmSdGetGroupAndDaclSecurityDescriptor(
     CMSdSecurityDescriptor* pSd         /* buffer for descriptor */
     );
 
@@ -229,7 +259,31 @@ NQ_BOOL                                 /* TRUE on success */
 cmSdGetNoneSecurityDescriptor(
     CMSdSecurityDescriptor* pSd         /* buffer for descriptor */
     );
-    
+
+/* get "administrative access only" SD */
+NQ_BOOL                                 /* TRUE on success */
+cmSdGetOwnerSecurityDescriptor(
+    CMSdSecurityDescriptor* pSd         /* buffer for descriptor */
+    );
+
+/* get "group access only" SD */
+NQ_BOOL                                 /* TRUE on success */
+cmSdGetGroupSecurityDescriptor(
+    CMSdSecurityDescriptor* pSd         /* buffer for descriptor */
+    );
+
+/* get "administrative and group access only" SD */
+NQ_BOOL                                 /* TRUE on success */
+cmSdGetOwnerAndGroupSecurityDescriptor(
+    CMSdSecurityDescriptor* pSd         /* buffer for descriptor */
+    );
+
+/* get "administrative , group and dacl access" SD */
+NQ_BOOL                                 /* TRUE on success */
+cmSdGetOwnerAndGroupAndDaclSecurityDescriptor(
+    CMSdSecurityDescriptor* pSd         /* buffer for descriptor */
+    );
+
 /* get readonly SD for a share */
 NQ_BOOL                                 /* TRUE on success */
 cmSdGetReadonlyShareSecurityDescriptor(
@@ -337,7 +391,8 @@ cmSdParseSecurityDescriptor(
 void
 cmSdPackSecurityDescriptor(
     CMRpcPacketDescriptor* out,         /* outgoing packet descriptor */
-    const CMSdSecurityDescriptor* pSd   /* SD to pack */
+    const CMSdSecurityDescriptor* pSd,  /* SD to pack */
+	NQ_UINT32 flags
     );
 
 /* parse Access Control List */
@@ -398,15 +453,15 @@ cmSdCheckAlias(
 NQ_BOOL                         /* TRUE when found */
 cmSdLookupRid(
     CMSdRid rid,                /* rid */
-    NQ_TCHAR* nameBuffer,       /* name buffer */
-    NQ_TCHAR* fullNameBuffer    /* name buffer */
+    NQ_WCHAR* nameBuffer,       /* name buffer */
+    NQ_WCHAR* fullNameBuffer    /* name buffer */
     );
 
 /* find RID by local name */
 
 NQ_BOOL                         /* TRUE when found */
 cmSdLookupName(
-    const NQ_TCHAR* name,       /* name */
+    const NQ_WCHAR* name,       /* name */
     CMSdRid* rid                /* rid buffer */
     );
 
@@ -436,9 +491,9 @@ cmSdIsExclusiveSecurityDescriptor(
     );
 
 #if SY_DEBUGMODE
-void cmSdDumpSecurityDescriptor(NQ_TCHAR *shareName, const CMSdSecurityDescriptor *sd);
-void cmSdDumpAccessToken(CMSdAccessToken *token);
-#endif
+void cmSdDumpSecurityDescriptor(NQ_WCHAR *shareName, const CMSdSecurityDescriptor *sd);
+void cmSdDumpAccessToken(const CMSdAccessToken *token);
+#endif /* SY_DEBUGMODE */
 
 #else /* defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS) || defined (UD_CC_INCLUDEDOMAINMEMBERSHIP)|| defined(UD_CS_INCLUDEPASSTHROUGH)*/
 
@@ -451,7 +506,7 @@ typedef struct
 }
 CMSdAccessToken;
 
-/* determine user�s access by ACL */
+/* determine user access by ACL */
 NQ_BOOL                     /* TRUE when allowed */
 cmSdHasAccess(
     const CMSdAccessToken* token,      /* user access token (may be NULL) */

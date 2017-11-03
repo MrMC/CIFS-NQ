@@ -16,7 +16,7 @@
  ********************************************************************/
 
 #include "ccnetlgn.h"
-#include "ccconfig.h"
+#include "ccparams.h"
 #include "cmbuf.h"
 #include "ccerrors.h"
 
@@ -28,8 +28,8 @@
 #define DSRENUMERATEDOMAINTRUSTS_NETLOGON_OPNUM     40
 
 
-#define NETLOGON_AUTH2_FLAGS                0x600fffff  
-#define NETLOGON_TRUST_FLAGS                0x0000003f                                          
+#define NETLOGON_AUTH2_FLAGS                0x600fffff
+#define NETLOGON_TRUST_FLAGS                0x0000003f
 
 
 typedef struct
@@ -53,7 +53,7 @@ ParamsNetrServerAuthenticate2;
 
 typedef struct
 {
-    const NQ_WCHAR * server;            /* server name */ 
+    const NQ_WCHAR * server;            /* server name */
     CCNetrEnumerateNamesCallback callback;  /* add name callback */
     void * list;                        /* list to add name to */
     NQ_UINT32 status;                   /* operation status */
@@ -61,7 +61,7 @@ typedef struct
 ParamsDsrEnumerateDomainTrusts;
 
 /* NETLOGON pipe descriptor */
-static const NQ_WCHAR pipeName[] = { cmWChar('n'), cmWChar('e'), cmWChar('t'), cmWChar('l'), cmWChar('o'), cmWChar('g'), cmWChar('o'), cmWChar('n'), cmWChar(0) };
+static const NQ_WCHAR pipeName[] = { cmWChar('n'), cmWChar('e'), cmWChar('t'), cmWChar('l'), cmWChar('o'), cmWChar('g'), cmWChar('o'), cmWChar('n'), cmWChar('\0') };
 static const CCDcerpcPipeDescriptor _nlpd = {
     pipeName,
     {cmPack32(0x12345678),cmPack16(0x1234),cmPack16(0xabcd),{0xef,0x00},{0x01,0x23,0x45,0x67,0xcf,0xfb}},
@@ -70,7 +70,7 @@ static const CCDcerpcPipeDescriptor _nlpd = {
 
 const CCDcerpcPipeDescriptor * ccNetlogonGetPipe(void)
 {
-    return &_nlpd; 
+    return &_nlpd;
 }
 
 
@@ -86,7 +86,7 @@ static NQ_COUNT composeNetrServerReqChallenge (
     NQ_UINT32 ref = 0;              /* ref id */
     NQ_UINT32 sz;                   /* string size */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     cmBufferWriterInit(&w, buffer, size);
 
@@ -102,7 +102,7 @@ static NQ_COUNT composeNetrServerReqChallenge (
     cmBufferWriteAsciiAsUnicodeN(&w, "\\\\", 2, CM_BSF_NOFLAGS);
     cmBufferWriteUnicode(&w, p->server);
     cmBufferWriterAlign(&w, buffer + 2, 4);        /* 4 byte alignment */
- 
+
     /* computer name (no trailing '$') */
     sz = 1 + (NQ_UINT32)cmWStrlen(p->computer);
 
@@ -116,7 +116,7 @@ static NQ_COUNT composeNetrServerReqChallenge (
 
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
     return cmBufferWriterGetDataCount(&w);
 }
 
@@ -130,13 +130,13 @@ static NQ_STATUS processNetrServerReqChallenge (
     CMBufferReader r;
     ParamsNetrServerReqChallenge *p = (ParamsNetrServerReqChallenge *)params;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     cmBufferReaderInit(&r, data, size);
     cmBufferReadBytes(&r, p->credential->server, sizeof(p->credential->server));
     cmBufferReadUint32(&r, &p->status);
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", p->status);
     return (NQ_STATUS)p->status;
 }
 
@@ -145,7 +145,7 @@ ccNetrServerReqChallenge(NQ_HANDLE netlogon, const NQ_WCHAR *server, const NQ_WC
 {
     ParamsNetrServerReqChallenge p;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "logon:%p srever:%s computer:%s credential:%p", netlogon, cmWDump(server), cmWDump(computer), credential);
 
     p.server = server;
     p.computer = computer;
@@ -156,10 +156,10 @@ ccNetrServerReqChallenge(NQ_HANDLE netlogon, const NQ_WCHAR *server, const NQ_WC
     if (!ccDcerpcCall(netlogon, composeNetrServerReqChallenge, processNetrServerReqChallenge, &p))
     {
         p.status = (p.status == 0) ? (NQ_UINT32)syGetLastError() : (NQ_UINT32)ccErrorsStatusToNq(p.status, TRUE);
-        TRCERR("NETLOGON::NetrServerReqChallenge");
+        LOGERR(CM_TRC_LEVEL_ERROR, "NETLOGON::NetrServerReqChallenge");
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", p.status);
     return p.status;
 }
 
@@ -176,7 +176,7 @@ composeNetrServerAuthenticate2 (
     NQ_UINT32 ref = 0;      /* ref if */
     NQ_UINT32 sz;           /* string size */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     cmBufferWriterInit(&w, buffer, size);
 
@@ -206,7 +206,7 @@ composeNetrServerAuthenticate2 (
 
     /* computer name (no trailing '$') */
     sz = 1 + (NQ_UINT32)cmWStrlen(p->computer);
- 
+
     cmBufferWriteUint32(&w, sz);                   /* max count */
     cmBufferWriteUint32(&w, 0);                    /* offset */
     cmBufferWriteUint32(&w, sz);                   /* actual count */
@@ -217,11 +217,11 @@ composeNetrServerAuthenticate2 (
     cmBufferWriterAlign(&w, buffer + 2, 4);        /* 4 byte alignment */
 
     /* negotiation flags */
-    cmBufferWriteUint32(&w, NETLOGON_AUTH2_FLAGS); 
+    cmBufferWriteUint32(&w, NETLOGON_AUTH2_FLAGS);
 
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
     return cmBufferWriterGetDataCount(&w);
 }
 
@@ -236,14 +236,14 @@ processNetrServerAuthenticate2(
     CMBufferReader r;
     ParamsNetrServerAuthenticate2 *p = (ParamsNetrServerAuthenticate2 *)params;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     cmBufferReaderInit(&r, data, size);
     cmBufferReadBytes(&r, p->credential->server, sizeof(p->credential->server));
     cmBufferReadUint32(&r, &p->flags);
     cmBufferReadUint32(&r, &p->status);
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", p->status);
     return (NQ_STATUS)p->status;
 }
 
@@ -258,13 +258,13 @@ ccNetrServerAuthenticate2(
 {
     ParamsNetrServerAuthenticate2 p;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "logon:%p srever:%s computer:%s credential:%p flags:%p", netlogon, cmWDump(server), cmWDump(computer), credential, flags);
 
     p.server = server;
     p.computer = computer;
     p.credential = credential;
     p.status = 0;
-    
+
     /* call NETLOGON::NetrServerAuthenticate2 */
     if (ccDcerpcCall(netlogon, composeNetrServerAuthenticate2, processNetrServerAuthenticate2, &p))
     {
@@ -275,10 +275,10 @@ ccNetrServerAuthenticate2(
     else
     {
         p.status = (p.status == 0) ? (NQ_UINT32)syGetLastError() : (NQ_UINT32)ccErrorsStatusToNq(p.status, TRUE);
-        TRCERR("NETLOGON::NetrServerAuthenticate2");
+        LOGERR(CM_TRC_LEVEL_ERROR, "NETLOGON::NetrServerAuthenticate2");
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", p.status);
     return p.status;
 }
 
@@ -290,12 +290,12 @@ composeDsrEnumerateDomainTrusts (
     NQ_BOOL* moreData
     )
 {
-    CMBufferWriter w;   /* for coposing request */ 
+    CMBufferWriter w;   /* for composing request */
     ParamsDsrEnumerateDomainTrusts  *p = (ParamsDsrEnumerateDomainTrusts  *)params;
     NQ_UINT32 ref = 0;  /* ref id */
     NQ_UINT32 sz;       /* string size */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     cmBufferWriterInit(&w, buffer, size);
 
@@ -311,11 +311,11 @@ composeDsrEnumerateDomainTrusts (
     cmBufferWriterAlign(&w, buffer + 2, 4);        /* 4 byte alignment */
 
     /* trust flags */
-    cmBufferWriteUint32(&w, NETLOGON_TRUST_FLAGS); 
+    cmBufferWriteUint32(&w, NETLOGON_TRUST_FLAGS);
 
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
     return cmBufferWriterGetDataCount(&w);
 }
 
@@ -330,24 +330,22 @@ processDsrEnumerateDomainTrusts(
     CMBufferReader structs;             /* parser for structures */
     CMBufferReader strings;             /* parser for strings */
     ParamsDsrEnumerateDomainTrusts * p = (ParamsDsrEnumerateDomainTrusts *)params;
-    NQ_UINT32 count = 0;                /* number of answers */                
+    NQ_UINT32 count = 0;                /* number of answers */
     NQ_INT i;                           /* just a counter */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
-    cmBufferReaderInit(&strings, data, size);
     cmBufferReaderInit(&structs, data, size);
     cmBufferReadUint32(&structs, &count);
     cmBufferReaderSkip(&structs, 2 * 4);
 
-    TRC("Count: %d", count);
+    cmBufferReaderInit(&strings, cmBufferReaderGetPosition(&structs) + 44 * count, size);
 
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Count: %d", count);
     if (count == 0)
     {
         cmBufferReadUint32(&structs, &p->status);
-
-        TRCE();
-        return (NQ_STATUS)p->status;
+        goto Exit;
     }
 
     for (i = 0; i < (NQ_INT)count; i++)
@@ -357,39 +355,37 @@ processDsrEnumerateDomainTrusts(
         NQ_UINT32 refIdDNS;                 /* refId */
         NQ_UINT32 refIdSID;                 /* refId */
 
-    	cmBufferReadUint32(&structs, &refIdNetBIOS);
-    	cmBufferReadUint32(&structs, &refIdDNS);
-    	cmBufferReaderSkip(&structs,(NQ_UINT)(4 * 4)); 	/* 4 fields in structure */
-    	cmBufferReadUint32(&structs, &refIdSID);
-    	cmBufferReaderSkip(&structs, 16); 				/* GUID */
+        cmBufferReadUint32(&structs, &refIdNetBIOS);
+        cmBufferReadUint32(&structs, &refIdDNS);
+        cmBufferReaderSkip(&structs,(NQ_UINT)(4 * 4));     /* 4 fields in structure */
+        cmBufferReadUint32(&structs, &refIdSID);
+        cmBufferReaderSkip(&structs, 16);                 /* GUID */
 
-    	cmBufferReaderSetPosition(&strings, cmBufferReaderGetPosition(&structs));
-    	cmBufferReaderSkip(&strings, ((count - (NQ_UINT32)i - 1) * (NQ_UINT)(7 * 4 + 16))); /* skip other structures */
-
-    	/* write NetBIOS domain names to output buffer */
-    	if (0 != refIdNetBIOS)
-    	{
+        /* write NetBIOS domain names to output buffer */
+        if (0 != refIdNetBIOS)
+        {
             cmBufferReadUint32(&strings, &maxCount);                                  /* read NetBIOS domain name length */
             cmBufferReaderSkip(&strings, 4 * 2);                                      /* skip offset and actual count */
             (*p->callback)((NQ_WCHAR *)cmBufferReaderGetPosition(&strings), p->list);
-            cmBufferReaderSkip(&strings,(NQ_UINT)( maxCount * sizeof(NQ_WCHAR)));     /* skip name */
+            cmBufferReaderSkip(&strings,(NQ_UINT)(maxCount * sizeof(NQ_WCHAR)));     /* skip name */
+            cmBufferReaderAlign(&strings, (NQ_BYTE *)data , 4);                      /* 4 byte alignment */
+        }
+        if (0 != refIdDNS)
+        {
+            cmBufferReadUint32(&strings, &maxCount);                                  /* read DNS domain name length */
+            cmBufferReaderSkip(&strings,(NQ_UINT)( 4 * 2 + maxCount * sizeof(NQ_WCHAR)));        /* skip DNS domain name */
             cmBufferReaderAlign(&strings, (NQ_BYTE *)data , 4);                       /* 4 byte alignment */
-    	}
-    	if (0 != refIdDNS)
-    	{
-			cmBufferReadUint32(&strings, &maxCount);                                  /* read DNS domain name length */
-			cmBufferReaderSkip(&strings,(NQ_UINT)( 4 * 2 + maxCount * sizeof(NQ_WCHAR)));        /* skip DNS domain name */
-			cmBufferReaderAlign(&strings, (NQ_BYTE *)data , 4);                       /* 4 byte alignment */
-    	}
-    	if (0 != refIdSID)
-    	{
-    		cmBufferReaderSkip(&strings, 4 + 24);                                     /* skip SID */
-    	}
+        }
+        if (0 != refIdSID)
+        {
+            cmBufferReaderSkip(&strings, 4 + 24);                                     /* skip SID */
+        }
     }
 
     cmBufferReadUint32(&strings, &p->status);
 
-    TRCE();
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", p->status);
     return (NQ_STATUS)p->status;
 }
 
@@ -398,36 +394,35 @@ processDsrEnumerateDomainTrusts(
 NQ_UINT32
 ccDsrEnumerateDomainTrusts(
     NQ_HANDLE netlogon,
-    const NQ_WCHAR * server, 
+    const NQ_WCHAR * server,
     CCNetrEnumerateNamesCallback callback,
     CMList * list
     )
 {
     ParamsDsrEnumerateDomainTrusts p;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "logon:%p server:%s callback:%p list:%p", netlogon, cmWDump(server), callback, list);
 
     p.server = server;
     p.callback = callback;
     p.list = list;
     p.status = 0;
-    
+
     /* call NETLOGON::DsrEnumerateDomainTrusts */
     if (ccDcerpcCall(netlogon, composeDsrEnumerateDomainTrusts, processDsrEnumerateDomainTrusts, &p))
     {
-        
+
     }
     else
     {
         p.status = (p.status == 0) ? (NQ_UINT32)syGetLastError() : (NQ_UINT32)ccErrorsStatusToNq(p.status, TRUE);
-        TRCERR("NETLOGON::DsrEnumerateDomainTrusts");
+        LOGERR(CM_TRC_LEVEL_ERROR, "NETLOGON::DsrEnumerateDomainTrusts");
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%u", p.status);
     return p.status;
 }
 
 
 #endif /* UD_NQ_INCLUDECIFSCLIENT */
-
 

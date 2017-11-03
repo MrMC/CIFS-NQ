@@ -1,21 +1,21 @@
 /*********************************************************************
- *
- *           Copyright (c) 2008 by Visuality Systems, Ltd.
- *
- *********************************************************************
- * FILE NAME     : $Workfile:$
- * ID            : $Header:$
- * REVISION      : $Revision:$
- *--------------------------------------------------------------------
- * DESCRIPTION   : Buffer manipulation
- *--------------------------------------------------------------------
- * MODULE        : CM
- * DEPENDENCIES  :
- *--------------------------------------------------------------------
- * CREATION DATE : 03-Dec-2008
- * CREATED BY    : Igor Gokhman
- * LAST AUTHOR   : $Author:$
- ********************************************************************/
+*
+*           Copyright (c) 2008 by Visuality Systems, Ltd.
+*
+*********************************************************************
+* FILE NAME     : $Workfile:$
+* ID            : $Header:$
+* REVISION      : $Revision:$
+*--------------------------------------------------------------------
+* DESCRIPTION   : Buffer manipulation
+*--------------------------------------------------------------------
+* MODULE        : CM
+* DEPENDENCIES  :
+*--------------------------------------------------------------------
+* CREATION DATE : 03-Dec-2008
+* CREATED BY    : Igor Gokhman
+* LAST AUTHOR   : $Author:$
+********************************************************************/
 
 #include "cmbuf.h"
 
@@ -35,6 +35,11 @@ void cmBufferReaderInit(CMBufferReader *reader, const NQ_BYTE *buffer, NQ_COUNT 
     cmRpcSetDescriptor(reader, (NQ_BYTE *)buffer, FALSE);
 
     reader->length = size;
+}
+
+void cmBufferReaderReset(CMBufferReader *reader)
+{
+    reader->current = reader->origin;
 }
 
 void cmBufferReaderStart(CMBufferReader *reader)
@@ -113,16 +118,6 @@ void cmBufferReadUint64(CMBufferReader *reader, NQ_UINT64 *to)
 {
     cmBufferReadUint32(reader, &to->low);
     cmBufferReadUint32(reader, &to->high);
-}
-
-void cmBufferReadUnicodeAsTStringN(CMBufferReader *reader, NQ_UINT length, CMBufferStringFlags flags, NQ_TCHAR *string)
-{
-    /* length contains number of characters to read */
-    cmUnicodeToTcharN(string, (const NQ_WCHAR *)cmBufferReaderGetPosition(reader), length);
-    cmBufferReaderSkip(reader, length * 2);
-    /* if the result should be null terminated write trailing 2 zero bytes */
-    if (flags & CM_BSF_WRITENULLTERM)
-        *(string + length) = (NQ_TCHAR)0;
 }
 
 /* Buffer writer */
@@ -208,7 +203,7 @@ NQ_COUNT cmBufferWriterGetRemaining(const CMBufferWriter *writer)
     return writer->length - cmBufferWriterGetDataCount(writer);
 }
 
-void cmBufferWriterAlign(CMBufferWriter *writer, NQ_BYTE *anchor, NQ_UINT alignment)
+NQ_UINT32 cmBufferWriterAlign(CMBufferWriter *writer, NQ_BYTE *anchor, NQ_UINT alignment)
 {
     /* assert: writer->current >= anchor */
     NQ_UINT32 diff = (NQ_UINT32)(writer->current - anchor);
@@ -216,6 +211,7 @@ void cmBufferWriterAlign(CMBufferWriter *writer, NQ_BYTE *anchor, NQ_UINT alignm
 
     syMemset(writer->current, 0, (aligned - diff));
     writer->current = anchor + aligned;
+    return (aligned - diff);
 }
 
 void cmBufferWriterSkip(CMBufferWriter *writer, NQ_UINT bytes)
@@ -273,20 +269,6 @@ void cmBufferWriteUuid(CMBufferWriter * writer, const NQ_Uuid * pUuid)
 }
 
 
-void cmBufferWriteTStringAsUnicode(CMBufferWriter *writer, const NQ_TCHAR *string, CMBufferStringFlags flags)
-{
-    cmBufferWriteTStringAsUnicodeN(writer, string, (NQ_UINT)cmTStrlen(string), flags);
-}
-
-void cmBufferWriteTStringAsUnicodeN(CMBufferWriter *writer, const NQ_TCHAR *string, NQ_UINT length, CMBufferStringFlags flags)
-{
-    cmTcharToUnicodeN((NQ_WCHAR *)cmBufferWriterGetPosition(writer), string, length);
-    cmBufferWriterSkip(writer, length * 2);
-    /* if target string should be null terminated write trailing 2 zero bytes */
-    if (flags & CM_BSF_WRITENULLTERM)
-        cmBufferWriteUint16(writer, 0);
-}
-
 void cmBufferWriteAsciiAsUnicodeN(CMBufferWriter *writer, const NQ_CHAR *string, NQ_UINT length, CMBufferStringFlags flags)
 {
     cmAnsiToUnicodeN((NQ_WCHAR *)cmBufferWriterGetPosition(writer), string, length);
@@ -296,24 +278,10 @@ void cmBufferWriteAsciiAsUnicodeN(CMBufferWriter *writer, const NQ_CHAR *string,
         cmBufferWriteUint16(writer, 0);
 }
 
-void cmBufferWriteTString(CMBufferWriter *writer, const NQ_TCHAR *string)
-{
-    NQ_UINT length;
-    
-    length = (NQ_UINT)cmTStrlen(string);
-    cmTStrncpy((NQ_TCHAR *)cmBufferWriterGetPosition(writer), string, length);
-    cmBufferWriterSkip(writer, (NQ_UINT)(length * sizeof(NQ_TCHAR)));
-#ifdef UD_CM_UNICODEAPPLICATION    
-    cmBufferWriteUint16(writer, 0);
-#else
-    cmBufferWriteByte(writer, 0);
-#endif
-}
-
 void cmBufferWriteUnicode(CMBufferWriter *writer, const NQ_WCHAR *string)
 {
     NQ_UINT length;
-    
+
     length = (NQ_UINT)cmWStrlen(string);
     cmWStrncpy((NQ_WCHAR *)cmBufferWriterGetPosition(writer), string, length);
     cmBufferWriterSkip(writer, (NQ_UINT)(length * sizeof(NQ_WCHAR)));
@@ -323,13 +291,52 @@ void cmBufferWriteUnicode(CMBufferWriter *writer, const NQ_WCHAR *string)
 void cmBufferWriteUnicodeNoNull(CMBufferWriter *writer, const NQ_WCHAR *string)
 {
     NQ_UINT length;
-    
+
     length = (NQ_UINT)cmWStrlen(string);
     cmBufferWriteBytes(writer, (NQ_BYTE*)string, (NQ_COUNT)(length * sizeof(NQ_WCHAR)));
 }
 
 void cmBufferWriteRandomBytes(CMBufferWriter *writer, NQ_COUNT size)
 {
-    for ( ; size > 0; --size)
+    for (; size > 0; --size)
         cmBufferWriteByte(writer, (NQ_BYTE)syRand());
+}
+
+void cmBufferWriteString(CMBufferWriter *writer, NQ_BOOL outAscii, const NQ_BYTE *string, NQ_BOOL inUnicode, CMBufferStringFlags flags)
+{
+    if (inUnicode)
+    {
+        if (outAscii)
+        {
+            NQ_UINT length;
+            NQ_CHAR * strA = (NQ_CHAR *)cmBufferWriterGetPosition(writer);
+
+            cmUnicodeToAnsi(strA, (NQ_WCHAR *)string);
+            length = (NQ_UINT)syStrlen((const NQ_CHAR*)strA);
+            cmBufferWriterSkip(writer, length);
+            if (flags & CM_BSF_WRITENULLTERM)
+                cmBufferWriteByte(writer, 0);
+        }
+        else
+        {
+            cmBufferWriteUnicodeNoNull(writer, (const NQ_WCHAR *)string);
+            if (flags & CM_BSF_WRITENULLTERM)
+                cmBufferWriteUint16(writer, 0);
+        }
+    }
+    else
+    {
+        NQ_UINT length = (NQ_UINT)syStrlen((const NQ_CHAR*)string);
+
+        if (outAscii)
+        {
+            cmBufferWriteBytes(writer, string, length);
+            if (flags & CM_BSF_WRITENULLTERM)
+                cmBufferWriteByte(writer, 0);
+        }
+        else
+        {
+            cmBufferWriteAsciiAsUnicodeN(writer, (const NQ_CHAR *)string, length, flags);
+        }
+    }
 }

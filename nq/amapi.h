@@ -17,11 +17,10 @@
 #define _AMAPI_H_
 
 #include "cmapi.h"
-#include "amapi.h"
 
 /** -- Constants -- */
 
-/* spnego negotiation statuses: */
+/* SPNEGO negotiation statuses: */
 #define AM_SPNEGO_SUCCESS	0	/* SPNEGO status: security exchange succeeded. */
 #define AM_SPNEGO_NONE		1	/* SPNEGO status: security did not start yet. */
 #define AM_SPNEGO_FAILED	2	/* SPNEGO status: security exchange failed. For instance - bad
@@ -120,6 +119,7 @@ typedef struct
     NQ_UINT16 ntlmLen;          /* NTLM blob length */     
     NQ_BOOL isLmAuthenticated;  /* whether authentication performed using LM client response */  
     NQ_BOOL isNtlmAuthenticated;/* whether authentication performed using NTLM client response */
+    NQ_BOOL isKrbAuthenticated; /* whether authentication performed using Kerberos */
     NQ_UINT32 flags;            /* ntlm flags */
 } 
 AMNtlmDescriptor;
@@ -171,7 +171,7 @@ void amSpnegoShutdown(void);
                 * <link AM_CRYPTER_LM2>
                 * <link AM_CRYPTER_NTLM2>
                 * <link AM_CRYPTER_NONE>
-   mehanisms :  Available security mechanisms. This value is a
+   mechanisms :  Available security mechanisms. This value is a
                 bit mask of the following\:
                 * <link AM_MECH_KERBEROS>
                 * <link AM_MECH_NTLMSSP>
@@ -197,6 +197,27 @@ void amSpnegoShutdown(void);
    4       LMv2        NTLMv2      Yes       Yes
    </table>                                                                                 */
 void amSpnegoDefineLevel(NQ_UINT level, NQ_UINT crypter1, NQ_UINT crypter2, NQ_UINT32 mehanisms);
+
+/* Description
+   Some old authentication methods - used in SMB 1 only - are
+   considered today non secure. By default those non secure
+   methods will be disabled. Use this function to enable /
+   disable non secure methods.
+   Parameters
+   enableNonSecureAuthentication :  TRUE \- non secure
+                                    authentication will be used.<p />FALSE
+                                    \- non secure authentication
+                                    will not be used.
+   Returns
+   None.
+   Note
+     * This function uses <link amSpnegoDefineLevel@NQ_UINT@NQ_UINT@NQ_UINT@NQ_UINT32, amSpnegoDefineLevel>
+       to set authentication algorithms. The <link amSpnegoDefineLevel@NQ_UINT@NQ_UINT@NQ_UINT@NQ_UINT32, amSpnegoDefineLevel>
+       call can be used to further modify the levels set by this
+       function.
+     * See also notes in <link amSpnegoDefineLevel@NQ_UINT@NQ_UINT@NQ_UINT@NQ_UINT32, amSpnegoDefineLevel>.
+                                                                                                                               */
+void amSetNonSecureAuthentication(NQ_BOOL enableNonSecureAuthentication);
 
 /* Description
    This function frees memory of a previously allocated key.
@@ -397,5 +418,41 @@ NQ_UINT32 amSpnegoServerAcceptBlobA(
     AMNtlmDescriptor * ntlmDescr
     );   
 #endif /* UD_NQ_INCLUDECIFSSERVER */
+
+/* Description
+   The prototype for a server function to retrieve session key for the current connection.
+
+   This function should be implemented in respect to the very project and may be modified if needed.
+
+   Parameters
+   key :    A double pointer to the session key.
+   nonce :  A double pointer to nonce.
+   Returns
+   Session key length.*/
+NQ_UINT amSpnegoServerGetCurrentSessionKey(NQ_BYTE ** key, NQ_BYTE **nonce);
+
+/* Description
+   The prototype for a server function to retrieve session key for the current connection.
+
+   This function should be implemented in respect to the very project and may be modified if needed.
+
+   Parameters
+   key :    A double pointer to the session key.
+   nonce :  A double pointer to nonce.
+   Returns
+   Session key length.*/
+typedef NQ_UINT (* AMSpnegoServerGetCurrentSessionKey)(NQ_BYTE ** key, NQ_BYTE **nonce);
+
+/* Description
+   This function installs callback for retrieving session key for the current connection.
+
+   This function should be implemented in respect to the very project and may be modified if needed.
+
+   Parameters
+   func :    The callback function.
+   Returns
+   None.*/
+void amSpnegoServerSetSessionKeyCallback(AMSpnegoServerGetCurrentSessionKey func);
+
 
 #endif /* _AMAPI_H_ */

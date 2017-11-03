@@ -117,6 +117,8 @@ NQ_UINT32 csSmb2OnWrite(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
         return SMB_STATUS_INVALID_HANDLE;
     }
 
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "pFile:%p file:%d dataCount:%d offset:%d", pFile, pFile->file, dataCount, offset);
+
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
     eventInfo.fileName = csGetFileName(pFile->fid);
     eventInfo.tid = tree->tid;
@@ -206,7 +208,7 @@ NQ_UINT32 csSmb2OnWrite(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
             out->flags |= SMB2_FLAG_ASYNC_COMMAND;
             out->aid.low = asyncId;
             out->aid.high = 0;
-
+            out->credits = 0;
 #endif /* UD_CS_FORCEINTERIMRESPONSES */
 
             if (dataCount == 0)
@@ -240,7 +242,7 @@ NQ_UINT32 csSmb2OnWrite(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
 					);
 					eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-                    if (sySeekFileStart(pFile->file, offset.low, offset.high) == NQ_FAIL)
+                    if (sySeekFileStart(pFile->file, offset.low, offset.high) == (NQ_UINT32)NQ_FAIL)
                     {
                         error = csErrorGetLast();
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
@@ -280,7 +282,7 @@ NQ_UINT32 csSmb2OnWrite(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
                     csDispatchDtSet(pFile->file, dataCount);
                 }
                 else
-#else /* UD_CS_INCLUDEDIRECTTRANSFER */
+#endif /* UD_CS_INCLUDEDIRECTTRANSFER */
                 {
                     dataCount = (NQ_UINT32)syWriteFile(pFile->file, pData, (NQ_COUNT)dataCount);
                     if ((NQ_INT)dataCount < 0)
@@ -298,7 +300,6 @@ NQ_UINT32 csSmb2OnWrite(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
                     LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
                     return error;
                 }
-#endif /* UD_CS_INCLUDEDIRECTTRANSFER */
                 csGetNameByNid(pFile->nid)->isDirty = TRUE;   
             }
     
@@ -318,7 +319,7 @@ NQ_UINT32 csSmb2OnWrite(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
     cmBufferWriteUint32(writer, dataCount);
     cmBufferWriteUint32(writer, 0);             /* remaining */
     cmBufferWriteUint16(writer, 0);             /* WriteChannelInfoOffset - unused*/
-    cmBufferWriteUint16(writer, 0);             /* WriteChannelInfoL:ength - unused */
+    cmBufferWriteUint16(writer, 0);             /* WriteChannelInfoLength - unused */
     
     LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
     return 0;

@@ -20,6 +20,7 @@
 #include "ccshare.h"
 #include "cmapi.h"
 #include "nqapi.h"
+#include "ccsrvsvc.h"
 
 #ifdef UD_NQ_INCLUDECIFSCLIENT
 
@@ -118,7 +119,7 @@ SY_PACK_ATTR NetServerEnumRsp;
 /* static functions */
 
 static NQ_STATUS netShareEnumLevel1(NetShareEnumRsp * response, NQ_CHAR *data, CCRapEnumerateNamesCallback callback, void* params);
-static NQ_STATUS netServerEnumLevel0(NetServerEnumRsp * response, CCRapEnumerateNamesCallback callback, void* params);
+static NQ_STATUS netServerEnumLevel0(NetServerEnumRsp * response, NQ_CHAR *data, CCRapEnumerateNamesCallback callback, void* params);
 
 /*
  *====================================================================
@@ -146,17 +147,16 @@ ccRapNetShareEnum(
 {
     CCShare * pShare;                       /* pointer to IPC descriptor */
     CMBlob inData;                          /* request parameters */
-    CMBlob outData;                         /* response parameters + data parameters */
-    NQ_BYTE * data;                         /* data start in response */
-    NetShareEnum1Rsp request1;              /* request parameters structure */
-    NetShareEnumRsp * response;             /* pointer to response parameters */
+	CMBlob outParams = {NULL, 0};           /* response parameters + data parameters */
+	CMBlob outData = {NULL, 0};             /* response data parameters */
+	NetShareEnum1Rsp request1;              /* request parameters structure */
     NQ_STATUS status = NQ_ERR_GENERAL;      /* operation status */
-    NQ_INT      i , j;                          /* just a counter */
-    CCServer    *   pServer;                    /* pointer to server object */
-    NQ_BOOL security[] = {TRUE, FALSE};         /* whether to use extended security */
-    NQ_BOOL anon[] = {TRUE , FALSE};            /*whether to use Anonymous or not */
+    NQ_COUNT i, j;                          /* just a counter */
+    CCServer *pServer;                      /* pointer to server object */
+    NQ_BOOL security[] = {TRUE, FALSE};     /* whether to use extended security */
+    NQ_BOOL anon[] = {TRUE , FALSE};        /* whether to use Anonymous or not */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "server:%s callback:%p params:%p", cmWDump(server), callback, params);
 
     cmPutSUint16(request1.function, 0);
     syStrcpy(request1.pReq, "WrLeh");
@@ -168,56 +168,54 @@ ccRapNetShareEnum(
 
     for (i = 0; i < sizeof(security)/sizeof(security[0]); i++)
     {
-    	pServer = ccServerFindOrCreate(server, security[i], ccCifsGetDefaultSmb());
+        pServer = ccServerFindOrCreate(server, security[i], ccCifsGetDefaultSmb());
         if (pServer != NULL)
         {
             for (j = 0 ; j < sizeof(anon)/sizeof(anon[0]); j++)
             {
-                const AMCredentialsW * pCredentials = anon[j] ? ccUserGetAnonymousCredentials() : NULL;       /* credentials */ 
+                const AMCredentialsW * pCredentials = anon[j] ? ccUserGetAnonymousCredentials() : NULL;       /* credentials */
                 pShare = ccShareConnectIpc(pServer , &pCredentials);
                 if (NULL == pShare)
                 {
                     cmListItemUnlock((CMItem *)pServer);
-                    LOGERR(CM_TRC_LEVEL_ERROR, "Can't establish connection to %s", cmTDump(server));
-                    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-                    return (NQ_STATUS)syGetLastError();
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Can't establish connection to %s", cmWDump(server));
+                    status = (NQ_STATUS)syGetLastError();
+                    goto Exit;
                 }
-                
-                status = pShare->user->server->smb->doRapTransaction(pShare, &inData, &outData);
-                cmListItemUnlock((CMItem *)pShare);       /* force disconnect when not used */   
+
+                status = pShare->user->server->smb->doRapTransaction(pShare, &inData, &outParams, &outData);
+                cmListItemUnlock((CMItem *)pShare);       /* force disconnect when not used */
 
                 if (status == NQ_SUCCESS || status == NQ_ERR_NOSUPPORT)
                 {
                     break;
-                }            
-			} 
-			cmListItemUnlock((CMItem *)pServer);
-			if (status == NQ_SUCCESS || status == NQ_ERR_NOSUPPORT)
+                }
+            }
+            cmListItemUnlock((CMItem *)pServer);
+            if (status == NQ_SUCCESS || status == NQ_ERR_NOSUPPORT)
             {
                 break;
-            }			
+            }
         }
         else
         {
-            LOGERR(CM_TRC_LEVEL_ERROR, "Can't establish connection to %s", cmTDump(server));
-            LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-            return (NQ_STATUS)syGetLastError();
+            LOGERR(CM_TRC_LEVEL_ERROR, "Can't establish connection to %s", cmWDump(server));
+            goto Exit;
         }
     }/* end of connecting "for" */
 
     if (NQ_SUCCESS != status)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "No valid NetShareEnum response");
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return status;
+        goto Exit;
     }
 
-    response = (NetShareEnumRsp *)outData.data;
-    data = (NQ_BYTE *)(response + 1);
-    status = netShareEnumLevel1(response, (NQ_CHAR *)data, callback, params);
-    cmMemoryFreeBlob(&outData); 
- 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+	status = netShareEnumLevel1((NetShareEnumRsp *)outParams.data, (NQ_CHAR *)outData.data, callback, params);
+
+Exit:
+	cmMemoryFreeBlob(&outParams);
+	cmMemoryFreeBlob(&outData);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%d", status);
     return status;
 }
 
@@ -248,27 +246,28 @@ ccRapNetShareInfo(
    )
 {
     CCShare * pShare;                       /* pointer to IPC descriptor */
-    CMBlob inData;                          /* request parameters */
-    CMBlob outData = {NULL, 0};             /* response parameters + data parameters */
+    CMBlob inData = {NULL, 0};              /* request parameters */
+    CMBlob outParams = {NULL, 0};           /* response parameters + data parameters */
+	CMBlob outData = {NULL, 0};             /* response data parameters */
     NetShareInfoReq * request;              /* pointer to request parameters */
     NetShareInfoRsp * response;             /* pointer to response parameters */
     RapShareInfo1 * info;                   /* pointer to share information data */
     NQ_BYTE * p;                            /* generic pointer */
     NQ_STATUS status = NQ_ERR_GENERAL;      /* operation status */
-    NQ_INT      i , j;                          /* just a counter */
-    CCServer    *   pServer;                    /* pointer to server object */
-    NQ_BOOL security[] = {TRUE, FALSE};         /* whether to use extended security */
-    NQ_BOOL anon[] = {TRUE , FALSE};            /*whether to use Anonymous or not */
+    NQ_COUNT i, j;                          /* just a counter */
+    CCServer * pServer;                     /* pointer to server object */
+    NQ_BOOL security[] = {TRUE, FALSE};     /* whether to use extended security */
+    NQ_BOOL anon[] = {TRUE , FALSE};        /*whether to use Anonymous or not */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "server:%s share:%s type:%p remark:%p size:%d unicode:%s", cmWDump(server), cmWDump(share), type, remark, maxRemarkSize, unicodeResult ? "TRUE" : "FALSE");
 
     inData.len = (NQ_COUNT)(sizeof(NetShareInfoReq) + cmWStrlen(share) + 1 + (sizeof(NQ_UINT16) * 2));  /* more memory for multibyte characters */
-    inData.data = cmMemoryAllocate(inData.len);
+    inData.data = (NQ_BYTE *)cmMemoryAllocate(inData.len);
     if (NULL == inData.data)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Memory overflow");
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return NQ_ERR_NOMEM;
+        status = NQ_ERR_NOMEM;
+        goto Exit;
     }
 
     request = (NetShareInfoReq *)inData.data;
@@ -280,59 +279,55 @@ ccRapNetShareInfo(
     p += syStrlen((NQ_CHAR *)p) + 1;
     cmPutUint16(p, cmHtol16(1));
     p += 2;
-    cmPutUint16(p , cmHtol16(maxRemarkSize));
-    
+    cmPutUint16(p, (NQ_UINT16)cmHtol16(maxRemarkSize));
+
     for (i = 0; i < sizeof(security)/sizeof(security[0]); i++)
     {
-    	pServer = ccServerFindOrCreate(server, security[i], ccCifsGetDefaultSmb());
+        pServer = ccServerFindOrCreate(server, security[i], ccCifsGetDefaultSmb());
         if (pServer != NULL)
         {
             for (j = 0 ; j < sizeof(anon)/sizeof(anon[0]); j++)
             {
-                const AMCredentialsW * pCredentials = anon[j] ? ccUserGetAnonymousCredentials() : NULL;       /* credentials */ 
+                const AMCredentialsW * pCredentials = anon[j] ? ccUserGetAnonymousCredentials() : NULL;       /* credentials */
                 pShare = ccShareConnectIpc(pServer , &pCredentials);
                 if (NULL == pShare)
                 {
-                    cmMemoryFreeBlob(&inData); 
                     cmListItemUnlock((CMItem *)pServer);
-                    LOGERR(CM_TRC_LEVEL_ERROR, "Can't establish connection to %s", cmTDump(server));
-                    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-                    return (NQ_STATUS)syGetLastError();
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Can't establish connection to %s", cmWDump(server));
+                    status = (NQ_STATUS)syGetLastError();
+                    goto Exit;
                 }
-                
-                status = pShare->user->server->smb->doRapTransaction(pShare, &inData, &outData);
-                cmListItemUnlock((CMItem *)pShare);       /* force disconnect when not used */   
+
+				status = pShare->user->server->smb->doRapTransaction(pShare, &inData, &outParams, &outData);
+                cmListItemUnlock((CMItem *)pShare);       /* force disconnect when not used */
 
                 if (status == NQ_SUCCESS || status == NQ_ERR_NOSUPPORT)
                 {
                     break;
                 }
-            }  
-			cmListItemUnlock((CMItem *)pServer);
-			if (status == NQ_SUCCESS || status == NQ_ERR_NOSUPPORT)
+            }
+            cmListItemUnlock((CMItem *)pServer);
+            if (status == NQ_SUCCESS || status == NQ_ERR_NOSUPPORT)
             {
                 break;
             }
         }
         else
         {
-            cmMemoryFreeBlob(&inData); 
-            LOGERR(CM_TRC_LEVEL_ERROR, "Can't establish connection to %s", cmTDump(server));
-            LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-            return (NQ_STATUS)syGetLastError();
+            LOGERR(CM_TRC_LEVEL_ERROR, "Can't establish connection to %s", cmWDump(server));
+            status = (NQ_STATUS)syGetLastError();
+            goto Exit;
         }
     }/* end of connecting "for" */
-    
+
     if (NQ_SUCCESS != status)
     {
-        cmMemoryFreeBlob(&inData); 
         LOGERR(CM_TRC_LEVEL_ERROR, "No valid NetShareInfo response");
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return status;
+        goto Exit;
     }
 
-    response = (NetShareInfoRsp *)outData.data;
-    info = (RapShareInfo1 *)(outData.data + sizeof(NetShareInfoRsp));
+	response = (NetShareInfoRsp *)outParams.data;
+	info = (RapShareInfo1 *)outData.data;
     if ((status = cmLtoh16(cmGetSUint16(response->status))) == NQ_ERR_OK)
     {
         *type = cmLtoh16(cmGetSUint16(info->type));
@@ -342,10 +337,11 @@ ccRapNetShareInfo(
             syStrcpy((NQ_CHAR*)remark, (NQ_CHAR *)info + (info->remark - response->converter));
     }
 
-    cmMemoryFreeBlob(&outData); 
-    cmMemoryFreeBlob(&inData); 
- 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+Exit:
+    cmMemoryFreeBlob(&inData);
+	cmMemoryFreeBlob(&outParams);
+	cmMemoryFreeBlob(&outData);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%d", status);
     return status;
 }
 
@@ -375,51 +371,53 @@ ccRapNetServerEnum(
    )
 {
     CCShare * pShare;                           /* pointer to IPC descriptor */
-    CMBlob inData;                              /* request parameters */
-    CMBlob outData = {NULL, 0};                 /* response parameters + data parameters */
-    NetServerEnum0Rsp * request0;               /* request parameters structure */
-    NetServerEnumRsp * response;                /* pointer to response parameters */
+    CMBlob inData = {NULL, 0};                  /* request parameters */
+	CMBlob outParams = {NULL, 0};               /* response parameters + data parameters */
+	CMBlob outData = {NULL, 0};                 /* response data parameters */
+	NetServerEnum0Rsp * request0;               /* request parameters structure */
     NQ_STATUS status = NQ_ERR_GENERAL;          /* operation status */
-    NQ_INT      i , j;                          /* just a counter */
-    CCServer    *   pServer;                    /* pointer to server object */
+    NQ_COUNT i, j;                              /* just a counter */
+    CCServer * pServer;                         /* pointer to server object */
     NQ_BOOL security[] = {TRUE, FALSE};         /* whether to use extended security */
     NQ_BOOL anon[] = {TRUE , FALSE};            /* whether to use Anonymous or not */
-	NQ_BOOL emptyDomain = FALSE;                /* whether domain name is empty */
-	NQ_COUNT len;								/* string length */
+    NQ_BOOL emptyDomain = FALSE;                /* whether domain name is empty */
+    NQ_COUNT len;                               /* string length */
+    NQ_CHAR *domainA = NULL;                    /* domain in ASCII */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "server:%s callback:%p params:%p type:%u domain:%s", cmWDump(server), callback, params, serverType, cmWDump(domain));
 
     inData.len = sizeof(NetServerEnum0Rsp);
     if (NULL == domain)
     {
-		emptyDomain = TRUE;
-		len = 0;
+        emptyDomain = TRUE;
+        len = 0;
     }
-	else
-	{
-		NQ_CHAR *domainA;
+    else
+    {
+        NQ_CHAR *dot = NULL;
 
-		/* check required space for domain */
-		len = (NQ_COUNT)((cmWStrlen(domain) + 1) * sizeof(NQ_CHAR) * 2); /* add more space for multibyte character sets */
-		domainA = cmMemoryAllocate(len);
-	    if (NULL == domainA)
-	    {
-	        LOGERR(CM_TRC_LEVEL_ERROR, "Memory overflow");
-	        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-	        return NQ_ERR_NOMEM;
-	    }
-		cmUnicodeToAnsi(domainA, domain);
-		len = (NQ_COUNT)(syStrlen(domainA) + 1); /* check actual string length */
-		cmMemoryFree(domainA);
-	}
-	
-	inData.len +=  len;   
-    inData.data = cmMemoryAllocate(inData.len);
+        /* check required space for domain */
+        len = (NQ_COUNT)((cmWStrlen(domain) + 1) * sizeof(NQ_CHAR) * 2); /* add more space for multibyte character sets */
+        domainA = (NQ_CHAR *)cmMemoryAllocate(len);
+        if (NULL == domainA)
+        {
+            LOGERR(CM_TRC_LEVEL_ERROR, "Memory overflow");
+            status = NQ_ERR_NOMEM;
+            goto Exit;
+        }
+        cmUnicodeToAnsi(domainA, domain);
+        if (NULL != (dot = syStrchr(domainA, '.')))
+            *dot = '\0';
+        len = (NQ_COUNT)(syStrlen(domainA) + 1); /* check actual string length */
+    }
+
+    inData.len +=  len;
+    inData.data = (NQ_BYTE *)cmMemoryAllocate(inData.len);
     if (NULL == inData.data)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Memory overflow");
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return NQ_ERR_NOMEM;
+        status = NQ_ERR_NOMEM;
+        goto Exit;
     }
 
     request0 = (NetServerEnum0Rsp *)inData.data;
@@ -429,9 +427,9 @@ ccRapNetServerEnum(
     cmPutSUint16(request0->level, cmHtol16(0));      /* infoLevel always 0 */
     cmPutSUint16(request0->bufLen, cmHtol16(CIFS_MAX_DATA_SIZE16));
     cmPutSUint32(request0->type, cmHtol32(serverType));
-	if (!emptyDomain)
-		cmUnicodeToAnsi((NQ_CHAR *)(request0 + 1), domain);
-                
+    if (!emptyDomain)
+        syStrcpy((NQ_CHAR *)(request0 + 1), domainA);
+
     for (i = 0; i < sizeof(security)/sizeof(security[0]); i++)
     {
         pServer = ccServerFindOrCreate(server, security[i], ccCifsGetDefaultSmb());
@@ -439,53 +437,50 @@ ccRapNetServerEnum(
         {
             for (j = 0 ; j < sizeof(anon)/sizeof(anon[0]); j++)
             {
-                const AMCredentialsW * pCredentials = anon[j] ? ccUserGetAnonymousCredentials() : NULL;       /* credentials */ 
+                const AMCredentialsW * pCredentials = anon[j] ? ccUserGetAnonymousCredentials() : NULL;       /* credentials */
                 pShare = ccShareConnectIpc(pServer , &pCredentials);
                 if (NULL == pShare)
                 {
-                    cmMemoryFreeBlob(&inData); 
                     cmListItemUnlock((CMItem *)pServer);
-                    LOGERR(CM_TRC_LEVEL_ERROR, "Can't establish connection to %s", cmTDump(server));
-                    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-                    return (NQ_STATUS)syGetLastError();
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Can't establish connection to %s", cmWDump(server));
+                    status = (NQ_STATUS)syGetLastError();
+                    goto Exit;
                 }
-                status = pShare->user->server->smb->doRapTransaction(pShare, &inData, &outData);
+				status = pShare->user->server->smb->doRapTransaction(pShare, &inData, &outParams, &outData);
                 cmListItemUnlock((CMItem *)pShare);       /* force disconnect when not used */
 
                 if (status == NQ_SUCCESS || status == NQ_ERR_NOSUPPORT)
                 {
                     break;
-                }            
-			}  
-			cmListItemUnlock((CMItem *)pServer);
-			if (status == NQ_SUCCESS || status == NQ_ERR_NOSUPPORT)
-            {                
+                }
+            }
+            cmListItemUnlock((CMItem *)pServer);
+            if (status == NQ_SUCCESS || status == NQ_ERR_NOSUPPORT)
+            {
                 break;
             }
         }
         else
         {
-            cmMemoryFreeBlob(&inData); 
-            LOGERR(CM_TRC_LEVEL_ERROR, "Can't establish connection to %s", cmTDump(server));
-            LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-            return (NQ_STATUS)syGetLastError();
+            LOGERR(CM_TRC_LEVEL_ERROR, "Can't establish connection to %s", cmWDump(server));
+            status = (NQ_STATUS)syGetLastError();
+            goto Exit;
         }
     }/* end of connecting "for" */
     if (NQ_SUCCESS != status)
     {
-        cmMemoryFreeBlob(&inData); 
-        LOGERR(CM_TRC_LEVEL_ERROR, "No valid NetServerEnum response");
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return status;
+        LOGERR(CM_TRC_LEVEL_ERROR, "No valid NetServerEnum response:%d", status);
+        goto Exit;
     }
 
-    response = (NetServerEnumRsp *)outData.data;
-    status = netServerEnumLevel0(response, callback, params);
+	status = netServerEnumLevel0((NetServerEnumRsp *)outParams.data, (NQ_CHAR *)outData.data, callback, params);
 
-    cmMemoryFreeBlob(&inData); 
-    cmMemoryFreeBlob(&outData); 
- 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+Exit:
+    cmMemoryFreeBlob(&inData);
+	cmMemoryFreeBlob(&outParams);
+    cmMemoryFreeBlob(&outData);
+    cmMemoryFree(domainA);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%d", status);
     return status;
 }
 
@@ -515,12 +510,17 @@ netShareEnumLevel1(
    )
 {
     ShareInfo1 * info = (ShareInfo1 *)data;
+    ShareCallbackItem          pItem;
     NQ_UINT16 count = cmLtoh16(cmGetSUint16(response->entries));
     NQ_UINT16 i = 0;
 
+    pItem.params = params;
+
     for (; i < count; i++, info++)
     {
-        (*callback)(info->netName, params);
+        pItem.type = info->type;
+        pItem.comment = NULL;
+        (*callback)(info->netName, &pItem);
     }
     return NQ_ERR_OK;
 }
@@ -545,22 +545,27 @@ static
 NQ_STATUS
 netServerEnumLevel0(
     NetServerEnumRsp *response,
+    NQ_CHAR *data,
     CCRapEnumerateNamesCallback callback,
     void* params
     )
 {
-    NQ_CHAR * data = (NQ_CHAR*)cmAllignTwo((response + 1));
-    RapServerInfo0 * info = (RapServerInfo0 *)data;
+    NQ_CHAR * pData = (NQ_CHAR*)cmAllignTwo(data);
+    RapServerInfo0 * info = (RapServerInfo0 *)pData;
     NQ_UINT16 count = cmLtoh16(cmGetSUint16(response->entries));
     NQ_UINT16 i;
+    NQ_STATUS result = NQ_ERR_SRVERROR;
 
-	if (0 != cmLtoh16(cmGetSUint16(response->status)))
-		return NQ_ERR_SRVERROR;
+    if (0 != cmLtoh16(cmGetSUint16(response->status)))
+        goto Exit;
 
     for (i = 0; i < count; i++, info++)
         (*callback)(info->srvName, params);
-	
-    return NQ_ERR_OK;
+
+    result = NQ_ERR_OK;
+
+Exit:
+    return result;
 }
 
 #endif

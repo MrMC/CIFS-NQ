@@ -17,6 +17,7 @@
 #define _CMTREAD_H_
 
 #include "cmapi.h"
+#include "cmportmng.h"
 
 /* -- Typedefs -- */
 
@@ -38,6 +39,8 @@ typedef struct _cmthreadcond
 	SYSocketHandle inSock;	/* Listening socket. */
 	SYSocketHandle outSock;	/* Sending socket. */
 	NQ_PORT port;			/* Port to listen on. */
+	NQ_BOOL sentSignal;		/* Flag to check if signal was sent. */
+	SYMutex	condGuard;		/* Lock the condition. */
 #endif /*SY_SEMAPHORE_AVAILABLE*/
 } CMThreadCond;	/* Condition */	
 
@@ -51,7 +54,9 @@ typedef struct _cmthreadelement       /* semaphore queue element */
     CMItem item;                /* Inherited item. */
     void * thread;              /* Thread pointer. */
 } 
-CMThreadElement;    /* queu element */
+CMThreadElement;    /* queue element */
+
+#define THREAD_INFO_ISRUNNING 0x0001
 
 /* Description
    Thread object.
@@ -69,9 +74,14 @@ typedef struct _cmthread
     SYThread thread;		    /* System thread handle. */
     CMThreadCond syncCond;      /* Condition to synchronize this thread on synchronous operations. */
     CMThreadCond asyncCond;     /* Condition to synchronize this thread on asynchronous operations. */
+    CMThreadCond poolCond;      /* Condition to synchronize this thread on thread pool operations. */
     void * context;             /* Pointer to thread context which depends on SMB protocol. */
-    NQ_COUNT contextSize;       /* Size of the current context */ 
-    CMThreadElement element;    /* Sempahore queue item. */
+    NQ_COUNT contextSize;       /* Size of the current context. */
+    CMThreadElement element;    /* Semaphore queue item. */
+    void (* body)(void);		/* Thread body function. */
+    NQ_UINT32	status;			/* Last error code. */
+    void * cycleParam;			/* For a cycling thread only this is the param of the next cycle. */
+    NQ_UINT16 infoFlags;		/* Thread info flags. see above enum */
 } CMThread; /* Thread wrapper */	
 
 /* -- API Functions */
@@ -131,12 +141,24 @@ void cmThreadUnsubscribe(void);
 
    Parameters
    thread :      Pointer to the thread structure.
-   size :        Conext size, this value is used if context was not created yet. 
-   background :  <i>TRUE</i> to create a background thread, <i>FALSE</i>
-                 to create a normal thread.
+   size :        Context size, required context size.
+
    Returns
-   TRUE on success, FALSE on error.                                      */
+   Pointer to context.        				*/
 void * cmThreadGetContext(CMThread * thread, NQ_COUNT size);
+
+/* Description
+   Get thread context.
+
+   If thread context does not exist - it is created.
+
+   Parameters
+   thread :      Pointer to the thread structure.
+   size :        Context size, required context size.
+
+   Returns
+   Pointer to context.        				*/
+void * cmThreadGetContextAsStatItem(CMThread * pThread, NQ_COUNT size);
 
 /* Description
    Stop thread and release its resources.
@@ -144,7 +166,7 @@ void * cmThreadGetContext(CMThread * thread, NQ_COUNT size);
    thread :  Pointer to the thread structure.
    Returns
    None.                                      */
-void cmThreadStopAndDestroy(CMThread * thread);
+void cmThreadStopAndDestroy(CMThread * thread, NQ_BOOL doDestroy);
 
 /* Description
    This fucntion binds the given socket on the first available dynamic port.
@@ -190,7 +212,7 @@ NQ_BOOL cmThreadCondRelease(CMThreadCond * cond);
    timeout :  Number of seconds to sleep.
    Returns
    TRUE when thread was signalled or FALSE when timeout.                                  */
-NQ_BOOL cmThreadCondWait(CMThreadCond * cond, NQ_TIME timeout);
+NQ_BOOL cmThreadCondWait(CMThreadCond * cond, NQ_UINT32 timeout);
 
 /* Description
    Signal thread.

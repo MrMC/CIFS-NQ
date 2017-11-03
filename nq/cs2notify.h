@@ -51,7 +51,7 @@ cs2NotifyEnd(
 /* notify one file */
 void
 cs2NotifyFile(
-    const NQ_TCHAR* fileName,       /* file name pointer */
+    const NQ_WCHAR* fileName,       /* file name pointer */
     NQ_UINT32 action,               /* action code */
     NQ_BOOL notifyParent            /* FALSE to notify thsi file, TRUE to notify its parent folder */
     );

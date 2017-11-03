@@ -21,6 +21,7 @@
 #include "ndnampro.h"
 #include "ndinname.h"
 #include "ndexname.h"
+#include "nssessio.h"
 
 #ifdef UD_ND_INCLUDENBDAEMON
 
@@ -94,25 +95,28 @@ ndNameInit(
     void
     )
 {
-    TRCB();
+    NQ_STATUS result = NQ_FAIL;
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
     if (NULL == staticData)
     {
-        TRCERR("Unable to allocate Naming Service data");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate Naming Service data");
+        goto Exit;
     }
 #endif /* SY_FORCEALLOCATION */
 
     if (NQ_FAIL == ndInternalNameInit() || NQ_FAIL == ndExternalNameInit())
     {
-        return NQ_FAIL;
+        goto Exit;
     }
-    TRCE();
-    return NQ_SUCCESS;
+    result = NQ_SUCCESS;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -132,7 +136,7 @@ ndNameStop(
     void
     )
 {
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     ndInternalNameStop();
     ndExternalNameStop();
@@ -140,11 +144,11 @@ ndNameStop(
     /* release memory */
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
-        syFree(staticData);
+        cmMemoryFree(staticData);
     staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 /*
@@ -175,7 +179,7 @@ ndNameProcessExternalMessage(
     NQ_BYTE* addData;               /* pointer to the date after the parsed name */
     NQ_STATUS status;               /* return status */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "adapter:%p", adapter);
 
     pHdr = (CMNetBiosHeader*)adapter->inMsg;
     adapter->inTranId = cmGetSUint16(pHdr->tranID);
@@ -187,12 +191,12 @@ ndNameProcessExternalMessage(
                     sizeof(staticData->scopeId)
                     );
 
-    if (addData == NULL)
+    if (NULL == addData)
     {
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal message");
+        status = NQ_FAIL;
+        goto Exit;
     }
-
     code = getPacketType((CMNetBiosHeader*)adapter->inMsg);
 
     /* call packet processing */
@@ -230,12 +234,14 @@ ndNameProcessExternalMessage(
         status = ndExternalNameWack(adapter, name, addData);
         break;
     default:
-        TRCERR("Illegal code");
-        TRC1P("  code: %04x", code);
-        return NQ_SUCCESS;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal code");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "  code: %04x", code);
+        status = NQ_SUCCESS;
+        goto Exit;
     }
 
-    TRCE();
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", status);
     return status;
 }
 
@@ -257,21 +263,34 @@ ndNameProcessExternalMessage(
  */
 
 NQ_STATUS
-ndNameProcessInternalMessage(
+ndNameProcessInternalMessage (
     NDAdapterInfo* adapter
     )
 {
     NQ_UINT16 code;                 /* packet code including the response flag */
     CMNetBiosHeader* pHdr;          /* pointer to the header */
-    CMNetBiosNameInfo nameInfo;     /* called name after parsing */
+    CMNetBiosNameInfo nameInfo = {"0",FALSE};     /* called name after parsing */
     NQ_BYTE* addData;               /* pointer to the date after the parsed name */
     CMNetBiosAddrEntry* addrEntry;  /* pointer to the date after the parsed name */
     NQ_UINT16 flags;                /* name flags */
+    NQ_STATUS result = NQ_SUCCESS;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "adapter:%p, in port: %d", adapter, adapter->inPort);
 
     pHdr = (CMNetBiosHeader*)adapter->inMsg;
     adapter->inTranId = cmGetSUint16(pHdr->tranID);
+    code = getPacketType((CMNetBiosHeader*)adapter->inMsg);
+    if (code == CM_NB_INTERNALREFRESHLIST)
+    {
+    	ndInternalNameReleaseAllNames(FALSE);
+    	sySleep(1);
+#ifdef UD_NB_INCLUDENAMESERVICE
+    	ndSetWinsW((NQ_WCHAR *)(adapter->inMsg + sizeof(CMNetBiosHeader)));
+#endif /* UD_NB_INCLUDENAMESERVICE */
+    	ndNotifyConfigurationChange(adapter);
+        goto Exit;
+    }
+
     addData = cmNetBiosParseName(
                     adapter->inMsg,
                     pHdr + 1,
@@ -280,18 +299,19 @@ ndNameProcessInternalMessage(
                     sizeof(staticData->scopeId)
                     );
 
+    LOGMSG(CM_TRC_LEVEL_MESS_SOME, "internal message, type: %d, name: %s, in port: %d", code, nameInfo.name, adapter->inPort);
+
     if (addData == NULL)
     {
-        TRCERR("Illegal message");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal message");
+        result = NQ_FAIL;
+        goto Exit;
     }
 
     addData += sizeof(CMNetBiosQuestion);
 
     /* dispatch the operation */
 
-    code = getPacketType((CMNetBiosHeader*)adapter->inMsg);
     switch (code)
     {
     case QUERY_REQUEST:
@@ -317,13 +337,13 @@ ndNameProcessInternalMessage(
         ndInternalNameReleaseAllAdapters(adapter, nameInfo.name, TRUE);
         break;
     default:
-        TRCERR("Illegal code");
-        TRC1P("code: %04x", code);
-        return NQ_SUCCESS;
+		LOGERR(CM_TRC_LEVEL_ERROR, "Illegal code: %04x", code);
+        goto Exit;
     }
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*

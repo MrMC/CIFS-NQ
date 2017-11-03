@@ -25,6 +25,7 @@
 #include "csauth.h"
 #include "amspnego.h"
 #include "amntlmss.h"
+#include "cmlist.h"
 #ifdef UD_CS_INCLUDEPASSTHROUGH
 #include "ccapi.h"
 #include "ccserver.h"
@@ -37,15 +38,16 @@
 
 #ifdef UD_NQ_INCLUDECIFSSERVER
 
-#ifdef UD_CS_INCLUDEPASSTHROUGH
 /*
     PDC data structure
 */
 
 typedef struct {
     NQ_CHAR name[CM_NQ_HOSTNAMESIZE+1]; /* PDC name for the server domain */
-    CCServer server;                    /* used for communicating CIFS with PDC */
+#ifdef UD_CS_INCLUDEPASSTHROUGH
+    CCServer * server;                  /* used for communicating CIFS with PDC */
     CCUser user;                        /* dummy user - used only as an UID store */
+#endif
     NQ_BOOL connected;                  /* connection flag */
 }
 Pdc;
@@ -58,10 +60,6 @@ typedef struct
 {
     NQ_BYTE buffer[CM_NB_DATAGRAMBUFFERSIZE];
     Pdc pdc;
-    CMSmbPacket packet;
-#if defined(UD_CS_INCLUDESECURITYDESCRIPTORS) && defined(UD_CS_INCLUDEPASSTHROUGH)
-    NQ_BOOL pdcNameFlag;                /* flag for this name */
-#endif /* defined(UD_CS_INCLUDESECURITYDESCRIPTORS) && defined(UD_CS_INCLUDEPASSTHROUGH) */
 }
 StaticData;
 
@@ -71,10 +69,6 @@ static StaticData* staticData = NULL;
 static StaticData staticDataSrc;
 static StaticData* staticData = &staticDataSrc;
 #endif /* SY_FORCEALLOCATION */
-
-static const CMSmbPacket packetSrc = {NULL, NULL, NULL, NULL, 0};
-
-#endif /* UD_CS_INCLUDEPASSTHROUGH */
 
 /* This flag enables LM encryption method. */
 #define CS_AUTH_ENCRYPTION_LM        1
@@ -130,7 +124,7 @@ encryptNTLMv2(
     const NQ_BYTE* key,             /* session key */
     const NQ_BYTE* v2hash,          /* v2 hash */
     const NQ_BYTE* ntlm,            /* NTLM password data in request */
-    NQ_INT ntlmlen,                 /* adat size */
+    NQ_INT ntlmlen,                 /* data size */
     CSUser* pUser                   /* user structure */
     );
 
@@ -147,7 +141,7 @@ authenticateNtlm(
     const CMCifsSessionSetupAndXRequest* pRequest,  /* request pointer */
     NQ_BOOL unicodeRequired,                        /* TRUE when client sends UNICODE strings */
     AMNtlmDescriptor* descr,                        /* NTLM blob descriptor */
-    NQ_TCHAR* userName,                             /* buffer for user name */
+    NQ_WCHAR* userName,                             /* buffer for user name */
     const NQ_BYTE** pDomain,                        /* buffer for pointer to the domain name */
     const NQ_BYTE** osName                          /* buffer for pointer to the 1st byte of non-parsed data */
     );
@@ -159,7 +153,7 @@ authenticateSpnego(
     const CMCifsSessionSetupAndXRequest * pRequest, /* request pointer */
     CSSession * session,                            /* session structure */ 
     AMNtlmDescriptor * descr,                       /* NTLM blob descriptor */
-    NQ_TCHAR * userName,                            /* buffer for user name */
+    NQ_WCHAR * userName,                            /* buffer for user name */
     const NQ_BYTE** pDomain,                        /* buffer for pointer to the domain name */
     const NQ_BYTE ** pSessionKey,                   /* buffer for session key pointer or NULL if none */
     NQ_BYTE* resBlob,                               /* buffer for response blob */
@@ -173,8 +167,8 @@ authenticateSpnego(
 static NQ_BOOL                  /* returns TRUE is there is a local user */
 isLocalUserOk(
     CSUser* pUser,              /* user structure pointer */
-    const NQ_TCHAR* domain,     /* domain name */
-    const NQ_TCHAR* user,       /* user name */
+    const NQ_WCHAR* domain,     /* domain name */
+    const NQ_WCHAR* user,       /* user name */
     const NQ_BYTE* key,         /* session key */
     AMNtlmDescriptor * pBlob /* incoming blob descriptor */
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
@@ -188,10 +182,24 @@ isLocalUserOk(
     );
 
 
-#ifdef UD_CS_INCLUDEPASSTHROUGH
 /*
     actual pass-through authentication implementation
 */
+
+NQ_UINT getCurrentSessionKey(NQ_BYTE ** key, NQ_BYTE **nonce)
+{
+    CSSession* session = csGetSessionBySocket();     /* session structure */
+    if (NULL == session)                             /* malformed command or there was no Negotiate yet */
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unknown session by socket");
+        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+        return AM_STATUS_GENERIC;
+    }
+
+    *key = session->encryptionKey;
+    *nonce = session->sessionNonce;
+    return sizeof(session->encryptionKey);
+}
 
 /*
  *====================================================================
@@ -199,12 +207,11 @@ isLocalUserOk(
  *--------------------------------------------------------------------
  * PARAMS:  NONE
  *
- * RETURNS: TRUE if succeded, FALSE otherwise
+ * RETURNS: TRUE if succeeded, FALSE otherwise
  *
  * NOTES:
  *====================================================================
  */
-
 NQ_BOOL
 csAuthInit(
     void
@@ -214,29 +221,23 @@ csAuthInit(
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(*staticData));
     if (NULL == staticData)
+    {
+       TRCE();
        return NQ_FAIL;
+    }
 #endif /* SY_FORCEALLOCATION */
-
-    syMemcpy(&staticData->packet, &packetSrc, sizeof(packetSrc));
 
     staticData->pdc.name[0] = '\0';
     staticData->pdc.connected = FALSE;
-#if defined(UD_CS_INCLUDESECURITYDESCRIPTORS) && defined(UD_CS_INCLUDEPASSTHROUGH)  
-    staticData->pdcNameFlag = FALSE;
-#endif /* defined(UD_CS_INCLUDESECURITYDESCRIPTORS) && defined(UD_CS_INCLUDEPASSTHROUGH) */
-	staticData->pdc.server.item.name = NULL;
-    syMutexCreate(&staticData->pdc.server.item.guard);
-    staticData->pdc.server.item.locks = 0;
-    staticData->pdc.server.item.isStatic = TRUE;
-    cmListStart(&staticData->pdc.server.item.references);
 
-    cmPacketAttachBuffer(&staticData->packet, staticData->buffer);
+#ifdef UD_CS_INCLUDEEXTENDEDSECURITY
+    amSpnegoServerSetSessionKeyCallback(getCurrentSessionKey);
+#endif /* UD_CS_INCLUDEEXTENDEDSECURITY */
 
     TRC("Initialized with name: %s, %s", cmNetBiosGetDomainAuth()->name, (cmNetBiosGetDomainAuth()->isGroup ? "workgroup" : "domain"));
     TRCE();
-
     return TRUE;
 }
 
@@ -258,10 +259,6 @@ csAuthShutdown(void)
     TRCB();
 
     /* release memory */
-    if (staticData->pdc.connected)
-    {
-        ccServerDisconnect(&staticData->pdc.server);
-    }
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
         syFree(staticData);
@@ -287,179 +284,16 @@ csAuthGetPDCName(
     void
     )
 {
+    const NQ_CHAR* pResult = NULL;
+
     if (staticData->pdc.name[0] != '\0' ||
-        cmGetDCName(staticData->pdc.name, NULL) == NQ_ERR_OK)
+        cmGetDCName(staticData->pdc.name, NULL) == NQ_SUCCESS)
     {
-        return staticData->pdc.name;
+        pResult = staticData->pdc.name;
     }
 
-    return NULL;
+    return pResult;
 }
-
-/*
- *====================================================================
- * PURPOSE: check if an authorization with PDC required
- *--------------------------------------------------------------------
- * PARAMS:  NONE
- *
- * RETURNS: TRUE if required, FALSE otherwise
- *
- * NOTES:
- *====================================================================
- */
-
-NQ_BOOL
-csIsPassthroughRequired(
-    void
-    )
-{
-    NQ_BOOL required = !(NQ_BOOL)cmNetBiosGetDomainAuth()->isGroup;
-
-    TRC1P("Pass-through authentication%s required", required ? "" : " NOT");
-
-    return required;
-}
-
-
-/*
- *====================================================================
- * PURPOSE: exchange negotiate with PDC
- *          for not extended security - get an encryption key from PDC
- *--------------------------------------------------------------------
- * PARAMS:  IN  pointer to preallocated buffer of length
- *              SMB_ENCRYPTION_LENGTH where the key will be put upon
- *              return
- *          IN  whether to use extended security negotiation
- *
- * RETURNS: TRUE if succeded, FALSE otherwise
- *
- * NOTES:
- *====================================================================
- */
-NQ_BOOL
-csPassthroughNegotiate(
-    NQ_BYTE *buffer
-#ifdef UD_CS_INCLUDEEXTENDEDSECURITY
-    ,
-    NQ_BOOL extendedSecurity
-#endif    
-    )
-{
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-
-    /* if the PDC name is already known there is no need to query the domain for it */
-    if (staticData->pdc.name[0] != '\0' ||
-        cmGetDCName(staticData->pdc.name, NULL) == NQ_ERR_OK)
-    {
-        const NQ_WCHAR * nameW;
-
-        /* close the previous session and connection if any */
-        if (!staticData->pdc.connected)
-        {
-            nameW = cmMemoryCloneAString(staticData->pdc.name);
-            if (NULL != nameW)
-            {
-                staticData->pdc.connected = ccServerConnect(&staticData->pdc.server, nameW);
-                cmMemoryFree(nameW);
-                staticData->pdc.user.server = &staticData->pdc.server;
-            }
-        }
-    
-        cmU64Zero(&staticData->pdc.user.uid);
-        LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-        return staticData->pdc.connected;
-    }
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-    return FALSE;
-}
-
-#ifdef UD_CS_INCLUDEEXTENDEDSECURITY
-/*
- *====================================================================
- * PURPOSE: authorize user with domain controller (extended security)
- *--------------------------------------------------------------------
- * PARAMS:  IN  security blob from client
- *          IN  security blob length
- *          IN/OUT  security blob received from PDC
- *          IN/OUT  security blob length
- *
- * RETURNS: one of the following values:
- *            CC_AUTH_USER_OK        - authorization ok
- *            CC_AUTH_NETWORK_ERROR  - net work error (PDC failure)
- *            CC_AUTH_ACCESS_DENIED  - PDC denied access for the user
- *            CC_AUTH_IN_PROCESS     - authorization in progress
- *
- * NOTES:
- *====================================================================
- */
-static
-NQ_UINT32
-csPassthroughSessionSetup(
-    const NQ_BYTE* inBlob,
-    const NQ_UINT16 inBlobLength,
-    NQ_BYTE* pOutBlob,
-    NQ_COUNT* pOutBlobLength
-    )
-{
-    NQ_UINT32 result = CC_AUTH_NETWORK_ERROR;
-    NQ_UINT32 status;
-    CMBlob sendBlob;
-    CMBlob recvBlob;
-
-    TRCB();
-
-    sendBlob.data = (NQ_BYTE *)inBlob;
-    sendBlob.len = inBlobLength;
-    /* if connection not established we will try to establish it but this time report network error */
-    if (staticData->pdc.connected)
-    {
-        status = (NQ_UINT32)staticData->pdc.server.smb->doSessionSetupExtended(
-            &staticData->pdc.user, 
-            &sendBlob,
-            &recvBlob
-            );
-		if (status == NQ_ERR_MOREDATA)
-        {
-            syMemcpy(pOutBlob, recvBlob.data, recvBlob.len);
-            *pOutBlobLength = recvBlob.len;
-            cmMemoryFreeBlob(&recvBlob);
-        }
-        switch (status)
-        {
-            /* todo: nt error codes! */
-            case NQ_ERR_OK:
-                result = CC_AUTH_USER_OK;
-                TRC("User authorized successfully by PDC");
-                break;
-
-            case NQ_ERR_GENERAL:
-            case NQ_ERR_GETDATA:
-            case NQ_ERR_TIMEOUT:
-            case NQ_ERR_SIGNATUREFAIL:
-                /* network error - close invalid connection */
-                ccServerDisconnect(&staticData->pdc.server);
-				staticData->pdc.connected = FALSE;
-                break;
-
-            case NQ_ERR_MOREDATA:
-                TRC("PDC returned SMB_STATUS_MORE_PROCESSING_REQUIRED");
-                result = CC_AUTH_IN_PROCESS;
-                break;
-            default:
-                result = CC_AUTH_ACCESS_DENIED;
-                TRCERR("csPassthroughSessionSetup: session setup and X failed");
-                TRC1P("Status: %d", status);
-        }
-    }
-    else
-    {
-        TRC("Connection to the PDC is not established");
-    }
-    TRCE();
-    return result;
-}
-#endif /* UD_CS_INCLUDEEXTENDEDSECURITY */ 
-#endif /* UD_CS_INCLUDEPASSTHROUGH      */
 
 /*
  *====================================================================
@@ -474,12 +308,11 @@ csPassthroughSessionSetup(
  *          OUT place for pointer to domain name in Unicode or ASCII
  *          OUT place for the pointer to OS name
  *
- * RETURNS: error code or zero
+ * RETURNS: error code or NQ_SUCCESS
  *
  * NOTES:   none
  *====================================================================
  */
-
 NQ_UINT32
 csAuthenticateUser(
     const NQ_BYTE* pReq,
@@ -493,38 +326,49 @@ csAuthenticateUser(
     const NQ_BYTE** pOsName
     )
 {
-    NQ_STATIC NQ_TCHAR emptyT[] = {cmTChar('\0')};
-    NQ_STATIC NQ_TCHAR userNameT[CM_BUFFERLENGTH(NQ_TCHAR, CM_USERNAMELENGTH)];
+    NQ_STATIC NQ_WCHAR userName[CM_BUFFERLENGTH(NQ_WCHAR, CM_USERNAMELENGTH)];
                                     /* user name converted to TCHAR */
     NQ_STATIC NQ_BYTE passwords[CM_CRYPT_MAX_NTLMV2NTLMSSPRESPONSESIZE];   
                                     /* saved passwords */                                
     AMNtlmDescriptor descr;         /* descriptor of LM/NTLM blobs */
     NQ_INT credentialsLen;          /* lengths of the credentials to save */
 #ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
-    CMSdRid userRid;                /* RID for a local user */
+    CMSdRid userRid;                /* RID for user */
 #endif /* UD_CS_INCLUDESECURITYDESCRIPTORS */
-    NQ_UINT32 res;                  /* local response */
-    NQ_STATIC NQ_TCHAR domainT[CM_BUFFERLENGTH(NQ_TCHAR, CM_NQ_HOSTNAMESIZE + 1)];
-                                    /* buffer for domain name in TCHAR */
-#ifdef UD_CS_INCLUDEPASSTHROUGH                                    
-    NQ_STATIC NQ_CHAR domainA[CM_BUFFERLENGTH(NQ_CHAR, CM_NQ_HOSTNAMESIZE + 1)];
-                                    /* buffer for domain name in CHAR */
-#endif                                    
+#if defined(UD_CS_INCLUDESECURITYDESCRIPTORS) && defined(UD_CS_INCLUDEEXTENDEDSECURITY) && defined(UD_CS_INCLUDEPASSTHROUGH)
+	CMSdRid groupRid;               /* RID for user group */
+#endif /* defined(UD_CS_INCLUDESECURITYDESCRIPTORS) && defined(UD_CS_INCLUDEEXTENDEDSECURITY) && defined(UD_CS_INCLUDEPASSTHROUGH) */
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
+#ifdef UD_CS_INCLUDEPASSTHROUGH                                    
+    NQ_STATIC NQ_CHAR domainA[CM_BUFFERLENGTH(NQ_CHAR, CM_NQ_HOSTNAMESIZE)];
+    /* buffer for domain name in CHAR */
+#endif  
     const NQ_BYTE* pSessionKey = NULL;  /* pointer to session key in session setup auth message */
-    const NQ_BYTE* inBlob = NULL;       /* pointer ti incoming blob */
+    const NQ_BYTE* inBlob = NULL;       /* pointer to incoming blob */
     NQ_UINT16 inBlobLength = 0;         /* its length */
 #endif /* UD_CS_INCLUDEEXTENDEDSECURITY */
+    NQ_STATIC NQ_WCHAR domain[CM_BUFFERLENGTH(NQ_WCHAR, CM_NQ_HOSTNAMESIZE)]; /* buffer for domain name in WCHAR */
     const NQ_BYTE * pDomain = NULL;     /* pointer to domain name in response */
+    NQ_UINT32 res = AM_STATUS_GENERIC;  /* local response */
     const CMCifsSessionSetupAndXRequest* pRequest = (const CMCifsSessionSetupAndXRequest*)pReq;
 
     TRCB();
 
+#if defined(UD_NQ_INCLUDESMB3) && !defined(UD_CS_ALLOW_NONENCRYPTED_ACCESS_TO_ENCRYPTED_SHARE)
+    if (csIsServerEncrypted() && pSession->dialect < CS_DIALECT_SMB30)
+    {
+        /* reject session for SMB1 and SMB2 clients */
+        TRCERR("Session rejected because of global encryption");
+        TRCE();
+        return csErrorReturn(SMB_STATUS_ACCESS_DENIED, DOS_ERRnoaccess);
+    }
+#endif /* defined(UD_NQ_INCLUDESMB3) && !defined(UD_CS_ALLOW_NONENCRYPTED_ACCESS_TO_ENCRYPTED_SHARE) */
+
     syMemset(&descr, 0, sizeof(descr));
  
-    switch (pSession->smb2)
+    switch (pSession->dialect)
     {
-    case FALSE:
+    case CS_DIALECT_SMB1:
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
         if (pRequest->wordCount == SMB_SESSIONSETUPANDX_REQUEST_WORDCOUNT)  /* NTLM logon */
         {
@@ -533,7 +377,7 @@ csAuthenticateUser(
                     pRequest,
                     unicodeRequired,
                     &descr, 
-                    userNameT, 
+                    userName,
                     &pDomain, 
                     pOsName
                     ); 
@@ -541,14 +385,18 @@ csAuthenticateUser(
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
         }
 #endif /* UD_CS_INCLUDEEXTENDEDSECURITY */
-    case TRUE:
+        /* fall through  - if word count is different, SMB1 will use SPNego */
+    case CS_DIALECT_SMB2:
+    case CS_DIALECT_SMB210:
+    case CS_DIALECT_SMB30:
+    case CS_DIALECT_SMB311:
     default:
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY    
         res = authenticateSpnego(
                 pRequest, 
                 pSession,
                 &descr, 
-                userNameT, 
+                userName,
                 &pDomain,
                 &pSessionKey,
                 pBlob,
@@ -561,88 +409,73 @@ csAuthenticateUser(
         break;
     }
 
+   	/* allocate user if not yet */
+	if (*pUser == NULL)
+	{
+		/* find an empty record in the session table */
+		*pUser = csGetNewUser(pSession);
+		if (*pUser == NULL)
+		{
+			TRCERR("User table overflow");
+			TRCE();
+			return csErrorReturn(SMB_STATUS_NO_MEMORY, DOS_ERRnomem);
+		}
+	}
+
+	if(CM_CRYPT_MAX_NTLMV2NTLMSSPRESPONSESIZE < descr.lmLen + descr.ntlmLen)
+	{
+		/* we later copy these parameters to passwords[CM_CRYPT_MAX_NTLMV2NTLMSSPRESPONSESIZE]. size has to fit */
+		TRCERR("password sizes too long for passwords array. NTLM length: %d, lm length: %d", descr.ntlmLen, descr.lmLen);
+		res = AM_STATUS_BAD_FORMAT;
+	}
+
     switch (res)
     {
-        case AM_STATUS_AUTHENTICATED: 
+        case AM_STATUS_AUTHENTICATED:
             TRCE();
             return NQ_SUCCESS;    
-        case AM_STATUS_NOT_AUTHENTICATED:               /* NTLM login or ntlmssp auth message */
-            res = 0;
+        case AM_STATUS_NOT_AUTHENTICATED:         /* NTLM login or ntlmssp auth message (final) */
+            res = NQ_SUCCESS;
 			break;
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
         case AM_STATUS_MORE_PROCESSING_REQUIRED:  /* ntlmssp negot */
-            res = SMB_STATUS_MORE_PROCESSING_REQUIRED;
-#ifdef UD_CS_INCLUDEPASSTHROUGH
-#ifdef UD_CS_INCLUDEDOMAINMEMBERSHIP
-            if (!udGetComputerSecret(NULL))
-            {
-#endif /* UD_CS_INCLUDEDOMAINMEMBERSHIP */
-                /* on session setup negotiate we don't know yet client's domain, so we use old pass-through anyway */
-                if (csIsPassthroughRequired())
-                {
-                    TRC("Trying PDC for user authentication (extended security - setup negotiate)");
-                    if (csPassthroughSessionSetup(inBlob, inBlobLength, pBlob, blobLength) == CC_AUTH_IN_PROCESS)
-                    {
-                        /* save PDC's ntlm challenge (for NetLogon or local authentication if needed later) */
-                        NQ_BYTE *challenge;
-
-                        TRC("PDC returned SMB_STATUS_MORE_PROCESSING_REQUIRED");                
-
-                        if ((challenge = amNtlmsspServerGetChallenge(pBlob)) != NULL)
-                        {
-                            syMemcpy(pSession->encryptionKey, challenge, sizeof(pSession->encryptionKey));
-                            TRCDUMP("PDC's ntlm challenge (encryptionKey)", pSession->encryptionKey, sizeof(pSession->encryptionKey));
-                        }
-                        TRCE();
-                        return csErrorReturn(SMB_STATUS_MORE_PROCESSING_REQUIRED, NQ_ERR_MOREDATA);
-                    }
-                    else
-                    {
-                        TRCERR("PDC has denied setup negotiate request");
-
-                        /* for this session don't try pass-through */
-                        pSession->usePassthrough = FALSE;
-                    }
-                }
-#ifdef UD_CS_INCLUDEDOMAINMEMBERSHIP
-            }
-#endif /* UD_CS_INCLUDEDOMAINMEMBERSHIP */
-#endif /* UD_CS_INCLUDEPASSTHROUGH */ 
 #endif  /* UD_CS_INCLUDEEXTENDEDSECURITY */ 
             TRCE();
             return csErrorReturn(SMB_STATUS_MORE_PROCESSING_REQUIRED, NQ_ERR_MOREDATA);
         case AM_STATUS_BAD_FORMAT:
+        	if (*pUser != NULL)
+        		csReleaseUser((*pUser)->uid, FALSE);
             TRCE();
             return csErrorReturn(SMB_STATUS_INVALID_PARAMETER, DOS_ERRbadformat);
         case AM_STATUS_INSUFFICIENT_RESOURCES:
+        	if (*pUser != NULL)
+        		csReleaseUser((*pUser)->uid, FALSE);
             TRCE();
             return csErrorReturn(SMB_STATUS_INSUFFICIENT_RESOURCES, DOS_ERRnomem);
         case AM_STATUS_GENERIC:
-            TRCE();
-            return csErrorReturn(SMB_STATUS_UNSUCCESSFUL, SRV_ERRerror);
-        default:                                       /* error or ntlmssp negot */
+        default:
+        	if (*pUser != NULL)
+        		csReleaseUser((*pUser)->uid, FALSE);
             TRCE();    
             return csErrorReturn(SMB_STATUS_UNSUCCESSFUL, SRV_ERRerror);
     }
 
-    syMemcpy(passwords, descr.pLm, descr.lmLen);
-    syMemcpy(passwords + descr.lmLen, descr.pNtlm, descr.ntlmLen);
     if (unicodeRequired)
     {
-        cmUnicodeToTchar(domainT, (NQ_WCHAR*)pDomain);
+    	syWStrcpy(domain, (NQ_WCHAR*)pDomain);
     }
     else
     {
-        cmAnsiToTchar(domainT, (const NQ_CHAR *)pDomain);
+    	syAnsiToUnicode(domain, (const NQ_CHAR *)pDomain);
     }
    
-    TRC("Username: %s", cmTDump(userNameT));
-    TRC("Domain: %s", cmTDump(domainT));
+    TRC("Username: %s", cmWDump(userName));
+    TRC("Domain: %s", cmWDump(domain));
     TRC("Own host name: %s", (NQ_CHAR *)cmNetBiosGetHostNameZeroed());
 
-    /* allow anonymous connection */
+    /* anonymous connection */
     if ((descr.lmLen == 0 || descr.lmLen == 1) && (descr.ntlmLen == 0 || descr.ntlmLen == 1) && 
-       (pSession->smb2 ? TRUE : (pRequest->wordCount == SMB_SESSIONSETUPANDXSSP_REQUEST_WORDCOUNT ? TRUE : cmTStrcmp(userNameT, emptyT) == 0)))
+       ((pSession->dialect > CS_DIALECT_SMB1) ? TRUE : (pRequest->wordCount == SMB_SESSIONSETUPANDXSSP_REQUEST_WORDCOUNT ? TRUE : *(NQ_BYTE*)(pRequest + 1) == 0)))
     {
 #ifdef UD_CS_AUTHENTICATEANONYMOUS
     	NQ_INT res;
@@ -650,244 +483,221 @@ csAuthenticateUser(
     	NQ_BOOL fakePassHashed;
     	NQ_CHAR fakePass;
 #endif	/* UD_CS_AUTHENTICATEANONYMOUS */
+    	CSUser *pAnononymous;
 
         TRC("anonymous connection");
         
-        /* find an existing user */
-        cmAnsiToTchar(userNameT, "anonymous");
+        /* set user */
+        syAnsiToUnicode(userName, "ANONYMOUS LOGON");
 
 #ifdef UD_CS_AUTHENTICATEANONYMOUS
-        res = udGetPassword(userNameT , &fakePass ,&fakePassHashed, &fakeRid );
+        res = udGetPassword(userName, &fakePass, &fakePassHashed, &fakeRid);
         if (res == NQ_CS_PWDNOUSER)
         {
-        	TRCERR("anonumous connection isn't allowed");
-        	TRCE();
-        	return csErrorReturn(SMB_STATUS_LOGON_FAILURE, DOS_ERRnoaccess);
+            csReleaseUser((*pUser)->uid, TRUE);
+            TRCERR("anonymous connection isn't allowed");
+            TRCE();
+            return csErrorReturn(SMB_STATUS_LOGON_FAILURE, DOS_ERRnoaccess);
         }
 #endif	/* UD_CS_AUTHENTICATEANONYMOUS */
 
-        *pUser = csGetUserByNameAndCredentials(userNameT, NULL, 0);
-        if (NULL != *pUser)  /* user already authenticated by previous setups */
+        pAnononymous = csGetUserByNameAndCredentials(userName, NULL, 0);
+
+        if (NULL != pAnononymous && pAnononymous->authenticated)  /* user already authenticated in previous steps */
         {
-            if (!pSession->smb2)
+        	csReleaseUser((*pUser)->uid, TRUE);
+         	*pUser = pAnononymous;
+            if (pSession->dialect == CS_DIALECT_SMB1)
                 pDomain = (NQ_BYTE*)(pRequest + 1) + 1;
             TRCE();
-            return 0;
+            return NQ_SUCCESS;
         }
 
-        /* find an empty record in the session table */
-        *pUser = csGetNewUser(pSession);
-        if (*pUser == NULL)
-        {
-            TRCERR("User table overflow");
-            TRCE();
-            return csErrorReturn(SMB_STATUS_NO_MEMORY, DOS_ERRnomem);
-        }
-        cmAnsiToTchar((*pUser)->name, "anonymous");
+        syAnsiToUnicode((*pUser)->name, "anonymous");
         (*pUser)->isAnonymous = TRUE;
         (*pUser)->token.isAnon = TRUE;
 #ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
-        (*pUser)->token.rids[0] = CM_SD_RIDGUEST;
-        (*pUser)->token.numRids = 1;
+	    (*pUser)->token.rids[0] = CM_SD_RIDALIASGUEST; /* CM_SD_RIDGUEST */
+	    (*pUser)->token.numRids = 1;
+	    syMemcpy(&(*pUser)->token.domain, cmSdGetComputerSid(), sizeof((*pUser)->token.domain));
 #endif /* UD_CS_INCLUDESECURITYDESCRIPTORS */
 #ifdef UD_CS_AUTHENTICATEANONYMOUS
         (*pUser)->rid = fakeRid;
 #endif	/* UD_CS_AUTHENTICATEANONYMOUS */
 
-        TRCE();
-        return 0;
-    }
-
-    if (descr.lmLen <= 1)
-    {
-        TRCERR("Account name too short");
-        TRCE();
-        return csErrorReturn(SMB_STATUS_INVALID_PARAMETER, DOS_ERRbadformat);
-    }
-
-    /* find an existing user */
-
-    credentialsLen = descr.lmLen + descr.ntlmLen;
-    if (credentialsLen > (NQ_INT)sizeof((*pUser)->credentials))
-    {
-        credentialsLen = sizeof((*pUser)->credentials);
-    }
-    if (!pSession->smb2)
-    {
-        *pUser = csGetUserByNameAndCredentials(userNameT, passwords, credentialsLen);
-        if (NULL != *pUser)  /* user already authenticated by previous setups */
-        {
-            TRC("user already authenticated by previous setups");
-            TRCE();
-            return 0;
-        }
-    }
-    
-    /*  ensure reauthentication for smb2 */
-    if (*pUser == NULL)
-    {
-        /* find an empty record in the session table */
-        *pUser = csGetNewUser(pSession);
-        if (*pUser == NULL)
-        {
-            TRCERR("User table overflow");
-            TRCE();
-            return csErrorReturn(SMB_STATUS_NO_MEMORY, DOS_ERRnomem);
-        }
-    }
-    
-    /* if user will be locally authenticated this value will be > 0 */
-#ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
-    (*pUser)->token.numRids = 0;
-#endif /* UD_CS_INCLUDESECURITYDESCRIPTORS */
-
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
-    if (NULL != pSessionKey)
-    {
-        syMemcpy((*pUser)->sessionKey, pSessionKey, sizeof((*pUser)->sessionKey));
-    }
-#endif /* UD_CS_INCLUDEEXTENDEDSECURITY */ 
-
-    /* save user name and credentials */
-    
-    cmTStrcpy((*pUser)->name, userNameT);
-    syMemcpy((*pUser)->credentials, passwords, credentialsLen);  
-            
-#ifdef UD_CS_INCLUDEPASSTHROUGH   
-    if (unicodeRequired)
-    {
-        cmUnicodeToAnsi(domainA, (NQ_WCHAR*)pDomain);   
-    }
-    else
-    {
-        syStrcpy(domainA, (const NQ_CHAR *)pDomain);
-    }
-
-    /* get session key from DC if client's domain differs from own host and own host is in domain */
-    if (csIsPassthroughRequired() 
-        && (cmAStricmp(cmNetBiosGetHostNameZeroed(), domainA) != 0 && cmAStricmp(cmGetFullHostName(), domainA) != 0)
-        && pSession->usePassthrough)
-    {
-#ifdef UD_CS_INCLUDEDOMAINMEMBERSHIP
-        NQ_BOOL isExtendedSecurity = TRUE;
-#endif /*  UD_CS_INCLUDEDOMAINMEMBERSHIP*/
-		(*pUser)->isDomainUser = TRUE;        
-
-#ifdef UD_CS_INCLUDEDOMAINMEMBERSHIP
-        if (!pSession->smb2 && pRequest->wordCount == SMB_SESSIONSETUPANDX_REQUEST_WORDCOUNT) /* not extended security */
-        {   
-            isExtendedSecurity = FALSE;
+        /* for anonymous session key is 0*/
+        syMemset((*pUser)->sessionKey, 0, sizeof((*pUser)->sessionKey));
+        TRC("Performing local authentication for anonymous");
+        if (pSessionKey)  /* client supplied session key */
+        {
+        	if (descr.flags & NTLMSSP_NEGOTIATE_KEY_EXCH) /* session key should be decrypted*/
+        	{
+        		TRC("Client supplied encrypted session key");
+        		TRCDUMP("encrypted session key (sess setup auth mess)", pSessionKey, 16);
+        		cmArcfourCrypt((NQ_BYTE*)pSessionKey, 16, (*pUser)->sessionKey, sizeof((*pUser)->sessionKey));
+        	}
+        	syMemcpy((*pUser)->sessionKey, pSessionKey, sizeof((*pUser)->sessionKey));
+        	TRC("Created session key from local key 0x00 and client session key");
+        	TRCDUMP("Final session key for anonymous", (*pUser)->sessionKey, 16);
         }
-#endif /*  UD_CS_INCLUDEDOMAINMEMBERSHIP*/
-#ifdef UD_CS_INCLUDEEXTENDEDSECURITY
-#ifdef UD_CS_INCLUDEDOMAINMEMBERSHIP
-            if (!udGetComputerSecret(NULL))
-            {
-#endif
-                /* continue with old passthrough */
-                TRC("Trying PDC for user authentication (extended security - setup auth)");
-                res = csPassthroughSessionSetup(inBlob, inBlobLength, pBlob, blobLength);
-                
-                switch (res)
-                {
-                    case CC_AUTH_USER_OK:
-                        {
-                            TRC("PDC granted the access, message signing is disabled");
-                        
-                            (*pUser)->isExtendSecAuth = TRUE;
-                            ccServerDisconnect(&staticData->pdc.server);
-			                staticData->pdc.connected = FALSE;
+#endif /* UD_CS_INCLUDEEXTENDEDSECURITY */
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
-                            pSession->signingOn = FALSE;                            
-#endif
-                            TRCE();
-                            return 0;                    
-                        }
+        createSigningContextSmb(*pUser, &descr);
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */
+        TRCE();
+        return NQ_SUCCESS;
+	}
 
-                    case CC_AUTH_ACCESS_DENIED:
-                        TRCERR("PDC has denied the user");                       
-                        /* try local authentication */
-                    case CC_AUTH_NETWORK_ERROR:
-                    default:
-                        break;
-                }   
-#ifdef UD_CS_INCLUDEDOMAINMEMBERSHIP
+	/* save user name, credentials, session key */
+    syWStrcpy((*pUser)->name, userName);
+	syMemcpy(passwords, descr.pLm, descr.lmLen);
+	syMemcpy(passwords + descr.lmLen, descr.pNtlm, descr.ntlmLen);
+	credentialsLen = descr.lmLen + descr.ntlmLen;
+	if (credentialsLen > (NQ_INT)sizeof((*pUser)->credentials))
+	{
+	    credentialsLen = sizeof((*pUser)->credentials);
+	}
+	syMemcpy((*pUser)->credentials, passwords, credentialsLen);
+#ifdef UD_CS_INCLUDEEXTENDEDSECURITY
+	if (NULL != pSessionKey)
+	{
+	    syMemcpy((*pUser)->sessionKey, pSessionKey, sizeof((*pUser)->sessionKey));
+	}
+#endif /* UD_CS_INCLUDEEXTENDEDSECURITY */
+
+	/* find an existing user (SMB1 only) */
+	if (pSession->dialect == CS_DIALECT_SMB1)
+	{
+	    CSUser *pPreviousUser = csGetUserByNameAndCredentials(userName, passwords, credentialsLen);
+	    if (NULL != pPreviousUser && pPreviousUser->authenticated)  /* user already authenticated by previous setups */
+	    {
+	        csReleaseUser((*pUser)->uid, TRUE);
+	        *pUser = pPreviousUser;
+	        TRC("user already authenticated by previous setups");
+	        TRCE();
+	        return NQ_SUCCESS;
+	    }
+	}
+
+	/* try pass through authentication */
+#if defined(UD_CS_INCLUDEEXTENDEDSECURITY) && defined(UD_CS_INCLUDEPASSTHROUGH)
+	if (unicodeRequired)
+	{
+	    cmUnicodeToAnsi(domainA, (NQ_WCHAR*)pDomain);   
+	}
+	else
+	{
+	    syStrcpy(domainA, (const NQ_CHAR *)pDomain);
+	}
+
+	/* get session key from DC if client's domain differs from own host and own host is in domain */
+	if (!cmNetBiosGetDomainAuth()->isGroup
+	    && (cmAStricmp(cmNetBiosGetHostNameZeroed(), domainA) != 0 && cmAStricmp(cmGetFullHostName(), domainA) != 0)
+	    && pSession->usePassthrough)
+	{
+	    (*pUser)->isDomainUser = TRUE;
+
+            TRC("Passthrough authentication is required");
+
+        if (!udGetComputerSecret(NULL))
+        {
+            TRCERR("Secret not available (passthrough NetLogon)");
+            /* try local authentication */
+        }
+        else
+        {
+            NQ_STATIC NQ_WCHAR hostName[CM_BUFFERLENGTH(NQ_WCHAR, CM_NQ_HOSTNAMESIZE)];
+            NQ_BYTE *secret;
+#ifndef UD_CS_INCLUDESECURITYDESCRIPTORS
+            CMSdRid userRid;                /* RID for user */
+            CMSdRid groupRid;               /* RID for user group */
+#endif /* UD_CS_INCLUDESECURITYDESCRIPTORS */
+            NQ_BOOL isExtendedSecurity = pSession->dialect > CS_DIALECT_SMB1;
+
+            udGetComputerSecret(&secret);
+            syAnsiToUnicode(hostName, (NQ_CHAR *)cmNetBiosGetHostNameZeroed());
+
+			if (pSession->dialect == CS_DIALECT_SMB1 && pRequest->wordCount == SMB_SESSIONSETUPANDXSSP_REQUEST_WORDCOUNT)
+				isExtendedSecurity = TRUE;
+					
+            TRC("Getting session key from DC (passthrough NetLogon)");
+            TRCDUMP("server challenge (encryptionKey)", pSession->encryptionKey, 8);
+            TRCDUMP("secret", secret, 16);
+            TRC("lmLen %d, ntlmLen %d", descr.lmLen, descr.ntlmLen);
+
+            if (ccNetLogonW(domain,
+                            userName,
+                            hostName,
+                            pSession->encryptionKey, 
+                            descr.pLm, 
+                            descr.lmLen, 
+                            descr.pNtlm, 
+                            descr.ntlmLen, 
+                            NULL,
+                            secret,
+                            isExtendedSecurity,
+                            (*pUser)->sessionKey,
+							&userRid,
+							&groupRid) == TRUE)
+
+            {
+                TRC("Passthrough (NetLogon) authentication succeeded");
+                TRCDUMP("Session key:", (*pUser)->sessionKey, 16);
+
+                if (0 != (descr.flags & NTLMSSP_NEGOTIATE_EXTENDED_SECURITY) && descr.lmLen == 24 && descr.ntlmLen == 24) 
+                {
+                    TRC("Generating extended security (ntlmv2) session key");
+                    cmGenerateExtSecuritySessionKey((*pUser)->sessionKey, pSession->sessionNonce, (*pUser)->sessionKey);                        
+                }
+
+                if (pSessionKey)  /* client supplied session key */
+                {
+                    if (descr.flags & NTLMSSP_NEGOTIATE_KEY_EXCH) /* session key should be decrypted*/
+                    {
+                        TRC("Client supplied encrypted session key");
+                        TRCDUMP("encrypted session key (sess setup auth mess)", pSessionKey, 16);
+                        cmArcfourCrypt((NQ_BYTE*)pSessionKey, 16, (*pUser)->sessionKey, sizeof((*pUser)->sessionKey));
+                    }
+                    syMemcpy((*pUser)->sessionKey, pSessionKey, sizeof((*pUser)->sessionKey));
+                }
+                TRCDUMP("Session key (final)", (*pUser)->sessionKey, 16);
+                (*pUser)->isExtendSecAuth = isExtendedSecurity;
+                (*pUser)->authBySamlogon = TRUE;
+                descr.isNtlmAuthenticated = TRUE;
+#ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
+				TRC("userRid:%d, groupRid:%d", userRid, groupRid);
+				(*pUser)->token.rids[0] = userRid;
+				(*pUser)->token.rids[1] = groupRid;
+				(*pUser)->token.numRids = 2;
+#endif /* UD_CS_INCLUDESECURITYDESCRIPTORS */
+#ifdef UD_CS_MESSAGESIGNINGPOLICY
+                createSigningContextSmb(*pUser, &descr);
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */
+                TRCE();
+                return NQ_SUCCESS;
             }
             else
             {
-                NQ_STATIC NQ_TCHAR hostNameT[CM_BUFFERLENGTH(NQ_TCHAR, CM_NQ_HOSTNAMESIZE + 1)];
-                NQ_BYTE *secret;
-
-                udGetComputerSecret(&secret);
-                cmAnsiToTchar(hostNameT, (NQ_CHAR *)cmNetBiosGetHostNameZeroed());
-
-                TRCDUMP("server challenge (encryptionKey)", pSession->encryptionKey, 8);
-                TRCDUMP("secret", secret, 16);
-                TRC("lmLen %d, ntlmLen %d", descr.lmLen, descr.ntlmLen);
-                TRC("Getting session key from DC (passthrough NetLogon)");
-
-                if (ccNetLogon(domainT, 
-                               userNameT, 
-                               hostNameT, 
-                               pSession->encryptionKey, 
-                               descr.pLm, 
-                               descr.lmLen, 
-                               descr.pNtlm, 
-                               descr.ntlmLen, 
-                               NULL,
-                               secret,
-                               isExtendedSecurity,
-                               (*pUser)->sessionKey) == TRUE)
-
-                {
-                    TRC("Passthrough (NetLogon) authentication succeeded");
-                    TRCDUMP("Session key:", (*pUser)->sessionKey, 16);
-
-                    if (0 != (descr.flags & 0x00080000) && descr.lmLen == 24 && descr.ntlmLen == 24) 
-                    {
-                        cmGenerateNTLMv2SessionKey((*pUser)->sessionKey, pSession->sessionNonce, (*pUser)->sessionKey);
-                        TRC("Generating ntlmv2 session key");
-                    }
-
-                    if (pSessionKey)  /* client supplied session key */
-                    {
-                        if (descr.flags & 0x40000000) /* session key should be decrypted*/
-                        {
-                            TRC("Client supplied encrypted session key");
-                            TRCDUMP("encrypted session key (sess setup auth mess)", pSessionKey, 16);
-                            cmArcfourCrypt((NQ_BYTE*)pSessionKey, 16, (*pUser)->sessionKey, sizeof((*pUser)->sessionKey));
-                        }
-                        syMemcpy((*pUser)->sessionKey, pSessionKey, sizeof((*pUser)->sessionKey));
-                    }
-                    TRCDUMP("Session key (final)", (*pUser)->sessionKey, 16);
-                    (*pUser)->isExtendSecAuth = isExtendedSecurity;
-                    (*pUser)->authBySamlogon = TRUE;
-                    descr.isNtlmAuthenticated = TRUE;
-#ifdef UD_CS_MESSAGESIGNINGPOLICY
-                    createSigningContextSmb(*pUser, &descr);
-#endif /* UD_CS_MESSAGESIGNINGPOLICY */
-                    TRCE();
-                    return 0;                    
-                }
-                else
-                {
-                    TRCERR("Passthrough (NetLogon) authentication failed");
-                    /* try local authentication */
-                }
+                TRCERR("Passthrough (NetLogon) authentication failed");
+                /* try local authentication */
             }
-#endif /* UD_CS_INCLUDEDOMAINMEMBERSHIP */
-#endif
-        
+        }
     }
-#endif /* UD_CS_INCLUDEPASSTHROUGH */
+#endif /* defined(UD_CS_INCLUDEEXTENDEDSECURITY) && defined(UD_CS_INCLUDEPASSTHROUGH) */
    
     TRC("Performing local authentication");
 
+#ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
+    /* if user will be locally authenticated this value will be > 0 */
+    (*pUser)->token.numRids = 0;
+#endif /* UD_CS_INCLUDESECURITYDESCRIPTORS */
     (*pUser)->isDomainUser = FALSE;
+
     if (isLocalUserOk(
             *pUser,
-            domainT,
-            userNameT,
+            domain,
+            userName,
             pSession->encryptionKey,
             &descr
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
@@ -901,18 +711,16 @@ csAuthenticateUser(
             )
         )
     {
-        res = 0;
-
         if ((*pUser)->isGuest)
         {
             TRCE();
-            return res;
+            return NQ_SUCCESS;
         }
 
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
-        if (NULL != pSessionKey && NULL != (*pUser)->sessionKey)
+        if (NULL != pSessionKey)
         {
-            if (descr.flags & 0x40000000) /* client supplied encrypted session key */
+            if (descr.flags & NTLMSSP_NEGOTIATE_KEY_EXCH) /* client supplied encrypted session key */
             {
                 cmArcfourCrypt((NQ_BYTE*)pSessionKey, 16, (*pUser)->sessionKey, sizeof((*pUser)->sessionKey));
             }
@@ -934,12 +742,12 @@ csAuthenticateUser(
 		udEventLog(UD_LOG_MODULE_CS,
 				   UD_LOG_CLASS_USER,
 				   UD_LOG_USER_LOGON,
-				   (NQ_TCHAR*)(*pUser)->name,
+				   (*pUser)->name,
 				   (*pUser)->ip,
 				   csErrorReturn(SMB_STATUS_LOGON_FAILURE, DOS_ERRnoaccess),
 				   (const NQ_BYTE *)&eventInfo);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-        csReleaseUser((*pUser)->uid , TRUE);
+		csReleaseUser((*pUser)->uid, TRUE);
         TRCE();
         return csErrorReturn(SMB_STATUS_LOGON_FAILURE, DOS_ERRnoaccess);
     }
@@ -955,10 +763,15 @@ csAuthenticateUser(
         (*pUser)->token.rids[2] = CM_SD_RIDGROUPADMINS;
         (*pUser)->token.rids[3] = CM_SD_RIDALIASADMIN;
     }
+	syMemcpy(&(*pUser)->token.domain, cmSdGetComputerSid(), sizeof((*pUser)->token.domain));
 #endif /* UD_CS_INCLUDESECURITYDESCRIPTORS */
 
+#ifdef UD_NQ_INCLUDESMB3
+    (*pUser)->isEncrypted = csIsServerEncrypted();
+#endif /* UD_NQ_INCLUDESMB3 */
+
     TRCE();
-    return res;
+    return NQ_SUCCESS;
 }
 
 /*
@@ -985,8 +798,8 @@ static
 NQ_BOOL
 isLocalUserOk(
     CSUser* pUser,
-    const NQ_TCHAR* domain,
-    const NQ_TCHAR* user,
+    const NQ_WCHAR* domain,
+    const NQ_WCHAR* user,
     const NQ_BYTE* key,
     AMNtlmDescriptor * pBlob
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
@@ -1006,7 +819,7 @@ isLocalUserOk(
 #ifndef UD_CS_INCLUDESECURITYDESCRIPTORS
     NQ_UINT32 userRid[1];                   /* dummy for user RID */
 #endif /* UD_CS_INCLUDESECURITYDESCRIPTORS */
-    const NQ_TCHAR zeroWStr[] = {0,0};
+    const NQ_WCHAR zeroWStr[] = {0,0};
     NQ_UINT16 enclen = 0;
 #if (defined(UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_MESSAGESIGNINGPOLICY)) && defined(UD_CS_INCLUDEEXTENDEDSECURITY)
     CSSession* session;                     /* session structure */      
@@ -1030,12 +843,13 @@ isLocalUserOk(
         case NQ_CS_PWDNOUSER:
             TRCERR("Unknown user");
             pUser->rid = CS_ILLEGALID;
-            TRC1P("  user name: %s", cmTDump(user));
+            TRC1P("  user name: %s", cmWDump(user));
             break;
 
         case NQ_CS_PWDANY:
+        {
             /* both LM and NTML passwords present */
-        	pUser->rid = *userRid;
+           	pUser->rid = *userRid;
             if (password.hashed)
             {
                 syMemcpy(password.lm, buffer, 16);
@@ -1059,7 +873,7 @@ isLocalUserOk(
                 }
                 if (encryptLevel & CS_AUTH_ENCRYPTION_NTLM)
                 {
-					if(pBlob->ntlmLen == enclen && syMemcmp(pBlob->pNtlm, encrypted, enclen) == 0)
+					if (pBlob->ntlmLen == enclen && syMemcmp(pBlob->pNtlm, encrypted, enclen) == 0)
 					{
 #if defined (UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_MESSAGESIGNINGPOLICY)                
 						generateSessionKey(&password, pUser->sessionKey, KEY_NTLM);
@@ -1070,19 +884,17 @@ isLocalUserOk(
 							TRCE();
 							return FALSE;
 						}
-
-						if (isExtendedSecurity || session->smb2)
+						if ((isExtendedSecurity && (pBlob->flags & NTLMSSP_NEGOTIATE_EXTENDED_SECURITY)) || session->dialect != CS_DIALECT_SMB1)
 						{
-							cmGenerateNTLMv2SessionKey(pUser->sessionKey, session->sessionNonce, pUser->sessionKey);
-
+							cmGenerateExtSecuritySessionKey(pUser->sessionKey, session->sessionNonce, pUser->sessionKey);
 						}
 #endif /* UD_CS_INCLUDEEXTENDEDSECURITY */    
-#endif
+#endif /* defined (UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_MESSAGESIGNINGPOLICY) */
 						pBlob->isNtlmAuthenticated = TRUE;
 						TRC("NTLM passwords match");
 						TRCE();
 						return TRUE;
-                }
+                    }
                 }
 
                 if (encryptLevel & CS_AUTH_ENCRYPTION_NTLMV2)
@@ -1121,7 +933,7 @@ isLocalUserOk(
 						TRC(" NTLMv2 null domain passwords match");
 						TRCE();
 						return TRUE;
-                }
+                    }
                 }
             }
             if (pBlob->lmLen > 0)
@@ -1162,10 +974,10 @@ isLocalUserOk(
 						TRC(" LMv2 null domain passwords match");
 						TRCE();
 						return TRUE;
-                }
+                    }
             	}
-
             }
+        }
         /* continue to the next case */
         case NQ_CS_PWDLMHASH: /* only LM password presents */
         default:
@@ -1186,7 +998,7 @@ isLocalUserOk(
 					{
 #if defined (UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_MESSAGESIGNINGPOLICY)               
 						generateSessionKey(&password, pUser->sessionKey, KEY_LM);
-#endif                    
+#endif /* defined (UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_MESSAGESIGNINGPOLICY) */                  
 						pBlob->isLmAuthenticated = TRUE;
 						TRC("LM passwords match");
 						TRCE();
@@ -1208,7 +1020,7 @@ isLocalUserOk(
  *--------------------------------------------------------------------
  * PARAMS:  IN 16 byte hash
  *          OUT buffer for session key
- *          IN key type as LM. NTLM, NTLMv2
+ *          IN key type as LM or NTLM
  *
  * RETURNS: None
  *
@@ -1271,14 +1083,10 @@ encryptNTLMv2(
     NQ_UINT16 enclen = 0;
 
     cmEncryptNTLMv2Password(key, v2hash, ntlm + CM_CRYPT_ENCLMv2HMACSIZE, (NQ_UINT16)(ntlmlen - CM_CRYPT_ENCLMv2HMACSIZE), encrypted, &enclen);
-    if(syMemcmp(ntlm, encrypted, enclen) == 0)
+    if (syMemcmp(ntlm, encrypted, enclen) == 0)
     {
 #if defined(UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_MESSAGESIGNINGPOLICY)
-        cmGenerateNTLMv2SessionKey(
-            v2hash,
-            encrypted,
-            pUser->sessionKey
-            );
+        cmGenerateExtSecuritySessionKey(v2hash, encrypted, pUser->sessionKey);
 #endif /* defined(UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_MESSAGESIGNINGPOLICY) */
         return TRUE;
     }
@@ -1312,14 +1120,10 @@ encryptLMv2(
     NQ_UINT16 enclen = 0;
 
     cmEncryptNTLMv2Password(key, v2hash, lm + CM_CRYPT_ENCLMv2HMACSIZE, 8, encrypted, &enclen);
-    if(syMemcmp(lm, encrypted, enclen) == 0)
+    if (syMemcmp(lm, encrypted, enclen) == 0)
     {
 #if defined(UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_MESSAGESIGNINGPOLICY)
-        cmGenerateNTLMv2SessionKey(
-            v2hash,
-            encrypted,
-            pUser->sessionKey
-            );
+        cmGenerateExtSecuritySessionKey(v2hash, encrypted, pUser->sessionKey);
 #endif /* defined(UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_MESSAGESIGNINGPOLICY) */
         return TRUE;
     }
@@ -1349,7 +1153,7 @@ static NQ_UINT32 authenticateNtlm(
     const CMCifsSessionSetupAndXRequest * pRequest,  
     NQ_BOOL unicodeRequired,                
     AMNtlmDescriptor * descr,
-    NQ_TCHAR * userName,                            
+    NQ_WCHAR * userName,
     const NQ_BYTE ** pDomain,   
     const NQ_BYTE ** pOsName                              
     )
@@ -1368,15 +1172,15 @@ static NQ_UINT32 authenticateNtlm(
     {
         /* UNICODE string padding (skip 1 byte) */
         pName = (NQ_CHAR*)cmAllignTwo(pName);
-        cmUnicodeToTchar(userName, (NQ_WCHAR*)pName);
+        syWStrcpy(userName, (NQ_WCHAR*)pName);
         *pDomain = (NQ_BYTE*)(pName + (cmWStrlen((NQ_WCHAR*)pName) + 1)*sizeof(NQ_WCHAR));
         *pOsName = (NQ_BYTE*)(*pDomain + (cmWStrlen((NQ_WCHAR*)*pDomain) + 1)*sizeof(NQ_WCHAR));
     }
     else
     {
-        cmAnsiToTchar(userName, pName);
+    	syAnsiToUnicode(userName, pName);
         /* the next works only if the user name is always in UNICODE */
-        *pDomain = (NQ_BYTE*)(pName + (cmTStrlen(userName) + 1)*sizeof(NQ_CHAR));
+        *pDomain = (NQ_BYTE*)(pName + (syWStrlen(userName) + 1)*sizeof(NQ_CHAR));
         *pOsName = (NQ_BYTE*)(*pDomain + (syStrlen((NQ_CHAR*)*pDomain) + 1)*sizeof(NQ_CHAR));
     }
 
@@ -1392,7 +1196,7 @@ static NQ_UINT32 authenticateNtlm(
  *--------------------------------------------------------------------
  * PARAMS:  IN pointer to the request
  *          IN/OUT session structure
- *          OUT populate this structure with bolb pointers and sizes  
+ *          OUT populate this structure with blob pointers and sizes
  *          OUT buffer for user name
  *          OUT buffer for domain name pointer
  *          OUT buffer for pointer to session key or NULL if none
@@ -1401,8 +1205,8 @@ static NQ_UINT32 authenticateNtlm(
  *          OUT buffer for pointer to the 1st byte after parsed data
  *
  * RETURNS: status, including:
- *      AM_STATUS_AUTHENTICATED            - was authetiucated
- *      AM_STATUS_NOT_AUTHENTICATED        - was parsed but not autheticated yet
+ *      AM_STATUS_AUTHENTICATED            - was authenticated
+ *      AM_STATUS_NOT_AUTHENTICATED        - was parsed but not authenticated yet
  *      AM_STATUS_MORE_PROCESSING_REQUIRED - was recognized but requires more exchange
  *      <any other>                        - parse error
  *
@@ -1415,7 +1219,7 @@ authenticateSpnego(
     const CMCifsSessionSetupAndXRequest * pRequest, 
     CSSession * session,                           
     AMNtlmDescriptor * descr,
-    NQ_TCHAR * userName,                            
+    NQ_WCHAR * userName,
     const NQ_BYTE** pDomain,                       
     const NQ_BYTE ** pSessionKey,
     NQ_BYTE * resBlob,                              
@@ -1429,11 +1233,11 @@ authenticateSpnego(
     NQ_UINT32 result;
     CMBlob spnegoIn;
     CMBlob spnegoOut;
-    NQ_STATIC NQ_WCHAR domainName[CM_BUFFERLENGTH(NQ_WCHAR, CM_USERNAMELENGTH + 1)];
+    NQ_STATIC NQ_WCHAR domainName[CM_BUFFERLENGTH(NQ_WCHAR, CM_USERNAMELENGTH)];
 
     TRCB();
 
-    if (session->smb2)
+    if (session->dialect != CS_DIALECT_SMB1)
     {
         *inBlob = (const NQ_BYTE*)pRequest;
         *inBlobLength = cmLtoh16(cmGetSUint16(*((NQ_SUINT16 *)(*inBlob - 10))));
@@ -1452,7 +1256,7 @@ authenticateSpnego(
     spnegoIn.len = *inBlobLength;
     spnegoOut.data = resBlob;
         
-    result = amSpnegoServerAcceptBlob(
+    result = amSpnegoServerAcceptBlobW(
         &session->securityMech,
         &spnegoIn,
         &spnegoOut, 
@@ -1477,104 +1281,100 @@ authenticateSpnego(
 
 #ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
 /*
- *====================================================================
- * PURPOSE: Perform local user authentication
- *--------------------------------------------------------------------
- * PARAMS:  IN/OUT pointer to the user structure
- *          IN pointer to the domain name
- *          IN TRUE if clent sent information in UNICODE
- *
- * RETURNS: TRUE if authenticated, FALSE otherwise
- *
- * NOTES:   If there is no user list or it has no records - we treat
- *          this as automatic authentication and allow any access by
- *          any user
- *====================================================================
- */
+*====================================================================
+* PURPOSE: Perform local user authentication
+*--------------------------------------------------------------------
+* PARAMS:  IN/OUT pointer to the user structure
+*          IN pointer to the domain name
+*          IN TRUE if client sent information in UNICODE
+*
+* RETURNS: TRUE if authenticated, FALSE otherwise
+*
+* NOTES:   If there is no user list or it has no records - we treat
+*          this as automatic authentication and allow any access by
+*          any user
+*====================================================================
+*/
 
 NQ_BOOL                         /* TRUE if succeeded */
 csFillUserToken(
-    CSUser* pUser,              /* pointer to the user structure */
-    NQ_BOOL unicodeRequired     /* TRUE when client sends UNICODE strings */
-    )
+CSUser* pUser,              /* pointer to the user structure */
+NQ_BOOL unicodeRequired     /* TRUE when client sends UNICODE strings */
+)
 {
 #ifdef UD_CS_INCLUDEPASSTHROUGH
-    const NQ_CHAR* hostDomain;                /* pointer to the current domain */
-    NQ_STATIC NQ_WCHAR domainW[CM_BUFFERLENGTH(NQ_WCHAR, CM_NQ_HOSTNAMESIZE)];
-                                        /* buffer for client domain name in TCHAR */
-    NQ_STATIC NQ_WCHAR pdcNameW[CM_BUFFERLENGTH(NQ_WCHAR, CM_NQ_HOSTNAMESIZE)];
-                                        /* buffer for PDC name in TCHAR */
-    const NQ_CHAR* pdcName;             /* pointer to PDC name in CHAR */
-    NQ_HANDLE lsa;                      /* pipe handle for LSA */
-    NQ_HANDLE sam;                      /* pipe handle for SAMR */
-    NQ_STATUS status;                   /* operation status */
-    NQ_STATIC NQ_WCHAR userNameW[CM_BUFFERLENGTH(NQ_WCHAR, CM_USERNAMELENGTH)];
+	const NQ_CHAR* hostDomain;                /* pointer to the current domain */
+	NQ_STATIC NQ_WCHAR domainW[CM_BUFFERLENGTH(NQ_WCHAR, CM_NQ_HOSTNAMESIZE)];
+	/* buffer for client domain name in TCHAR */
+	NQ_STATIC NQ_WCHAR pdcNameW[CM_BUFFERLENGTH(NQ_WCHAR, CM_NQ_HOSTNAMESIZE)];
+	/* buffer for PDC name in TCHAR */
+	const NQ_CHAR* pdcName;             /* pointer to PDC name in CHAR */
+	NQ_HANDLE lsa;                      /* pipe handle for LSA */
+	NQ_HANDLE sam;                      /* pipe handle for SAMR */
+	NQ_STATUS status;                   /* operation status */
 #endif /* UD_CS_INCLUDEPASSTHROUGH */
 
-    TRCB();
+	TRCB();
 
-    if (pUser->isAnonymous)
-    {
-        pUser->token.numRids = 1;
-        pUser->token.rids[0] = CM_SD_RIDALIASGUEST;  /* will match everyone */
-    }
-    if (pUser->token.numRids > 0)   /* locally authenticated or anonymous */
-    {
-        syMemcpy(&pUser->token.domain, cmSdGetComputerSid(), sizeof(pUser->token.domain));
-        TRCE();
-        return TRUE;
-    }
+	if (pUser->isAnonymous)
+	{
+		pUser->token.numRids = 1;
+		pUser->token.rids[0] = CM_SD_RIDALIASGUEST;  /* will match everyone */
+	}
+	if (pUser->token.numRids > 0)   /* locally authenticated or anonymous */
+	{
+		syMemcpy(&pUser->token.domain, cmSdGetComputerSid(), sizeof(pUser->token.domain));
+		TRCE();
+		return TRUE;
+	}
 
 #ifdef UD_CS_INCLUDEPASSTHROUGH
-    if (!staticData->pdcNameFlag)
-    {
-        pdcName = csAuthGetPDCName();
-        if (NULL == pdcName)
-        {
-            TRCERR("Pass through authentication is not initialized yet");
-            TRCE();
-            return FALSE;
-        }
-        cmAnsiToUnicode(pdcNameW, pdcName);
-        staticData->pdcNameFlag = TRUE;
-    }
+		pdcName = csAuthGetPDCName();
+		if (NULL == pdcName)
+		{
+			TRCERR("Pass through authentication is not initialized yet");
+			TRCE();
+			return FALSE;
+		}
+		cmAnsiToUnicode(pdcNameW, pdcName);
 
-    hostDomain = cmGetFullDomainName();
-    if (hostDomain == NULL)
-        hostDomain = cmNetBiosGetDomainAuth()->name;
-    cmAnsiToUnicode(domainW, hostDomain);
-    lsa = ccDcerpcConnect(pdcNameW, NULL, ccLsaGetPipe(), FALSE);
-    if (NULL == lsa)
-    {
-        TRCERR("Unable to open LSA on PDC");
-        TRCE();
-        return FALSE;
-    }
-    cmTcharToUnicode(userNameW, pUser->name);
-    status = ccLsaGetUserToken(lsa, userNameW, domainW, &pUser->token);
-    ccDcerpcDisconnect(lsa);
-    sam = ccDcerpcConnect(pdcNameW, NULL, ccSamGetPipe(), FALSE);
-    if (NULL == sam)
-    {
-        TRCERR("Unable to open SAMR on PDC");
-        TRCE();
-        return FALSE;
-    }
-    status = ccSamGetUserGroups(sam, userNameW, domainW, &pUser->token);
-    ccDcerpcDisconnect(sam);
-    
-    /* add appropriate "well known" rids for this user. This section is a
-     * matter for further modifications */
-    if (pUser->token.numRids < sizeof(pUser->token.rids)/sizeof(pUser->token.rids[0]))
-    {
-        pUser->token.rids[pUser->token.numRids] = CM_SD_RIDALIASUSER;
-        pUser->token.numRids++;
-    }
 
-    TRCE();
-    return NQ_SUCCESS == status;
+
+	hostDomain = cmGetFullDomainName();
+	if (hostDomain == NULL)
+		hostDomain = cmNetBiosGetDomainAuth()->name;
+	cmAnsiToUnicode(domainW, hostDomain);
+	lsa = ccDcerpcConnect(pdcNameW, NULL, ccLsaGetPipe(), FALSE);
+	if (NULL == lsa)
+	{
+		TRCERR("Unable to open LSA on PDC");
+		TRCE();
+		return FALSE;
+	}
+	status = ccLsaGetUserToken(lsa, pUser->name, domainW, &pUser->token);
+	ccDcerpcDisconnect(lsa);
+	sam = ccDcerpcConnect(pdcNameW, NULL, ccSamGetPipe(), FALSE);
+	if (NULL == sam)
+	{
+		TRCERR("Unable to open SAMR on PDC");
+		TRCE();
+		return FALSE;
+	}
+	status = ccSamGetUserGroups(sam, pUser->name, domainW, &pUser->token);
+	ccDcerpcDisconnect(sam);
+
+	/* add appropriate "well known" rids for this user. This section is a
+	* matter for further modifications */
+	if (pUser->token.numRids < sizeof(pUser->token.rids) / sizeof(pUser->token.rids[0]))
+	{
+		pUser->token.rids[pUser->token.numRids] = CM_SD_RIDALIASUSER;
+		pUser->token.numRids++;
+	}
+
+	TRCE();
+	return NQ_SUCCESS == status;
 #else /* UD_CS_INCLUDEPASSTHROUGH */
-    return FALSE;
+	return FALSE;
 #endif /* UD_CS_INCLUDEPASSTHROUGH */
 }
 #endif /*  UD_CS_INCLUDESECURITYDESCRIPTORS */
@@ -1607,7 +1407,7 @@ createSigningContextSmb(
 
     TRCB();
     
-    if (pUser != NULL && (pSession = csGetSessionById(pUser->session)) != NULL  && pSession->signingOn && !pSession->smb2)
+    if (pUser != NULL && (pSession = csGetSessionById(pUser->session)) != NULL  && pSession->signingOn && pSession->dialect == CS_DIALECT_SMB1)
     {
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
         if (pUser->isExtendSecAuth)
@@ -1632,7 +1432,12 @@ createSigningContextSmb(
             TRCDUMP("session key", pSession->sessionKey, sizeof(pUser->sessionKey));
         }
         
-        cmCreateSigningContext(&pUser->signingCtx, pSession->sessionKey, sizeof(pUser->sessionKey), password, passwordLen);
+		if (password != NULL)
+		{
+			pUser->password.data = (NQ_BYTE *)cmMemoryAllocate(passwordLen);
+			pUser->password.len = passwordLen;
+			syMemcpy(pUser->password.data , password , passwordLen);
+		}
     }
 
     TRCE();

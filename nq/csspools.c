@@ -21,7 +21,7 @@
  * calls - SPOOLSS.
  *
  * SPOOLSS specification virtually does not exist in an open source .
- * What we have is a mixure of Microsoft API specs, various folklore, guesses,
+ * What we have is a mixture of Microsoft API specs, various folklore, guesses,
  * rumors, etc. Nobody in the outer world seems to know how it works.
  * Anyway, logic does not work here as well.
  * As such, SPOOLSS implementation is very sensitive to a modifications
@@ -33,7 +33,7 @@
  *  Idea:   use CM_RP_UNKNOWNLEVEL instead of CM_RP_FAULTUNSUPPORTED
  *          when we do not support required information level
  *  In:     spoolssGetPrinterDriver2()
- *  To do:  replace all other occurences
+ *  To do:  replace all other occurrences
  * ++++
 */
 
@@ -75,9 +75,9 @@ typedef struct
 {
     OpenEntry openEntries[UD_CS_SPOOLSS_MAXOPENPRINTERS];   /* entry table */
     NQ_CHAR txtBuffer[CM_BUFFERLENGTH(NQ_CHAR, UD_FS_FILENAMELEN)];
-    NQ_TCHAR txtBufferT[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN)];
-    NQ_TCHAR fullNameT[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN)];
-    NQ_TCHAR fileNameT[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN)];
+    NQ_WCHAR txtBufferW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];
+    NQ_WCHAR fullNameW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];
+    NQ_WCHAR fileNameW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];
     NQ_UINT32 fakePrinterHandle; /* to have different handles for subseq. openings */
     CMSdSecurityDescriptor sd;   /* temporary security descriptor */
     SYPrinterInfo printInfo;     /* printer information structure */
@@ -481,7 +481,7 @@ static NQ_UINT32                        /* 0 or error code */
 enumDriverEntry(
     const CMRpcPacketDescriptor* in,    /* incoming packet descriptor */
     CMRpcPacketDescriptor* out,         /* output packet descriptor */
-    const NQ_TCHAR *requiredOS,         /* required OS */
+    const NQ_WCHAR *requiredOS,         /* required OS */
     NQ_UINT32 infoLevel,                /* information level */
     const CSShare* pShare,              /* printer share */
     NQ_WCHAR** buffer,                  /* running pointer for placing strings */
@@ -504,7 +504,7 @@ placeTcharAsUnicode(
     CMRpcPacketDescriptor* out,     /* output packet descriptor for placing offsets */
     NQ_WCHAR** buffer,              /* running pointer for placing strings */
     NQ_BYTE* bufferStart,           /* pointer to the start of the buffer */
-    const NQ_TCHAR* src             /* source string */
+    const NQ_WCHAR* src             /* source string */
     );
 
 static NQ_UINT32                    /* zero or error code */
@@ -512,7 +512,7 @@ placeListAsUnicode(
     CMRpcPacketDescriptor* out,     /* output packet descriptor for placing offsets */
     NQ_WCHAR** buffer,              /* running pointer for placing strings */
     NQ_BYTE* bufferStart,           /* pointer to the start of the buffer */
-    const NQ_TCHAR** src             /* source string */
+    const NQ_WCHAR** src             /* source string */
     );
 
 static NQ_UINT32                    /* zero or error code */
@@ -520,7 +520,7 @@ placePathAsUnicode(
     CMRpcPacketDescriptor* out,     /* output packet descriptor for placing offsets */
     NQ_WCHAR** buffer,              /* running pointer for placing strings */
     NQ_BYTE* bufferStart,           /* pointer to the start of the buffer */
-    const NQ_TCHAR* src,            /* source string */
+    const NQ_WCHAR* src,            /* source string */
     const NQ_CHAR* serverIp         /* IN pointer to server IP */
     );
 
@@ -529,7 +529,7 @@ placePathListAsUnicode(
     CMRpcPacketDescriptor* out,     /* output packet descriptor for placing offsets */
     NQ_WCHAR** buffer,              /* running pointer for placing strings */
     NQ_BYTE* bufferStart,           /* pointer to the start of the buffer */
-    const NQ_TCHAR** src,           /* pointer to string array, the last name is empty */
+    const NQ_WCHAR** src,           /* pointer to string array, the last name is empty */
     const NQ_CHAR* serverIp         /* IN pointer to server IP */
     );
 
@@ -650,7 +650,7 @@ spoolssEnumPrinters(
 
     cmRpcParseUint32(in, &flags);  /* flags */
     cmRpcParseSkip(in, 4);  /* referent ID */
-    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     cmRpcAllign(in, 4);
     cmRpcParseUint32(in, &infoLevel);
     cmRpcParseSkip(in, 4);  /* buffer ref id */
@@ -660,7 +660,8 @@ spoolssEnumPrinters(
         out->length = (NQ_UINT)bufferSize;
     }
 
-    cmUnicodeToAnsi(staticData->txtBuffer, serverName.text);
+    cmUnicodeToAnsiN(staticData->txtBuffer, serverName.text, (NQ_UINT)(serverName.length * sizeof(NQ_WCHAR)));
+    staticData->txtBuffer[serverName.length] = '\0';
     pServerIP = cmAsciiToIp(staticData->txtBuffer, &ip) == NQ_SUCCESS ? staticData->txtBuffer : NULL;
 
     TRC1P("server: %s", staticData->txtBuffer);
@@ -825,7 +826,7 @@ spoolssEnumJobs(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         cmRpcPackUint32(out, 0);                /* num entries */
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
@@ -1032,7 +1033,7 @@ spoolssEnumForms(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
     }
@@ -1193,7 +1194,7 @@ spoolssGetJob(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
     }
@@ -1356,13 +1357,14 @@ spoolssGetForm(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
     }
 
-    cmRpcParseUnicode(in, &formName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-    cmUnicodeToTchar(staticData->txtBufferT, formName.text);
+    cmRpcParseUnicode(in, &formName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+    syWStrncpy(staticData->txtBufferW, formName.text, formName.length);
+    staticData->txtBufferW[formName.length] = cmWChar(0);
     cmRpcParseUint32(in, &infoLevel);
     cmRpcParseSkip(in, 4);    /* buffer referent ID */
     cmRpcParseUint32(in, &offeredSize);
@@ -1386,11 +1388,11 @@ spoolssGetForm(
         if (NQ_FAIL == syGetPrintForm(printHandle, formId, &staticData->formInfo))
         {
             TRCERR("Unable to find form");
-            TRC1P(" form: %s", cmTDump(staticData->txtBufferT));
+            TRC1P(" form: %s", cmWDump(staticData->txtBufferW));
             TRCE();
             return CM_RP_FAULTOTHER;
         }
-        if (0 == cmTStrcmp(staticData->txtBufferT, staticData->formInfo.name))
+        if (0 == syWStrcmp(staticData->txtBufferW, staticData->formInfo.name))
             break;
     }
 
@@ -1492,7 +1494,7 @@ spoolssSetJob(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
     }
@@ -1545,7 +1547,7 @@ spoolssOpenPrinterEx(
     SYPrinterHandle printHandle;    /* internal printer handle */
     NQ_BYTE* outPtr;                /* saved pointer to the end of packet */
     NQ_BYTE* savedPtr;              /* saved pointer to the entry referral */
-    const NQ_TCHAR* pStr;           /* pointer to various places in a string */
+    const NQ_WCHAR* pStr;           /* pointer to various places in a string */
     NQ_CHAR* pSt;                   /* pointer to various places in a string */
     CSShare* pShare;                /* pointer to share descriptor */
     NQ_UINT32 parsedValue;          /* temporary value parsed */
@@ -1556,9 +1558,10 @@ spoolssOpenPrinterEx(
     TRCB();
 
     cmRpcParseSkip(in, 4);
-    cmRpcParseUnicode(in, &printerName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-    cmUnicodeToTchar(staticData->txtBufferT, printerName.text);
-    cmUnicodeToAnsi(staticData->txtBuffer, printerName.text);
+    cmRpcParseUnicode(in, &printerName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+    syWStrncpy(staticData->txtBufferW, printerName.text, printerName.length);
+    staticData->txtBufferW[printerName.length] = cmWChar(0);
+    syUnicodeToAnsi(staticData->txtBuffer, staticData->txtBufferW);
     
     savedPtr = out->current;
     cmRpcPackUint32(out, 0);                /* null pointer meanwhile */
@@ -1570,8 +1573,8 @@ spoolssOpenPrinterEx(
 
     /* check printer name */
 
-    if (cmTChar('\\') != staticData->txtBufferT[0] || 
-        cmTChar('\\') != staticData->txtBufferT[1])
+    if (cmWChar('\\') != staticData->txtBufferW[0] ||
+        cmWChar('\\') != staticData->txtBufferW[1])
     {
         TRCERR("Printer name does not start from '\\\\'");
         TRCE();
@@ -1579,7 +1582,7 @@ spoolssOpenPrinterEx(
     }
 
     /* look for printer name - server name otherwise */
-    pStr = cmTStrchr(staticData->txtBufferT + 2, cmTChar('\\'));
+    pStr = syWStrchr(staticData->txtBufferW + 2, cmWChar('\\'));
     if (NULL == pStr)
     {
         pShare = NULL;
@@ -1590,7 +1593,7 @@ spoolssOpenPrinterEx(
         if (NULL == pShare)
         {
             TRCERR("Printer share not found");
-            TRC1P("Share name: %s", cmTDump(pStr + 1));
+            TRC1P("Share name: %s", cmWDump(pStr + 1));
             TRCE();
             return CM_RP_FAULTINVALIDPRINTERNAME;
         }
@@ -1608,7 +1611,7 @@ spoolssOpenPrinterEx(
     cmRpcParseUint32(in, &parsedValue);    /* printer datatype */
     if (0 != parsedValue)
     {
-        cmRpcParseUnicode(in, &printerName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+        cmRpcParseUnicode(in, &printerName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     }
     cmRpcParseUint32(in, &parsedValue);    /* devmode container size */
     cmRpcParseSkip(in, 4); /* ignore devmode pointer */
@@ -1844,7 +1847,7 @@ spoolssGetPrinterData(
     NQ_UINT32 offeredSize;          /* offered buffer size */
     NQ_UINT32 needed;               /* data size */
     NQ_BYTE* bufferEnd;             /* place after the buffer */
-    NQ_INT i;                       /* just an index */
+    NQ_COUNT i;                     /* just an index */
 
     TRCB();
 
@@ -1868,8 +1871,9 @@ spoolssGetPrinterData(
     }
     pShare = staticData->openEntries[entryIdx].pShare;
     cmRpcParseSkip(in, sizeof(CMRpcUuid) - 2);
-    cmRpcParseUnicode(in, &dataKey, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-    syUnicodeToAnsi(staticData->txtBuffer, dataKey.text);
+    cmRpcParseUnicode(in, &dataKey, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+    cmUnicodeToAnsiN(staticData->txtBuffer, dataKey.text, (NQ_UINT)(dataKey.length * sizeof(NQ_WCHAR)));
+    staticData->txtBuffer[dataKey.length] = '\0';
     cmRpcAllign(in, 4);
     cmRpcParseUint32(in, &offeredSize);
 
@@ -1880,7 +1884,7 @@ spoolssGetPrinterData(
         if (!syIsValidPrinter(printHandle))
         {
             TRCERR("Unable to find printer by handle");
-            TRC1P(" printer: %s", cmTDump(pShare->map));
+            TRC1P(" printer: %s", cmWDump(pShare->map));
             TRCE();
             return CM_RP_FAULTINVALIDPRINTERNAME;
         }
@@ -1951,15 +1955,17 @@ spoolssSetPrinterData(
     cmRpcParseSkip(in, 2);
     cmRpcParseSkip(in, sizeof(CMRpcUuid) - 2);
 
-    cmRpcParseUnicode(in, &key, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-    cmUnicodeToAnsi(k, key.text);
+    cmRpcParseUnicode(in, &key, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+    cmUnicodeToAnsiN(k, key.text, (NQ_UINT)(key.length * sizeof(NQ_WCHAR)));
+    k[key.length] = '\0';
     cmRpcParseUint32(in, &type);
 
     switch (type)
     {
         case 1:   /* null terminated string */
-            cmRpcParseUnicode(in, &value, CM_RP_SIZE32 | CM_RP_NULLTERM);
-            cmUnicodeToAnsi(v, value.text);
+            cmRpcParseUnicode(in, &value, CM_RP_SIZE32);
+            cmUnicodeToAnsiN(v, value.text, (NQ_UINT)(value.length * sizeof(NQ_WCHAR)));
+            v[value.length] = '\0';
             break;
 
         default:
@@ -2026,7 +2032,7 @@ spoolssSetPrinter(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTOTHER;
     }
@@ -2114,7 +2120,7 @@ spoolssSetPrinter(
             cmRpcParseUnicode(in, &strDesc, (CM_RP_SIZE32 | CM_RP_FRAGMENT32));
             if (NULL != staticData->printInfo.comment)
             {
-                cmUnicodeToTcharN(staticData->printInfo.comment, strDesc.text, UD_FS_MAXDESCRIPTIONLEN);
+                syWStrncpy(staticData->printInfo.comment, strDesc.text, UD_FS_MAXDESCRIPTIONLEN);
             }
         }
         if (location != 0)    
@@ -2122,7 +2128,7 @@ spoolssSetPrinter(
             cmRpcParseUnicode(in, &strDesc, (CM_RP_SIZE32 | CM_RP_FRAGMENT32));
             if (NULL != staticData->printInfo.location)
             {
-                cmUnicodeToTcharN(staticData->printInfo.location, strDesc.text, UD_FS_MAXDESCRIPTIONLEN);
+                syWStrncpy(staticData->printInfo.location, strDesc.text, UD_FS_MAXDESCRIPTIONLEN);
             }
         }
         if (sepFile != 0)
@@ -2130,7 +2136,7 @@ spoolssSetPrinter(
             cmRpcParseUnicode(in, &strDesc, (CM_RP_SIZE32 | CM_RP_FRAGMENT32));
             if (NULL != staticData->printInfo.sepFile)
             {
-                cmUnicodeToTcharN(staticData->printInfo.sepFile, strDesc.text, UD_FS_MAXPATHLEN);
+                syWStrncpy(staticData->printInfo.sepFile, strDesc.text, UD_FS_MAXPATHLEN);
             }
         }
         if (printProc != 0)
@@ -2138,7 +2144,7 @@ spoolssSetPrinter(
            cmRpcParseUnicode(in, &strDesc, (CM_RP_SIZE32 | CM_RP_FRAGMENT32));
             if (NULL != staticData->printInfo.printProcessor)
             {
-                cmUnicodeToTcharN(staticData->printInfo.printProcessor, strDesc.text, UD_FS_MAXDESCRIPTIONLEN);
+                syWStrncpy(staticData->printInfo.printProcessor, strDesc.text, UD_FS_MAXDESCRIPTIONLEN);
             }
         }
         if (dataType != 0)
@@ -2146,7 +2152,7 @@ spoolssSetPrinter(
             cmRpcParseUnicode(in, &strDesc, (CM_RP_SIZE32 | CM_RP_FRAGMENT32));
             if (NULL != staticData->printInfo.dataType)
             {
-                cmUnicodeToTcharN(staticData->printInfo.dataType, strDesc.text, UD_FS_MAXDESCRIPTIONLEN);
+                syWStrncpy(staticData->printInfo.dataType, strDesc.text, UD_FS_MAXDESCRIPTIONLEN);
             }
         }
         if (parameters != 0)
@@ -2154,7 +2160,7 @@ spoolssSetPrinter(
             cmRpcParseUnicode(in, &strDesc, (CM_RP_SIZE32 | CM_RP_FRAGMENT32));
             if (NULL != staticData->printInfo.parameters)
             {
-                cmUnicodeToTcharN(staticData->printInfo.parameters, strDesc.text, UD_FS_MAXDESCRIPTIONLEN);
+                syWStrncpy(staticData->printInfo.parameters, strDesc.text, UD_FS_MAXDESCRIPTIONLEN);
             }
         }
         update = TRUE;
@@ -2365,8 +2371,9 @@ spoolssGetPrinterDriver2(
 
     cmRpcParseSkip(in, sizeof(CMRpcUuid) - 2);
     cmRpcParseSkip(in, 4);  /* ref id for OS name */
-    cmRpcParseUnicode(in, &unicodeOsName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-    syUnicodeToAnsi(staticData->txtBuffer, unicodeOsName.text);
+    cmRpcParseUnicode(in, &unicodeOsName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+    cmUnicodeToAnsiN(staticData->txtBuffer, unicodeOsName.text, (NQ_UINT)(unicodeOsName.length * sizeof(NQ_WCHAR)));
+    staticData->txtBuffer[unicodeOsName.length] = '\0';
     cmRpcParseUint32(in, &infoLevel);
     cmRpcParseSkip(in, 4);    /* buffer referent ID */
     cmRpcParseUint32(in, &offeredSize);
@@ -2394,9 +2401,9 @@ spoolssGetPrinterDriver2(
     bufferEnd = out->current + offeredSize; /* start strings from the end of the buffer */
     stringPointer = (NQ_WCHAR*)bufferEnd;
 
-    cmAnsiToTchar(staticData->txtBufferT, staticData->txtBuffer);
+    syAnsiToUnicode(staticData->txtBufferW, staticData->txtBuffer);
     serverIp = staticData->openEntries[entryIdx].isIpAsServerName ? staticData->openEntries[entryIdx].ipServer : NULL;
-    status = enumDriverEntry(in, out, staticData->txtBufferT, infoLevel, pShare, &stringPointer, serverIp);
+    status = enumDriverEntry(in, out, staticData->txtBufferW, infoLevel, pShare, &stringPointer, serverIp);
     if (status == 0)
     {
         if ((NQ_BYTE*)stringPointer < out->current)
@@ -2489,7 +2496,7 @@ spoolssStartDocPrinter(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
     }
@@ -2506,9 +2513,12 @@ spoolssStartDocPrinter(
     {
     case 1:
     case 2:
+    {
+    	NQ_UINT32	docNameId , fileNameId;
+
         cmRpcParseSkip(in, 4);  /* ref id for Doc Info structure */
-        cmRpcParseSkip(in, 4);  /* ref id for Doc name */
-        cmRpcParseSkip(in, 4);  /* ref id for File name */
+        cmRpcParseUint32(in, &docNameId);  /* ref id for Doc name */
+        cmRpcParseUint32(in, &fileNameId);  /* ref id for File name */
         cmRpcParseUint32(in, &refId);
         if (infoLevel == 2)
         {
@@ -2516,32 +2526,43 @@ spoolssStartDocPrinter(
             cmRpcParseSkip(in, 4);  /* jobId */
         }
         hasDataType = refId != 0;
-        cmRpcParseUnicode(in, &nextName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-        cmUnicodeToTchar(staticData->fullNameT, nextName.text);  /* document name */
-        cmRpcAllign(in, 4);
-        cmRpcParseUnicode(in, &nextName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-        cmUnicodeToTchar(staticData->txtBufferT, nextName.text); /* file name */
-        cmTStrcpy(staticData->fileNameT, pShare->map);
-        if (cmTStrlen(staticData->txtBufferT) > 0)
+        if (docNameId != 0)
         {
-            staticData->fileNameT[cmTStrlen(staticData->fileNameT)] = cmTChar(SY_PATHSEPARATOR);
-            staticData->fileNameT[cmTStrlen(staticData->fileNameT) + 1] = cmTChar(0);
-            cmTStrcat(staticData->fileNameT, staticData->txtBufferT);
+			cmRpcParseUnicode(in, &nextName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+			syWStrncpy(staticData->fullNameW, nextName.text, nextName.length);  /* document name */
+			staticData->fullNameW[nextName.length] = cmWChar(0);
+        }
+        if (fileNameId != 0)
+        {
+			cmRpcAllign(in, 4);
+			cmRpcParseUnicode(in, &nextName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+			syWStrncpy(staticData->txtBufferW, nextName.text, nextName.length); /* file name */
+			staticData->txtBufferW[nextName.length] = cmWChar(0);
+        }
+
+        syWStrcpy(staticData->fileNameW, pShare->map);
+        if (syWStrlen(staticData->txtBufferW) > 0)
+        {
+            staticData->fileNameW[syWStrlen(staticData->fileNameW)] = cmWChar(SY_PATHSEPARATOR);
+            staticData->fileNameW[syWStrlen(staticData->fileNameW) + 1] = cmWChar(0);
+            syWStrcat(staticData->fileNameW, staticData->txtBufferW);
         }
         cmRpcAllign(in, 4);
         if (hasDataType)
         {
-            cmRpcParseUnicode(in, &nextName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-            cmUnicodeToTchar(staticData->txtBufferT, nextName.text); /* data type */
+            cmRpcParseUnicode(in, &nextName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+            syWStrncpy(staticData->txtBufferW, nextName.text, nextName.length); /* data type */
+            staticData->txtBufferW[nextName.length] = cmWChar(0);
 
-            jobId = syStartPrintJob(printHandle, staticData->fullNameT, staticData->fileNameT, staticData->txtBufferT, (NQ_BYTE*)&staticData->sd.data, (NQ_COUNT)staticData->sd.length, in->user);
+            jobId = syStartPrintJob(printHandle, staticData->fullNameW, staticData->fileNameW, staticData->txtBufferW, (NQ_BYTE*)&staticData->sd.data, (NQ_COUNT)staticData->sd.length, in->user);
         }
         else
         {
-            jobId = syStartPrintJob(printHandle, staticData->fullNameT, staticData->fileNameT, NULL, staticData->sd.data, (NQ_COUNT)staticData->sd.length, in->user);
+            jobId = syStartPrintJob(printHandle, staticData->fullNameW, staticData->fileNameW, NULL, staticData->sd.data, (NQ_COUNT)staticData->sd.length, in->user);
         }
         staticData->openEntries[entryIdx].jobId = jobId;
         break;
+    }
     default:
         return CM_RP_FAULTUNSUPPORTED;
     }
@@ -2594,7 +2615,7 @@ spoolssResetPrinter(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
     }
@@ -2648,7 +2669,7 @@ spoolssEndDocPrinter(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
     }
@@ -2704,7 +2725,7 @@ spoolssStartPagePrinter(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
     }
@@ -2759,7 +2780,7 @@ spoolssEndPagePrinter(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
     }
@@ -2837,7 +2858,7 @@ spoolssWritePrinter(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
     }
@@ -2908,7 +2929,7 @@ enumPrinterEntryLength(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return 0;
     }
@@ -2935,9 +2956,9 @@ enumPrinterEntryLength(
         syStrcpy(staticData->txtBuffer, "\\\\");
         syStrcat(staticData->txtBuffer, serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
         syStrcat(staticData->txtBuffer, "\\");
-        cmAnsiToTchar(staticData->txtBufferT, staticData->txtBuffer);
-        cmTStrcat(staticData->txtBufferT, pShare->name);
-        result += (NQ_UINT32)(4 + sizeof(NQ_WCHAR) * (cmRpcTcharAsUnicodeLength(staticData->txtBufferT) + 1));
+        syAnsiToUnicode(staticData->txtBufferW, staticData->txtBuffer);
+        syWStrcat(staticData->txtBufferW, pShare->name);
+        result += (NQ_UINT32)(4 + sizeof(NQ_WCHAR) * (cmRpcTcharAsUnicodeLength(staticData->txtBufferW) + 1));
         /* server name */
         syStrcpy(staticData->txtBuffer, "\\\\");
         syStrcat(staticData->txtBuffer, serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
@@ -2963,9 +2984,9 @@ enumPrinterEntryLength(
         syStrcpy(staticData->txtBuffer, "\\\\");
         syStrcat(staticData->txtBuffer, serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
         syStrcat(staticData->txtBuffer, "\\");
-        cmAnsiToTchar(staticData->txtBufferT, staticData->txtBuffer);
-        cmTStrcat(staticData->txtBufferT, pShare->name);
-        result += (NQ_UINT32)(4 + sizeof(NQ_WCHAR) * (cmRpcTcharAsUnicodeLength(staticData->txtBufferT) + 1));
+        syAnsiToUnicode(staticData->txtBufferW, staticData->txtBuffer);
+        syWStrcat(staticData->txtBufferW, pShare->name);
+        result += (NQ_UINT32)(4 + sizeof(NQ_WCHAR) * (cmRpcTcharAsUnicodeLength(staticData->txtBufferW) + 1));
         /* share name */
         result += (NQ_UINT32)(4 + (pShare->name == NULL? 0:sizeof(NQ_WCHAR) * (cmRpcTcharAsUnicodeLength(pShare->name) + 1)));
         /* port name */
@@ -3000,14 +3021,14 @@ enumPrinterEntryLength(
         syStrcpy(staticData->txtBuffer, "\\\\");
         syStrcat(staticData->txtBuffer, serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
         syStrcat(staticData->txtBuffer, "\\");
-        cmAnsiToTchar(staticData->txtBufferT, staticData->txtBuffer);
-        cmTStrcat(staticData->txtBufferT, pShare->name);
-        result += (NQ_UINT32)(4 + sizeof(NQ_WCHAR) * (cmRpcTcharAsUnicodeLength(staticData->txtBufferT) + 1));
+        syAnsiToUnicode(staticData->txtBufferW, staticData->txtBuffer);
+        syWStrcat(staticData->txtBufferW, pShare->name);
+        result += (NQ_UINT32)(4 + sizeof(NQ_WCHAR) * (cmRpcTcharAsUnicodeLength(staticData->txtBufferW) + 1));
         /* server name */
         syStrcpy(staticData->txtBuffer, "\\\\");
         syStrcat(staticData->txtBuffer, serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
-        cmAnsiToTchar(staticData->txtBufferT, staticData->txtBuffer);
-        result += (NQ_UINT32)(4 + sizeof(NQ_WCHAR) * (cmRpcTcharAsUnicodeLength((const NQ_TCHAR*)staticData->txtBufferT) + 1));
+        syAnsiToUnicode(staticData->txtBufferW, staticData->txtBuffer);
+        result += (NQ_UINT32)(4 + sizeof(NQ_WCHAR) * (cmRpcTcharAsUnicodeLength((const NQ_WCHAR*)staticData->txtBufferW) + 1));
         /* attributes */
         result += 4;
         break;
@@ -3016,8 +3037,8 @@ enumPrinterEntryLength(
         syStrcpy(staticData->txtBuffer, "\\\\");
         syStrcat(staticData->txtBuffer, serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
         syStrcat(staticData->txtBuffer, "\\");
-        cmAnsiToTchar(staticData->txtBufferT, staticData->txtBuffer);
-        cmTStrcat(staticData->txtBufferT, pShare->name);
+        syAnsiToUnicode(staticData->txtBufferW, staticData->txtBuffer);
+        syWStrcat(staticData->txtBufferW, pShare->name);
         result += (NQ_UINT32)(4 + sizeof(NQ_WCHAR) * (syStrlen(staticData->txtBuffer) + 1));
         /* port name */
         result += (NQ_UINT32)(4 + (staticData->printInfo.portName == NULL? 0:sizeof(NQ_WCHAR) * (cmRpcTcharAsUnicodeLength(staticData->printInfo.portName) + 1)));
@@ -3081,7 +3102,7 @@ enumPrinterEntry(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
     }
@@ -3097,7 +3118,7 @@ enumPrinterEntry(
     if (staticData->sd.length == 0)
     {
         TRCERR("Unable to get printer security descriptor");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
     }
@@ -3119,9 +3140,9 @@ enumPrinterEntry(
         syStrcpy(staticData->txtBuffer, "\\\\");
         syStrcat(staticData->txtBuffer, serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
         syStrcat(staticData->txtBuffer, "\\");
-        cmAnsiToTchar(staticData->txtBufferT, staticData->txtBuffer);
-        cmTStrcat(staticData->txtBufferT, pShare->name);
-        CS_RP_CALL(placeTcharAsUnicode(out, buffer, bufferStart,  staticData->txtBufferT));
+        syAnsiToUnicode(staticData->txtBufferW, staticData->txtBuffer);
+        syWStrcat(staticData->txtBufferW, pShare->name);
+        CS_RP_CALL(placeTcharAsUnicode(out, buffer, bufferStart,  staticData->txtBufferW));
         /* server name */
         syStrcpy(staticData->txtBuffer, "\\\\");
         syStrcat(staticData->txtBuffer, serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
@@ -3177,9 +3198,9 @@ enumPrinterEntry(
         syStrcpy(staticData->txtBuffer, "\\\\");
         syStrcat(staticData->txtBuffer, serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
         syStrcat(staticData->txtBuffer, "\\");
-        cmAnsiToTchar(staticData->txtBufferT, staticData->txtBuffer);
-        cmTStrcat(staticData->txtBufferT, pShare->name);
-        CS_RP_CALL(placeTcharAsUnicode(out, buffer, bufferStart,  staticData->txtBufferT));
+        syAnsiToUnicode(staticData->txtBufferW, staticData->txtBuffer);
+        syWStrcat(staticData->txtBufferW, pShare->name);
+        CS_RP_CALL(placeTcharAsUnicode(out, buffer, bufferStart,  staticData->txtBufferW));
         /* share name */
         CS_RP_CALL(placeTcharAsUnicode(out, buffer, bufferStart, pShare->name));
         /* port name */
@@ -3228,14 +3249,14 @@ enumPrinterEntry(
          * the SD length. Then, place it for real backwards from the last referenced data
          */
         outTemp.current = out->current;
-        cmSdPackSecurityDescriptor(&outTemp, &staticData->sd);        
+        cmSdPackSecurityDescriptor(&outTemp, &staticData->sd, 0x0f);
         syMemset(out->current,0, (NQ_UINT32)(outTemp.current - out->current));       
         *buffer -= (NQ_UINT)(outTemp.current - out->current)/sizeof(NQ_WCHAR); 
         *buffer = (NQ_WCHAR*)(bufferStart + (((NQ_BYTE*)*buffer - bufferStart) & ~3));
         cmRpcPackUint32(out, (NQ_UINT32)((NQ_BYTE*)*buffer - bufferStart));
         tempPtr = (NQ_BYTE*)*buffer;
         outTemp.current = (NQ_BYTE*)*buffer;
-        cmSdPackSecurityDescriptor(&outTemp, &staticData->sd);
+        cmSdPackSecurityDescriptor(&outTemp, &staticData->sd, 0x0f);
         *buffer = (NQ_WCHAR*)tempPtr;
         /* -- security descriptor */
         /* scalars */
@@ -3251,16 +3272,16 @@ enumPrinterEntry(
     case 3:
         tempPtr = out->current + 4;
         cmRpcPackUint32(out, (NQ_UINT32)(tempPtr - bufferStart));
-        cmSdPackSecurityDescriptor(out, &staticData->sd);
+        cmSdPackSecurityDescriptor(out, &staticData->sd, 0x0f);
         break;
     case 4:
         /* printer name */
         syStrcpy(staticData->txtBuffer, "\\\\");
         syStrcat(staticData->txtBuffer, serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
         syStrcat(staticData->txtBuffer, "\\");
-        cmAnsiToTchar(staticData->txtBufferT, staticData->txtBuffer);
-        cmTStrcat(staticData->txtBufferT, pShare->name);
-        CS_RP_CALL(placeTcharAsUnicode(out, buffer, bufferStart,  staticData->txtBufferT));
+        syAnsiToUnicode(staticData->txtBufferW, staticData->txtBuffer);
+        syWStrcat(staticData->txtBufferW, pShare->name);
+        CS_RP_CALL(placeTcharAsUnicode(out, buffer, bufferStart,  staticData->txtBufferW));
         /* server name */
         syStrcpy(staticData->txtBuffer, "\\\\");
         syStrcat(staticData->txtBuffer, serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
@@ -3273,9 +3294,9 @@ enumPrinterEntry(
         syStrcpy(staticData->txtBuffer, "\\\\");
         syStrcat(staticData->txtBuffer, serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
         syStrcat(staticData->txtBuffer, "\\");
-        cmAnsiToTchar(staticData->txtBufferT, staticData->txtBuffer);
-        cmTStrcat(staticData->txtBufferT, pShare->name);
-        CS_RP_CALL(placeTcharAsUnicode(out, buffer, bufferStart,  staticData->txtBufferT));
+        syAnsiToUnicode(staticData->txtBufferW, staticData->txtBuffer);
+        syWStrcat(staticData->txtBufferW, pShare->name);
+        CS_RP_CALL(placeTcharAsUnicode(out, buffer, bufferStart,  staticData->txtBufferW));
         /* port name */
         CS_RP_CALL(placeTcharAsUnicode(out, buffer, bufferStart, staticData->printInfo.portName));
         /* attributes */
@@ -3518,7 +3539,7 @@ enumJobEntryLength(
         result += 4;
         if (NULL != in->user)
         {
-            result += (NQ_UINT32)(sizeof(NQ_WCHAR) * (cmTStrlen (((CSUser*)in->user)->name) + 1));
+            result += (NQ_UINT32)(sizeof(NQ_WCHAR) * (syWStrlen (((CSUser*)in->user)->name) + 1));
         }
         /* document name */
         result += (NQ_UINT32)(4 + (staticData->jobInfo.documentName == NULL? 0:sizeof(NQ_WCHAR) * (cmRpcTcharAsUnicodeLength(staticData->jobInfo.documentName) + 1)));
@@ -3526,7 +3547,7 @@ enumJobEntryLength(
         result += 4;
         if (NULL != staticData->jobInfo.user)
         {
-            result += (NQ_UINT32)(sizeof(NQ_WCHAR) * (cmTStrlen (((CSUser*)staticData->jobInfo.user)->name) + 1));
+            result += (NQ_UINT32)(sizeof(NQ_WCHAR) * (syWStrlen (((CSUser*)staticData->jobInfo.user)->name) + 1));
         }
         /* data type */
         result += (NQ_UINT32)(4 + (printInfo->dataType == NULL? 0:sizeof(NQ_WCHAR) * (cmRpcTcharAsUnicodeLength(printInfo->dataType) + 1)));
@@ -3645,7 +3666,7 @@ enumJobEntry(
         if (staticData->sd.length == 0)
         {
             TRCERR("Unable to get printer security descriptor");
-            TRC1P(" printer: %s", cmTDump(pShare->map));
+            TRC1P(" printer: %s", cmWDump(pShare->map));
             TRCE();
             return CM_RP_FAULTINVALIDPRINTERNAME;
         }
@@ -3781,7 +3802,7 @@ enumJobEntry(
         out->current = secDescPtr;
         cmRpcPackUint32(out, (NQ_BYTE*)*buffer - bufferStart);
         out->current = (NQ_BYTE*)*buffer;
-        cmSdPackSecurityDescriptor(out, &staticData->sd);
+        cmSdPackSecurityDescriptor(out, &staticData->sd, 0x0f);
         out->current = tempPtr;*/
         /* -- security descriptor */
         break;
@@ -3791,9 +3812,8 @@ enumJobEntry(
 
         cmRpcPackUint32(out, staticData->jobInfo.id);   /* job id */
         jobIdx = syGetPrintJobIndexById(printHandle, jobId);
-        if ((jobId = (NQ_UINT32)syGetPrintJobIdByIndex(printHandle, (NQ_INT)(jobIdx + 1))) == NQ_FAIL ||
-            syGetPrintJobById(printHandle, (NQ_UINT32)jobId, &staticData->jobInfo) == NQ_FAIL
-           )
+        jobId = (NQ_UINT32)syGetPrintJobIdByIndex(printHandle, (NQ_INT)(jobIdx + 1));
+        if (jobId == (NQ_UINT32)NQ_FAIL || syGetPrintJobById(printHandle, (NQ_UINT32)jobId, &staticData->jobInfo) == (NQ_STATUS)NQ_FAIL)
         {
             cmRpcPackUint32(out, 0xFFFFFFFF);
         }
@@ -3834,7 +3854,7 @@ static NQ_UINT32
 enumDriverEntry(
     const CMRpcPacketDescriptor* in,
     CMRpcPacketDescriptor* out,
-    const NQ_TCHAR* requiredOS,
+    const NQ_WCHAR* requiredOS,
     NQ_UINT32 infoLevel,
     const CSShare* pShare,
     NQ_WCHAR** buffer,
@@ -3856,7 +3876,7 @@ enumDriverEntry(
     if (!syIsValidPrinter(printHandle))
     {
         TRCERR("Unable to find printer by handle");
-        TRC1P(" printer: %s", cmTDump(pShare->map));
+        TRC1P(" printer: %s", cmWDump(pShare->map));
         TRCE();
         return CM_RP_FAULTINVALIDPRINTERNAME;
     }
@@ -3952,7 +3972,7 @@ enumDriverEntry(
             }
             else
             {
-                cmCifsTimeToUTC(driverInfo.driverDate, &timeLow, &timeHigh);
+                cmCifsTimeToUTC(cmTimeConvertSecToMSec(driverInfo.driverDate), &timeLow, &timeHigh);
                 cmRpcPackUint32(out, timeLow);
                 cmRpcPackUint32(out, timeHigh);
             }
@@ -4041,7 +4061,7 @@ placeTcharAsUnicode(
     CMRpcPacketDescriptor* out,
     NQ_WCHAR** buffer,
     NQ_BYTE* bufferStart,
-    const NQ_TCHAR* src
+    const NQ_WCHAR* src
     )
 {
     CMRpcPacketDescriptor temp;     /* for placing string */
@@ -4068,7 +4088,7 @@ placeTcharAsUnicode(
         {
             cmRpcCloneDescriptor(out, &temp);
             temp.current = (NQ_BYTE*)*buffer;
-            CS_RP_CALL(cmRpcPackTcharAsUnicode(&temp, src, CM_RP_NULLTERM));
+            CS_RP_CALL(cmRpcPackWcharAsUnicode(&temp, src, CM_RP_NULLTERM));
             cmRpcPackUint32(out, (NQ_UINT32)((NQ_BYTE*)*buffer - bufferStart));
         }
         else
@@ -4100,17 +4120,17 @@ placeListAsUnicode(
     CMRpcPacketDescriptor* out,
     NQ_WCHAR** buffer,
     NQ_BYTE* bufferStart,
-    const NQ_TCHAR** src
+    const NQ_WCHAR** src
     )
 {
     CMRpcPacketDescriptor temp;         /* for placing string */
-    const NQ_TCHAR** srcSaved = src;    /* saved calue */
+    const NQ_WCHAR** srcSaved = src;    /* saved calue */
 
     TRCB();
 
     while (*src != NULL)
     {
-        *buffer -= cmTStrlen(*src) + 1;
+        *buffer -= syWStrlen(*src) + 1;
         src++;
     }
     *buffer -= 1;
@@ -4119,7 +4139,7 @@ placeListAsUnicode(
     src = srcSaved;
     while (*src != NULL)
     {
-        CS_RP_CALL(cmRpcPackTcharAsUnicode(&temp, *src, CM_RP_NULLTERM));
+        CS_RP_CALL(cmRpcPackWcharAsUnicode(&temp, *src, CM_RP_NULLTERM));
         src++;
     }
 
@@ -4148,7 +4168,7 @@ placePathAsUnicode(
     CMRpcPacketDescriptor* out,
     NQ_WCHAR** buffer,
     NQ_BYTE* bufferStart,
-    const NQ_TCHAR* src,
+    const NQ_WCHAR* src,
     const NQ_CHAR* serverIp
     )
 {
@@ -4159,10 +4179,10 @@ placePathAsUnicode(
         cmRpcPackUint32(out, 0);
         return 0;
     }
-    cmAnsiToTchar(staticData->txtBufferT, "\\\\");
-    cmAnsiToTchar(staticData->txtBufferT + cmTStrlen(staticData->txtBufferT), serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
-    cmTStrcat(staticData->txtBufferT, src);
-    result = placeTcharAsUnicode(out, buffer, bufferStart, staticData->txtBufferT);
+    syAnsiToUnicode(staticData->txtBufferW, "\\\\");
+    syAnsiToUnicode(staticData->txtBufferW + syWStrlen(staticData->txtBufferW), serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
+    syWStrcat(staticData->txtBufferW, src);
+    result = placeTcharAsUnicode(out, buffer, bufferStart, staticData->txtBufferW);
     return result;
 }
 
@@ -4185,20 +4205,20 @@ placePathListAsUnicode(
     CMRpcPacketDescriptor* out,
     NQ_WCHAR** buffer,
     NQ_BYTE* bufferStart,
-    const NQ_TCHAR** src,
+    const NQ_WCHAR** src,
     const NQ_CHAR* serverIp
     )
 {
     CMRpcPacketDescriptor temp;         /* for placing string */
-    const NQ_TCHAR** srcSaved = src;    /* saved calue */
+    const NQ_WCHAR** srcSaved = src;    /* saved calue */
 
     TRCB();
 
-    cmAnsiToTchar(staticData->txtBufferT, "\\\\");
-    cmAnsiToTchar(staticData->txtBufferT + cmTStrlen(staticData->txtBufferT), serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
+    syAnsiToUnicode(staticData->txtBufferW, "\\\\");
+    syAnsiToUnicode(staticData->txtBufferW + syWStrlen(staticData->txtBufferW), serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
     while (*src != NULL)
     {
-        *buffer -= cmTStrlen(*src) + cmTStrlen(staticData->txtBufferT) + 1;
+        *buffer -= syWStrlen(*src) + syWStrlen(staticData->txtBufferW) + 1;
         src++;
     }
     *buffer -= 1;
@@ -4207,10 +4227,10 @@ placePathListAsUnicode(
     src = srcSaved;
     while (*src != NULL)
     {
-        cmAnsiToTchar(staticData->txtBufferT, "\\\\");
-        cmAnsiToTchar(staticData->txtBufferT + cmTStrlen(staticData->txtBufferT), serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
-        cmTStrcat(staticData->txtBufferT, *src);
-        CS_RP_CALL(cmRpcPackTcharAsUnicode(&temp, staticData->txtBufferT, CM_RP_NULLTERM));
+        syAnsiToUnicode(staticData->txtBufferW, "\\\\");
+        syAnsiToUnicode(staticData->txtBufferW + syWStrlen(staticData->txtBufferW), serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
+        syWStrcat(staticData->txtBufferW, *src);
+        CS_RP_CALL(cmRpcPackWcharAsUnicode(&temp, staticData->txtBufferW, CM_RP_NULLTERM));
         src++;
     }
     cmRpcPackUint16(&temp, 0);
@@ -4295,10 +4315,10 @@ placeDevMode(
     syStrcpy(staticData->txtBuffer, "\\\\");
     syStrcat(staticData->txtBuffer, serverIp ? serverIp : cmNetBiosGetHostNameZeroed());
     syStrcat(staticData->txtBuffer, "\\");
-    cmAnsiToTchar(staticData->txtBufferT, staticData->txtBuffer);
-    cmTStrcat(staticData->txtBufferT, pShare->name);
-    staticData->txtBufferT[0x40/sizeof(NQ_TCHAR) - 1] = cmTChar('\0'); /* forced null-terminator */
-    CS_RP_CALL(cmRpcPackTcharAsUnicode(out, staticData->txtBufferT, CM_RP_NULLTERM));
+    syAnsiToUnicode(staticData->txtBufferW, staticData->txtBuffer);
+    syWStrcat(staticData->txtBufferW, pShare->name);
+    staticData->txtBufferW[0x40/sizeof(NQ_WCHAR) - 1] = cmWChar('\0'); /* forced null-terminator */
+    CS_RP_CALL(cmRpcPackWcharAsUnicode(out, staticData->txtBufferW, CM_RP_NULLTERM));
     out->current = devModeStart + 0x40;                       /* undocumented */
     cmRpcPackUint16(out, 0x0401 /*devMode->specVersion*/);
     cmRpcPackUint16(out, devMode->driverVersion);
@@ -4320,7 +4340,7 @@ placeDevMode(
     cmRpcPackUint16(out, devMode->ttOption);
     cmRpcPackUint16(out, devMode->collate);
     tempPtr = out->current;
-    CS_RP_CALL(cmRpcPackTcharAsUnicode(out, devMode->formName, CM_RP_NULLTERM));
+    CS_RP_CALL(cmRpcPackWcharAsUnicode(out, devMode->formName, CM_RP_NULLTERM));
     out->current = tempPtr + 0x40;                          /* undocumented */
     cmRpcPackUint16(out, devMode->logPixels);
     cmRpcPackUint32(out, devMode->bitsPerPel);
@@ -4389,9 +4409,9 @@ parseDevMode(
     cmRpcParseUint16(in, &devMode->yResolution);
     cmRpcParseUint16(in, &devMode->ttOption);
     cmRpcParseUint16(in, &devMode->collate);
-    devMode->formName = (NQ_TCHAR*)in->current;
+    devMode->formName = (NQ_WCHAR*)in->current;
     tempPtr = in->current;
-    cmUnicodeToTcharN((NQ_TCHAR*)in->current, (NQ_WCHAR*)in->current, 0x40 / sizeof(NQ_TCHAR));
+    syWStrncpy((NQ_WCHAR*)in->current, (NQ_WCHAR*)in->current, 0x40 / sizeof(NQ_WCHAR));
     in->current = tempPtr + 0x40;                          /* undocumented */
     cmRpcParseUint16(in, &devMode->logPixels);
     cmRpcParseUint32(in, &devMode->bitsPerPel);
@@ -4508,7 +4528,7 @@ initData(
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(*staticData));
     if (NULL == staticData)
     {
         TRCERR("Unable to allocate SPOOLSS table");
@@ -4624,7 +4644,7 @@ getPrinterShare(
         if (!syIsValidPrinter(*h))
         {
             TRCERR("Unable to find printer by handle");
-            TRC1P(" printer: %s", cmTDump(s->map));
+            TRC1P(" printer: %s", cmWDump(s->map));
             TRCE();
             return CM_RP_FAULTOTHER;
         }
@@ -4652,7 +4672,7 @@ void csRpcSpoolssCleanupUser(
     const NQ_UINT16 uid
     )
 {
-    NQ_INT i;               /* just an index */
+    NQ_COUNT i;             /* just an index */
     const CSUser* pUser;    /* user pointer */
 
     if (NULL == (pUser = csGetUserByUid(uid)))

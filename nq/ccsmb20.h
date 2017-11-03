@@ -64,4 +64,9 @@ const CCCifsSmb * ccSmb20GetCifs(void);
  */
 NQ_STATUS ccSmb20DoNegotiateResponse(CCServer * pServer, const NQ_BYTE * data, NQ_COUNT len, CMBlob * pBlob);
 
+/*
+ * Function is used only in ccsmb30.c to prepare requests
+ */
+NQ_BOOL ccSmb20PrepareSingleRequestByShare(void * pRequest, const void * pShare, NQ_UINT16 command, NQ_UINT32 dataLen);
+
 #endif /* _CCSMB20_H_	 */

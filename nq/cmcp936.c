@@ -7718,12 +7718,16 @@ cp936UnicodeToAnsi(
     else
     {
         if (!aStr)
-            return 0;
+        {
+            length = 0;
+            goto Exit;
+        }
     }
     /* not enough space in provided buff */
     if (ignoreOutLength || (length < outLength))
         *pA = '\0';
 
+Exit:
     return length;
 }
 
@@ -7773,12 +7777,16 @@ cp936AnsiToUnicode(
     else
     {
         if (!wStr)
-            return 0;
+        {
+            length = 0;
+            goto Exit;
+        }
     }
 
     if (ignoreOutLength || (length < outLength))
         *pW = 0;
 
+Exit:
     return length*2;
 }
 
@@ -7794,6 +7802,7 @@ cp936ToUpper(
     NQ_WCHAR wsrc;
     NQ_WCHAR wdst;
     NQ_BYTE usrc  = (NQ_BYTE)src[0];
+    NQ_INT result;
 
     if (usrc < 0x7F) /* one byte character */
     {
@@ -7805,7 +7814,8 @@ cp936ToUpper(
         {
             *dst = (NQ_CHAR)usrc;
         }
-        return 1;
+        result = 1;
+        goto Exit;
     }
 
     wsrc = (NQ_WCHAR)cmLtoh16(((NQ_WCHAR)src[1] << 8) + src[0]);
@@ -7821,7 +7831,10 @@ cp936ToUpper(
     }
     dst[0] = src[0];
     dst[1] = src[1];
-    return 2;
+    result = 2;
+
+Exit:
+    return result;
 }
 
 /*
@@ -7948,12 +7961,12 @@ static const CMCodepage enc936 = {
     cp936ToUpper,
 #if (defined(SY_CP_FIRSTILLEGALCHAR) && defined(SY_CP_ANYILLEGALCHAR))
     cp936AnsiToFs,
-    cp936FsToAnsi
+    cp936FsToAnsi,
 #else
     NULL,
     NULL,
-    a2u
 #endif
+    NULL
 };
 
 const CMCodepage* cmCpInit936(

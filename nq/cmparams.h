@@ -25,13 +25,20 @@
     ------------------
  */
 
+#define CM_NQEMBEDDED						/* product name */
+
 #define CM_DDNAME "VISUALITY NBT DD"        /* NetBIOS name for the DD daemon */
 
-#define CM_SOFTWAREVERSIONMAJOR 7           /* software versions major */
-#define CM_SOFTWAREVERSIONMINOR 2           /* ... and minor           */
+#define CM_SOFTWAREVERSIONMAJOR 2           /* software versions major */
+#define CM_SOFTWAREVERSIONMINOR 0           /* ... and minor           */
 
-#define CM_SERVERBUFFERSIZE     (256 * 3 * sizeof(NQ_TCHAR) + 1000)  /* size of the server temporary buffer */
+#define CM_SERVERBUFFERSIZE     (256 * 3 * sizeof(NQ_WCHAR) + 1000)  /* size of the server temporary buffer */
 #define CM_COMMONBUFFERSIZE     (UD_NS_BUFFERSIZE + 1000)            /* size of the common temporary buffer */
+
+#ifdef UD_NQ_INCLUDETRACE
+/* NQ_INTERNALTRACE added for compatibility with NQ storage */
+#define NQ_INTERNALTRACE
+#endif
 
 /*
     NetBIOS parameters
@@ -51,7 +58,7 @@
 /* algorithm parameters */
 
 #define     CM_NB_BROADCASTTIMEOUT          1
-#define     CM_NB_UNICASTREQRETRYTIMEOUT    5
+#define     CM_NB_UNICASTREQRETRYTIMEOUT    2
 #define     CM_NB_UNICASTREQRETRYCOUNT      2
 #define     CM_NB_VERYBIGNBTIMEOUT          1 /* 1 sec */ /*(60*60) 1 hour */
 
@@ -88,6 +95,7 @@
 
 /* common values */
 
-#define CM_USERNAMELENGTH      256
+#define CM_USERNAMELENGTH		256
 
+#define CM_MAXFILENAMELEN		UD_FS_FILENAMELEN
 #endif  /* _CMNBPARM_H_ */

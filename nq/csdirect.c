@@ -25,6 +25,8 @@
 
 #ifdef UD_NQ_INCLUDECIFSSERVER
 
+static NQ_WCHAR fileNameBuff[CM_MAXFILENAMELEN];
+
 /* This code implements special directory commands */
 
 /*====================================================================
@@ -55,7 +57,7 @@ csComCheckDirectory(
     NQ_UINT32 returnValue;                      /* error code in NT format or 0 for no error */
     CMCifsStatus error;                     /* for composing DOS-style error */
     const CSShare* pShare;                  /* pointer to the share */
-    NQ_TCHAR* pFileName;                    /* filename to open */
+    NQ_WCHAR* pFileName;                    /* filename to open */
     SYFileInformation fileInfo;             /* buffer for file information */
     CSTid tid;                              /* required tree ID */
     CSUid uid;                              /* required user ID */
@@ -130,9 +132,11 @@ csComCheckDirectory(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+    					fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(checkRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(checkRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -163,7 +167,7 @@ csComCheckDirectory(
 		);
 	eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-    if (!csCheckPath(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPath(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 		udEventLog(
@@ -196,7 +200,7 @@ csComCheckDirectory(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -210,7 +214,7 @@ csComCheckDirectory(
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			csErrorReturn(SMB_STATUS_NO_SUCH_FILE, DOS_ERRbadfile),
@@ -225,7 +229,7 @@ csComCheckDirectory(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -325,7 +329,7 @@ csComDeleteDirectory(
     NQ_UINT32 returnValue;                  /* error code in NT format or 0 for no error */
     CMCifsStatus error;                     /* for composing DOS-style error */
     const CSShare* pShare;                  /* pointer to the share */
-    NQ_TCHAR* pFileName;                    /* filename to open */
+    NQ_WCHAR* pFileName;                    /* filename to open */
     SYFileInformation fileInfo;             /* buffer for file information */
     CSTid tid;                              /* required tree ID */
     CSUid uid;                              /* required user ID */
@@ -392,9 +396,11 @@ csComDeleteDirectory(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+    					fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(deleteRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(deleteRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -428,7 +434,7 @@ csComDeleteDirectory(
 
     /* check if the attempt is to delete the share */
 
-    if (cmTStrlen(pShare->map) == cmTStrlen(pFileName))
+    if (syWStrlen(pShare->map) == syWStrlen(pFileName))
     {
 #ifdef UD_NQ_INCLUDEEVENTLOG
     	eventInfo.before = FALSE;
@@ -482,7 +488,7 @@ csComDeleteDirectory(
 		);
 	eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-    if (!csCheckPath(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPath(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 		udEventLog(
@@ -526,7 +532,7 @@ csComDeleteDirectory(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -540,7 +546,7 @@ csComDeleteDirectory(
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			csErrorReturn(SMB_STATUS_NO_SUCH_FILE, DOS_ERRbadfile),
@@ -566,7 +572,7 @@ csComDeleteDirectory(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		(pUser->preservesCase || (pShare != NULL && cmTStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		(pUser->preservesCase || (pShare != NULL && syWStrcmp( pShare->map , pFileName) == 0)) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,

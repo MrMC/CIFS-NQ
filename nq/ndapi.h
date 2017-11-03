@@ -21,20 +21,30 @@
 #define _NDAPI_H_
 
 #include "cmapi.h"
+#include "ndadaptr.h"
 
-NQ_STATUS
-ndStart(    /* start ND */
-    void
-    );
+/*@@ndStart
+   Description
+   Startup point for NetBIOS Daemon.
+   Returns
+   <i>NQ_SUCCESS</i> when the daemon has started and <i>NQ_FAIL</i>
+   when it failed to start.                                         */
+NQ_STATUS ndStart(SYSemaphore * sem);
 
-void
-ndStop(     /* stop ND and clean the reasorces */
-    void
-    );
+/*@@
+ Description
+ Shutdown point for NetBIOS Daemon.
+void ndStop(void);
+Returns
+None*/
+void ndStop(void);
 
-void        /* tell the ND that the adapter configuration has changed */
-ndNotifyConfigurationChange(
-    void
-    );
+/*@@
+Notification about a change in the network configuration.
+
+The application may call this function when the list of adapters changes or when wins servers are updated. 
+This call causes NetBIS Daemon to reload the list of adapters and send new registrations to WINS servers.
+ */
+void ndNotifyConfigurationChange(NDAdapterInfo* adapter);
 
 #endif  /* _NDAPI_H_ */

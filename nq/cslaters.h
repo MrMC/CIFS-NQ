@@ -57,6 +57,7 @@ typedef struct
         } smb1;
         struct 
         {
+            NQ_UINT32 flags;              /* flags */
             NQ_UINT32 tid;                /* TID to respond on (in LBO) */
             NQ_UINT64 sid;                /* UID to respond on (in LBO) */
             NQ_UINT64 mid;                /* MID to respond on (in LBO) */
@@ -84,7 +85,7 @@ typedef struct
             } commandData;
         } smb2;
     }prot;
-    NQ_STATUS status;             /* reponse status */
+    NQ_STATUS status;             /* response status */
     NQ_BOOL isSmb2;               /* TRUE for SMB2 */
     NQ_BOOL isRpc;                /* TRUE when RPC involved */
     NSSocketHandle socket;        /* socket to respond over */
@@ -93,6 +94,9 @@ typedef struct
     void * file;                  /* context file */
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
     NQ_UINT32 sequenceNum;        /* saved sequence number for delayed response (message signing)*/
+#endif
+#ifdef UD_NQ_INCLUDESMB3
+    NQ_BOOL doEncrypt;
 #endif
 }
 CSLateResponseContext;

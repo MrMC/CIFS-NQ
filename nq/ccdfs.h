@@ -19,13 +19,14 @@
 #include "cmapi.h"
 #include "ccserver.h"
 #include "ccshare.h"
+#include "ccmount.h"
 
 /* -- Structures -- */
 
 /* Description
    This structure describes a result of DFS resolution. 
    
-   As a result of DFS resolution there may new server, share and local (to the share)
+   As a result of DFS resolution there may be a new server, share and local (to the share)
    path.  
    
    An error result is designated by NULL server pointer */
@@ -35,8 +36,35 @@ typedef struct _ccdfsresult
     CCShare * share;    /* Pointer to share structure. May be NULL. */
     NQ_WCHAR * path;    /* Pointer to new path local to the share. May be NULL. This
                         string is <b>always</b> allocated and it is caller's
-                        resposibility to dispose it.                              */
+                        responsibility to dispose it.                              */
 } CCDfsResult; /* DFS results. */
+
+/* Description
+   This structure describes a DFS referral. 
+*/
+typedef struct _ccdfsreferral
+{
+    CMItem item;                /* list item */
+    NQ_UINT16 numPathConsumed;  /* number of request path characters consumed */
+    NQ_UINT16 serverType;       /* server type */
+    NQ_UINT16 flags;            /* referral flags */
+    NQ_UINT32 ttl;              /* time to live */
+    NQ_WCHAR * dfsPath;         /* original path */
+    NQ_WCHAR * netPath;         /* resolved path */
+    NQ_BOOL isConnected;        /* whether this host is connected and user has logged in */
+    NQ_BOOL isIOPerformed;      /* whether IO operation was performed at least once */
+    NQ_STATUS lastIOStatus;     /* last IO operation status */ 
+} CCDfsReferral;
+
+/* Description
+   This structure describes a context of DFS operation. 
+*/
+typedef struct _ccdfscontext
+{
+    NQ_INT counter;
+    NQ_STATUS lastError;
+    CMItem *referral;
+} CCDfsContext; /* DFS context. */
 
 
 /* -- API Functions */
@@ -70,6 +98,9 @@ void ccDfsShutdown(void);
 const NQ_WCHAR * ccDfsResolveHost(const NQ_WCHAR * host);
 
 #ifdef UD_CC_INCLUDEDFS
+
+#define CC_DFS_NUMOFRETRIES (50 * CC_CONFIG_RETRYCOUNT) /* number of retries for DFS resolving, to decide on invalid DFS links */
+
 /* Description
    Resolve DFS path local to a share.
    
@@ -81,10 +112,12 @@ const NQ_WCHAR * ccDfsResolveHost(const NQ_WCHAR * host);
              resolved.
    path :    Remote path, containing host name and share path.
              This may be a DFS path.
+   context : Pointer to a context structure (see <link CCDfsContext>), 
+             describing current file operation.
    Returns
    DFS result structure. NULL in the path field designates an
    error.                                                       */
-CCDfsResult ccDfsResolvePath(CCShare * pShare, const NQ_WCHAR * path);
+CCDfsResult ccDfsResolvePath(CCMount *pMount, CCShare *pShare, const NQ_WCHAR *file, CCDfsContext *context);
 #endif /* UD_CC_INCLUDEDFS */
 
 /* Description
@@ -103,5 +136,14 @@ void ccDfsResolveDispose(CCDfsResult * pRes);
    Returns
    None.                                                                  */
 void ccDfsResolveOn(NQ_BOOL on);
+
+/* Description
+   Determines whether supplied error code required additional DFS 
+   resolution.
+   Parameters
+   errorCode : error code.
+   Returns
+   TRUE if error code requires DFS resolution, FALSE otherwise.            */
+NQ_BOOL ccDfsIsError(NQ_STATUS errorCode);
 
 #endif /* _CCDFS_H_ */

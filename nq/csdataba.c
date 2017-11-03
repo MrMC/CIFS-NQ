@@ -51,10 +51,10 @@
     - Search context
    An array element (a slot) may either represent an object or be empty. Objects are
    identified by their IDs (UID, SID, TID, FID, etc.) A special value represents and empty
-   slot. Object ID is its index in the appropiate array.
+   slot. Object ID is its index in the appropriate array.
    Per-object functions provide:
     - object allocation (i.e. - taking a slot for a new object
-    - object release - the object slot becomes avaiable for allocation - use also on
+    - object release - the object slot becomes available for allocation - use also on
       clean-up
     - one or more search functions
     Search functions for connection-dependent objects (session, user, file, search, tree)
@@ -70,6 +70,7 @@
    Arrays of session and user slots.
    each slot has a "self" index. A value of -1 means an empty slot.
  */
+
 
 typedef struct
 {
@@ -92,11 +93,14 @@ typedef struct
 #ifdef UD_NQ_INCLUDESMB2
     CMUuid uuid;
     CMTime serverStartTime;
-#endif
+#ifdef UD_NQ_INCLUDESMB3
+    NQ_BOOL isGlobalEncryption;                  /* whether server has global encryption */
+#endif /* UD_NQ_INCLUDESMB3 */
+#endif /* UD_NQ_INCLUDESMB2 */
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
     NQ_BOOL signingEnabled;                      /* whether message signing is enabled */
     NQ_BOOL signingRequired;                     /* whether message signing is required */
-#endif    
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */   
 }
 StaticData;
 
@@ -107,21 +111,28 @@ static StaticData staticDataSrc;
 static StaticData* staticData = &staticDataSrc;
 #endif /* SY_FORCEALLOCATION */
 
-/* TCHAR share functions */
+/* share functions */
 
 static NQ_INT
-addShareT(
-    const NQ_TCHAR* name,       /* share name */
-    const NQ_TCHAR* path,       /* share map */
+addShare(
+    const NQ_WCHAR* name,       /* share name */
+    const NQ_WCHAR* path,       /* share map */
     NQ_BOOL printQueue,         /* whether this share is a printer */
-    const NQ_TCHAR* comment,    /* share comment */
+    const NQ_WCHAR* comment,    /* share comment */
     const NQ_CHAR* reserved     /* for future use */
     );
 
 static NQ_INT
-removeShareT(
-    const NQ_TCHAR* name        /* share name */
+removeShare(
+    const NQ_WCHAR* name        /* share name */
     );
+
+#ifdef UD_NQ_INCLUDESMB3
+static NQ_INT setShareEncryption(
+		const NQ_WCHAR * name,	/* share name */
+		NQ_BOOL isEncrypted		/* should share be encrypted */
+		);
+#endif /* UD_NQ_INCLUDESMB3 */
 
 /* callback functions to pause and resume the server: called when application performs
    changes in the database */
@@ -138,6 +149,12 @@ static void (*resumeServer)();
 
 #define Uid2Index(_uid)    ((_uid) == CS_ILLEGALID? CS_ILLEGALID:(_uid) - 500)
 #define Index2Uid(_idx)    ((_idx) == CS_ILLEGALID? CS_ILLEGALID:(_idx) + 500)
+
+/* converting TIDs to indexes and vice versa */
+
+#define Tid2Index(_uid)    ((_uid) == CS_ILLEGALID? CS_ILLEGALID:(_uid) - 10)
+#define Index2Tid(_idx)    ((_idx) == CS_ILLEGALID? CS_ILLEGALID:(_idx) + 10)
+
 
 /*====================================================================
  * PURPOSE: Add share to the database
@@ -167,14 +184,14 @@ nqAddShareA(
     const NQ_CHAR* reserved
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXSHARELEN)];
-    NQ_TCHAR tpath[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXPATHLEN)];
-    NQ_TCHAR tcomment[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXDESCRIPTIONLEN)];
+    NQ_WCHAR nameW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXSHARELEN)];
+    NQ_WCHAR pathW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXPATHLEN)];
+    NQ_WCHAR commentW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXDESCRIPTIONLEN)];
 
-    cmAnsiToTchar(tname, name);
-    cmAnsiToTchar(tpath, path);
-    cmAnsiToTchar(tcomment, comment);
-    return addShareT(tname, tpath, printQueue, tcomment, reserved);
+    syAnsiToUnicode(nameW, name);
+    syAnsiToUnicode(pathW, path);
+    syAnsiToUnicode(commentW, comment);
+    return addShare(nameW, pathW, printQueue, commentW, reserved);
 }
 
 /*====================================================================
@@ -205,14 +222,7 @@ nqAddShareW(
     const NQ_CHAR* reserved
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXSHARELEN)];
-    NQ_TCHAR tpath[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXPATHLEN)];
-    NQ_TCHAR tcomment[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXDESCRIPTIONLEN)];
-
-    cmUnicodeToTchar(tname, name);
-    cmUnicodeToTchar(tpath, path);
-    cmUnicodeToTchar(tcomment, comment);
-    return addShareT(tname, tpath, printQueue, tcomment, reserved);
+    return addShare(name, path, printQueue, comment, reserved);
 }
 
 /*====================================================================
@@ -235,16 +245,16 @@ nqAddShareW(
  */
 
 static NQ_INT
-addShareT(
-    const NQ_TCHAR* name,
-    const NQ_TCHAR* path,
+addShare(
+    const NQ_WCHAR* name,
+    const NQ_WCHAR* path,
     NQ_BOOL printQueue,
-    const NQ_TCHAR* comment,
+    const NQ_WCHAR* comment,
     const NQ_CHAR* reserved
     )
 {
     NQ_INT i;       /* share index */
-    NQ_TCHAR ipc[6];
+    NQ_WCHAR ipc[6];
 
     if (!staticData->isReady)
     {
@@ -253,11 +263,11 @@ addShareT(
         return -1;
     }
 
-    cmAnsiToTchar(ipc, "IPC$");
+    syAnsiToUnicode(ipc, "IPC$");
 
-    if (   ((cmTStrlen(name) + sizeof(NQ_TCHAR)) > sizeof(staticData->shares[0].name))
-        || ((cmTStrlen(path) + sizeof(NQ_TCHAR)) > sizeof(staticData->shares[0].map))
-        || ((cmTStrlen(comment) + sizeof(NQ_TCHAR)) > sizeof(staticData->shares[0].description))
+    if (   ((syWStrlen(name) + sizeof(NQ_WCHAR)) > sizeof(staticData->shares[0].name))
+        || ((syWStrlen(path) + sizeof(NQ_WCHAR)) > sizeof(staticData->shares[0].map))
+        || ((syWStrlen(comment) + sizeof(NQ_WCHAR)) > sizeof(staticData->shares[0].description))
        )
     {
         TRC("Unable to add share - invalid parameter");
@@ -272,7 +282,7 @@ addShareT(
     {
         (*resumeServer)();
         syMutexGive(&staticData->dbGuard);
-        TRC1P("Unable to add share. Share %s already exists", cmTDump(name));
+        TRC1P("Unable to add share. Share %s already exists", cmWDump(name));
         sySetLastError(NQ_ERR_OBJEXISTS);
         return -1;
     }
@@ -283,12 +293,15 @@ addShareT(
     {
         if (staticData->shares[i].isFree)
         {
-            cmTStrcpy(staticData->shares[i].name, name);
-            cmTStrcpy(staticData->shares[i].map, path);
-            cmTStrcpy(staticData->shares[i].description, comment);
-            staticData->shares[i].ipcFlag = (cmTStrcmp(name, ipc) == 0);
+        	syWStrcpy(staticData->shares[i].name, name);
+        	syWStrcpy(staticData->shares[i].map, path);
+        	syWStrcpy(staticData->shares[i].description, comment);
+            staticData->shares[i].ipcFlag = (syWStrcmp(name, ipc) == 0);
             staticData->shares[i].isPrintQueue = printQueue;
-            staticData->shares[i].isHidden = (cmTStrchr(name, cmTChar('$')) && !staticData->shares[i].ipcFlag && !printQueue) ? TRUE : FALSE;
+            staticData->shares[i].isHidden = (syWStrchr(name, cmWChar('$')) && !staticData->shares[i].ipcFlag && !printQueue) ? TRUE : FALSE;
+#ifdef UD_NQ_INCLUDESMB3
+            staticData->shares[i].isEncrypted = FALSE;
+#endif /* UD_NQ_INCLUDESMB3 */
             if (staticData->shares[i].isHidden)
                 staticData->adminShare = &staticData->shares[i];
 #ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
@@ -304,7 +317,7 @@ addShareT(
                     sizeof(staticData->shares[i].sd.data));
                 if (0 == staticData->shares[i].sd.length || !cmSdIsValid(&staticData->shares[i].sd))
                 {
-                    TRC1P("Cannot load security descriptor for share: %s", cmTDump(staticData->shares[i].name));
+                    TRC1P("Cannot load security descriptor for share: %s", cmWDump(staticData->shares[i].name));
                     cmSdGetShareSecurityDescriptor(&staticData->shares[i].sd);
                 }
             }
@@ -325,7 +338,7 @@ addShareT(
 #endif /* UD_CS_INCLUDESECURITYDESCRIPTORS */
             staticData->shares[i].isFree = FALSE;
 
-            TRC2P("share %s added to slot %d", cmTDump(name), i);
+            TRC2P("share %s added to slot %d", cmWDump(name), i);
 
             staticData->numShares++;
             staticData->shares[i].isFree = FALSE;
@@ -342,6 +355,92 @@ addShareT(
     sySetLastError(NQ_ERR_NORESOURCE);
     return -1;
 }
+
+#ifdef UD_NQ_INCLUDESMB3
+
+NQ_BOOL csIsServerEncrypted()
+{
+    return staticData->isGlobalEncryption;
+}
+
+void csSetServerEncryption(NQ_BOOL encrypt)
+{
+    staticData->isGlobalEncryption = encrypt;
+}
+
+/*====================================================================
+ * PURPOSE: Encrypts share in the database
+ *--------------------------------------------------------------------
+ * PARAMS:  IN share name (NULL for global encryption)
+ * 			IN encrypt (TRUE if share should require encrypted data)
+ *
+ * RETURNS: 0 - OK
+ *          -1 the DB was not initialized
+ *          -2 parameter error (share not found)
+ *
+ * NOTES:
+ *====================================================================
+ */
+
+NQ_INT nqSetShareEncryptionA(const NQ_CHAR * name, NQ_BOOL isEncrypted)
+{
+	NQ_WCHAR nameW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXSHARELEN)];
+
+    if (NULL != name)
+	    syAnsiToUnicode(nameW, name);
+    return setShareEncryption((NULL != name) ? nameW : NULL, isEncrypted);
+}
+
+NQ_INT nqSetShareEncryptionW(const NQ_WCHAR * name, NQ_BOOL isEncrypted)
+{
+	return setShareEncryption(name, isEncrypted);
+}
+
+static NQ_INT setShareEncryption(const NQ_WCHAR * name, NQ_BOOL isEncrypted)
+{
+    NQ_INT result = 0;
+	CSShare	*pShare = NULL;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "name:%s isEncrypted:%s", cmWDump(name), isEncrypted ? "TRUE" : "FALSE");
+
+	if (!staticData->isReady)
+	{
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to encrypt share - not initialized");
+		sySetLastError(NQ_ERR_NOTREADY);
+        result = - 1;
+        goto Exit;
+	}
+
+	syMutexTake(&staticData->dbGuard);
+	(*pauseServer)();
+
+    if (NULL == name)
+    {
+        /* set global encryption */
+        csSetServerEncryption(isEncrypted);
+    }
+    else
+    {
+        if ((pShare = csGetShareByName(name)) == NULL)
+        {
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to encrypt share - share not exists");
+            sySetLastError(NQ_ERR_BADPARAM);
+            result = -1;
+            goto ExitGuard;
+        }
+        pShare->isEncrypted = isEncrypted;
+    }
+
+ExitGuard:
+	(*resumeServer)();
+    syMutexGive(&staticData->dbGuard);
+
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Encryption [%s] - %s", name ? cmWDump(name) : "global", isEncrypted ? "encrypted" : "not encrypted");
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
+}
+#endif /* UD_NQ_INCLUDESMB3 */
 
 /*====================================================================
  * PURPOSE: Remove share from the database
@@ -361,10 +460,10 @@ nqRemoveShareA(
     const NQ_CHAR* name
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXSHARELEN)];
+    NQ_WCHAR nameW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXSHARELEN)];
 
-    cmAnsiToTchar(tname, name);
-    return removeShareT(tname);
+    syAnsiToUnicode(nameW, name);
+    return removeShare(nameW);
 }
 
 /*====================================================================
@@ -385,10 +484,7 @@ nqRemoveShareW(
     const NQ_WCHAR* name
     )
 {
-    NQ_TCHAR tname[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXSHARELEN)];
-
-    cmUnicodeToTchar(tname, name);
-    return removeShareT(tname);
+    return removeShare(name);
 }
 
 /*====================================================================
@@ -405,8 +501,8 @@ nqRemoveShareW(
  */
 
 static NQ_INT
-removeShareT(
-    const NQ_TCHAR* name
+removeShare(
+    const NQ_WCHAR* name
     )
 {
     CSShare* pShare;    /* pointer to the share structure */
@@ -454,7 +550,7 @@ removeShareT(
     (*resumeServer)();
     syMutexGive(&staticData->dbGuard);
     sySetLastError(NQ_ERR_OK);
-    TRC1P("share %s removed", cmTDump(name));
+    TRC1P("share %s removed", cmWDump(name));
     return 0;
 }
 
@@ -481,7 +577,7 @@ csHasAdminShare(
  * PURPOSE: Initialize data
  *--------------------------------------------------------------------
  * PARAMS:  IN callback function for pausing the server
- *          IN callback function for resumimg the server
+ *          IN callback function for resuming the server
  *
  * RETURNS: None
  *
@@ -503,7 +599,7 @@ csInitDatabase(
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(*staticData));
     if (NULL == staticData)
     {
         TRCERR("Unable to allocate database table");
@@ -514,10 +610,13 @@ csInitDatabase(
 
 #ifdef UD_NQ_INCLUDESMB2
     /* todo: get server GUID properly (the following line is a temporary solution for getting server GUID) */
-    cmGenerateUuid(&staticData->uuid);
+    cmZeroUuid(&staticData->uuid);
     /* server start time */
     cmGetCurrentTime(&staticData->serverStartTime);
-#endif
+#ifdef UD_NQ_INCLUDESMB3
+    staticData->isGlobalEncryption = FALSE;
+#endif /* UD_NQ_INCLUDESMB3 */
+#endif /* UD_NQ_INCLUDESMB2 */
 
     staticData->isReady = FALSE;
 
@@ -549,8 +648,10 @@ csInitDatabase(
     for (i=0; i < UD_FS_NUMSERVERTREES; i++)
         staticData->trees[i].tid = CS_ILLEGALID;
 
-    for (i=0; i < UD_FS_NUMSERVERFILENAMES; i++)
+    for (i=0; i < UD_FS_NUMSERVERFILENAMES; i++){
         staticData->names[i].nid = CS_ILLEGALID;
+        staticData->names[i].first = NULL;
+    }
 
     for (i=0; i < UD_FS_NUMSERVERFILEOPEN; i++)
     {
@@ -582,7 +683,7 @@ csInitDatabase(
             if (!udGetNextShare(s->name, s->map, &s->isPrintQueue, s->description))
                 break;
     
-            nqAddShare(s->name, s->map, s->isPrintQueue, s->description, NULL);
+            nqAddShareW(s->name, s->map, s->isPrintQueue, s->description, NULL);
         }
     }
 
@@ -630,7 +731,7 @@ csCloseDatabase(
  *
  * RETURNS: Pointer to a slot or NULL
  *
- * NOTES:   Assignes session key to the slot as this slot index in
+ * NOTES:   Assigns session key to the slot as this slot index in
  *          the array of slots
  *====================================================================
  */
@@ -651,7 +752,7 @@ csGetNewSession(
             s->key = i;  /* set "self" index */
             s->socket = csDispatchGetSocket();
             syMemcpy(&s->ip, csDispatchGetSocketIp(), sizeof(NQ_IPADDRESS));
-            s->smb2 = FALSE;
+            s->dialect = 0;
 #if defined(UD_CS_INCLUDEPASSTHROUGH) && defined(UD_CS_INCLUDEEXTENDEDSECURITY)
             s->usePassthrough = TRUE;
 #endif          
@@ -717,7 +818,7 @@ csGetSessionBySocket(
 
 CSSession*                  /* pointer or NULL */
 csGetSessionBySpecificSocket(
-    NSSocketHandle* socket
+    NSSocketHandle socket
     )
 {
     NQ_INT i;      /* just an index */
@@ -802,7 +903,7 @@ csGetSessionByIp(
  *
  * RETURNS: Pointer to a slot or NULL
  *
- * NOTES:   Checks if the current socket is alreday used in one of active sessions
+ * NOTES:   Checks if the current socket is already used in one of active sessions
  *====================================================================
  */
 
@@ -826,7 +927,7 @@ csSessionExists(
     return FALSE;
 }
 /*====================================================================
- * PURPOSE: release session assotiated with a given socket
+ * PURPOSE: release session associated with a given socket
  *--------------------------------------------------------------------
  * PARAMS:  IN the socket to release resources for
  *
@@ -906,14 +1007,21 @@ csGetNewUser(
             u->session = session->key;
             u->ip = &session->ip;
 #ifdef UD_NQ_INCLUDESMB2
-            u->createdTime = (NQ_TIME)syGetTime();
+            u->createdTime = (NQ_UINT32)syGetTimeInSec();
+#ifdef UD_NQ_INCLUDESMB3
+            u->preauthIntegOn = TRUE;
+#endif
+#endif
             u->authenticated = FALSE;
-#endif            
             u->isAnonymous = FALSE;
             u->token.isAnon = FALSE;
             u->isDomainUser = FALSE;
             u->isGuest = FALSE;
             u->rid = CS_ILLEGALID;
+#ifdef UD_CS_MESSAGESIGNINGPOLICY
+            u->password.data = NULL;
+			u->password.len = 0;
+#endif
 #ifdef UD_CS_INCLUDEPASSTHROUGH
             u->authBySamlogon = FALSE;
 #endif     
@@ -931,7 +1039,7 @@ csGetNewUser(
     TRCERR("No more user slots");
 #ifdef UD_NQ_INCLUDESMB2
     /* find expired user slot */
-    if (session->smb2)
+    if (session->dialect != CS_DIALECT_SMB1)
     {
         CSUser* expUser = csGetExpiredUser();
         if (expUser != NULL)
@@ -941,7 +1049,7 @@ csGetNewUser(
             expUser->uid = uid;   /* set "self" index */
             expUser->session = session->key;
             expUser->ip = &session->ip;
-            expUser->createdTime = (NQ_TIME)syGetTime();
+            expUser->createdTime = (NQ_UINT32)syGetTimeInSec();
             staticData->numUsers++;
             return expUser;
         }
@@ -976,7 +1084,7 @@ csGetNewUser(
 
 CSUser*
 csGetUserByNameAndCredentials(
-    const NQ_TCHAR* name,
+    const NQ_WCHAR* name,
     const NQ_BYTE* credentials,
     NQ_INT credentialsLen
     )
@@ -986,7 +1094,7 @@ csGetUserByNameAndCredentials(
     for (i=0; i < UD_FS_NUMSERVERUSERS; i++)
     {
         if (   staticData->users[i].uid != CS_ILLEGALID
-            && 0 == cmTStrcmp(staticData->users[i].name, name)
+            && 0 == syWStrcmp(staticData->users[i].name, name)
             && staticData->sessions[staticData->users[i].session].socket == csDispatchGetSocket()
             && (   0 == credentialsLen
                 || 0 == syMemcmp(staticData->users[i].credentials, credentials, (NQ_UINT)credentialsLen)
@@ -1014,7 +1122,7 @@ csGetUserByNameAndCredentials(
 
 CSUser*
 csGetUserByNameAndSession(
-    const NQ_TCHAR* name,
+    const NQ_WCHAR* name,
     CSSessionKey sessKey
     )
 {
@@ -1023,7 +1131,7 @@ csGetUserByNameAndSession(
     for (i=0; i < UD_FS_NUMSERVERUSERS; i++)
     {
         if (   staticData->users[i].uid != CS_ILLEGALID
-            && 0 == cmTStrcmp(staticData->users[i].name, name)
+            && 0 == cmWStrcmp(staticData->users[i].name, name)
             && staticData->users[i].session == sessKey
            )
         {
@@ -1117,15 +1225,20 @@ csReleaseUser(
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDUserAccessEvent eventInfo;
 #endif /*UD_NQ_INCLUDEEVENTLOG*/
+    CSFid index = (CSFid)Uid2Index(uid);
+    
+    LOGFB(CM_TRC_LEVEL_FUNC_TOOL, "uid:%d expected:%d", uid, expected);
 
-    if (Uid2Index(uid) >= UD_FS_NUMSERVERUSERS || Uid2Index(uid) < 0)
+    if (index >= UD_FS_NUMSERVERUSERS)
     {
         TRCERR("Illegal UID value, uid: %d", uid);
+        LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
         return;
     }
-    if (staticData->users[Uid2Index(uid)].uid != uid)
+    if (staticData->users[index].uid != uid)
     {
-        TRCERR("Illegal UID in the slot, expected: %d, is: %d", uid, staticData->users[Uid2Index(uid)].uid);
+        TRCERR("Illegal UID in the slot, expected: %d, is: %d", uid, staticData->users[index].uid);
+        LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
         return;
     }
 
@@ -1138,22 +1251,23 @@ csReleaseUser(
             && staticData->trees[tree].uid == uid
             )
         {
-            csReleaseTree(tree , expected);
+            csReleaseTree(staticData->trees[tree].tid, expected);
         }
     }
 #ifdef UD_NQ_INCLUDEEVENTLOG
-    eventInfo.rid = csGetUserRid(&staticData->users[Uid2Index(uid)]);
+    eventInfo.rid = csGetUserRid(&staticData->users[index]);
     udEventLog(UD_LOG_MODULE_CS,
     		   UD_LOG_CLASS_USER,
     		   UD_LOG_USER_LOGOFF,
-    		   staticData->users[Uid2Index(uid)].name,
-    		   staticData->users[Uid2Index(uid)].ip,
+    		   staticData->users[index].name,
+    		   staticData->users[index].ip,
     		   (NQ_UINT32) expected ? NQ_SUCCESS : SMB_STATUS_USER_SESSION_DELETED,
     		   (const NQ_BYTE *)&eventInfo
     		   );
 #endif
-    staticData->users[Uid2Index(uid)].uid = CS_ILLEGALID;
+    staticData->users[index].uid = CS_ILLEGALID;
     staticData->numUsers--;
+    LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
 }
 
 /*====================================================================
@@ -1243,7 +1357,7 @@ csGetExpiredUser(
     {
         CSUser *u = &staticData->users[i];
 
-        if ((u->uid != (CSUid)CS_ILLEGALID) && (CS_SMB2_SESSIONEXPIRATIONTIME < ((NQ_TIME)syGetTime() - u->createdTime)))
+        if ((u->uid != (CSUid)CS_ILLEGALID) && (CS_SMB2_SESSIONEXPIRATIONTIME < ((NQ_UINT32)syGetTimeInSec() - u->createdTime)))
         {
             TRCE();
             return u;
@@ -1273,8 +1387,9 @@ csUserHasExpired(
     )
 {   
     TRCB();
-    
-    if ((uid != (CSUid)CS_ILLEGALID) && (CS_SMB2_SESSIONEXPIRATIONTIME < ((NQ_TIME)syGetTime() - staticData->users[uid].createdTime)))
+ 
+    if ((Uid2Index(uid) < UD_FS_NUMSERVERUSERS && Uid2Index(uid) >= 0) && 
+		(CS_SMB2_SESSIONEXPIRATIONTIME < ((NQ_UINT32)syGetTimeInSec() - staticData->users[Uid2Index(uid)].createdTime)))
     {
         TRCE();
         return TRUE;
@@ -1305,7 +1420,7 @@ csRenewUserTimeStamp(
     
     if (pUser && (pUser->uid != (CSUid)CS_ILLEGALID))
     {
-        pUser->createdTime = (NQ_TIME)syGetTime();
+        pUser->createdTime = (NQ_UINT32)syGetTimeInSec();
     }
     
     TRCE();
@@ -1357,9 +1472,10 @@ csGetNewTree(
     {
         if (staticData->trees[i].tid == (CSTid)CS_ILLEGALID)
         {
-            staticData->trees[i].tid = i;   /* set "self" index */
+            staticData->trees[i].tid = (CSTid)Index2Tid(i);   /* set "self" index */
             staticData->trees[i].uid = pUser->uid;
             staticData->trees[i].session = pUser->session;
+            staticData->trees[i].maxAccessRights = 0x001f01ff;
             return &staticData->trees[i];
         }
     }
@@ -1386,34 +1502,34 @@ csGetTreeByTid(
 {
     TRCB(); 
     
-    if (tid >= UD_FS_NUMSERVERTREES)
+    if (Tid2Index(tid) < 0 || Tid2Index(tid) >= UD_FS_NUMSERVERTREES)
     {
-        TRCERR("Illegal TID value: %d", tid);
+        TRCERR("Illegal TID value: %d", Tid2Index(tid));
         TRCE();
         return NULL;
     }
 
-    if (staticData->trees[tid].tid != tid)
+    if (staticData->trees[Tid2Index(tid)].tid != tid)
     {
-        TRCERR("Illegal TID in the slot, expected: %d, is: %d", tid, staticData->trees[tid].tid);
+        TRCERR("Illegal TID in the slot, expected: %d, is: %d", Tid2Index(tid), staticData->trees[Tid2Index(tid)].tid);
         TRCE();
         return NULL;
     }
 
-    if (staticData->sessions[staticData->trees[tid].session].socket != csDispatchGetSocket())
+    if (staticData->sessions[staticData->trees[Tid2Index(tid)].session].socket != csDispatchGetSocket())
     {
-        TRCERR("TID for unexpected socket, expected: %d, is: %d", staticData->sessions[staticData->trees[tid].session].socket, csDispatchGetSocket());
+        TRCERR("TID for unexpected socket, expected: %d, is: %d", staticData->sessions[staticData->trees[Tid2Index(tid)].session].socket, csDispatchGetSocket());
         TRCE();
         return NULL;
     }
     TRCE();
-    return &staticData->trees[tid];
+    return &staticData->trees[Tid2Index(tid)];
 }
 
 /*====================================================================
  * PURPOSE: enumerate trees for a given share
  *--------------------------------------------------------------------
- * PARAMS:  IN share desriptor
+ * PARAMS:  IN share descriptor
  *          IN tree ID to start from or CS_ILLEGALID to start from the
  *             beginning
  *
@@ -1431,7 +1547,7 @@ csGetNextTreeByShare(
 {
     NQ_INT i;      /* just an index */
 
-    for (i= tid==CS_ILLEGALID? 0 : tid + 1;
+    for (i = (Tid2Index(tid) == CS_ILLEGALID ? 0 : Tid2Index(tid) + 1);
          i < UD_FS_NUMSERVERTREES;
          i++
         )
@@ -1468,22 +1584,26 @@ csReleaseTree(
     CSUser * 		   pUser;
 #endif /* UD_NQ_INCLUDEEVENTLOG*/
 
-    if (tid >= UD_FS_NUMSERVERTREES)
+    LOGFB(CM_TRC_LEVEL_FUNC_TOOL, "tid:0x%08x expected:%d", tid, expected);
+
+    if (Tid2Index(tid) >= UD_FS_NUMSERVERTREES)
     {
-        TRCERR("Illegal TID value, tid: %d", tid);
+        TRCERR("Illegal TID value: %d", Tid2Index(tid));
+        LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
         return;
     }
-    if (staticData->trees[tid].tid != tid)
+    if (staticData->trees[Tid2Index(tid)].tid != tid)
     {
-        TRCERR("Illegal TID in the slot, expected: %d, is: %d", tid, staticData->trees[tid].tid);
+        TRCERR("Illegal TID in the slot, expected: %d, is: %d", Tid2Index(tid), staticData->trees[Tid2Index(tid)].tid);
+        LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
         return;
     }
 #ifdef UD_NQ_INCLUDEEVENTLOG
-    eventInfo.shareName = staticData->trees[tid].share->name;
-    eventInfo.ipc = staticData->trees[tid].share->ipcFlag;
-    eventInfo.printQueue = staticData->trees[tid].share->isPrintQueue;
-    eventInfo.tid = tid;
-    pUser = csGetUserByUid(staticData->trees[tid].uid);
+    eventInfo.shareName = staticData->trees[Tid2Index(tid)].share->name;
+    eventInfo.ipc = staticData->trees[Tid2Index(tid)].share->ipcFlag;
+    eventInfo.printQueue = staticData->trees[Tid2Index(tid)].share->isPrintQueue;
+    eventInfo.tid = (NQ_UINT32)Tid2Index(tid);
+    pUser = csGetUserByUid(staticData->trees[Tid2Index(tid)].uid);
     eventInfo.rid = (pUser != NULL) ? csGetUserRid((CSUser *)pUser) : CS_ILLEGALID;
 #endif /* UD_NQ_INCLUDEEVENTLOG*/
     for (idx = 0; idx < UD_FS_NUMSERVERFILEOPEN; idx++)
@@ -1515,13 +1635,14 @@ csReleaseTree(
 		udEventLog(UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_SHARE,
 			UD_LOG_SHARE_DISCONNECT,
-			(NQ_TCHAR *)&pUser->name,
+			(NQ_WCHAR *)&pUser->name,
 			pUser->ip,
 			(NQ_UINT32)expected ? NQ_SUCCESS : SMB_STATUS_USER_SESSION_DELETED,
 			(const NQ_BYTE *)&eventInfo);
     }
 #endif /* UD_NQ_INCLUDEEVENTLOG*/
-    staticData->trees[tid].tid = CS_ILLEGALID;
+    staticData->trees[Tid2Index(tid)].tid = CS_ILLEGALID;
+    LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
 }
 
 /*====================================================================
@@ -1539,7 +1660,7 @@ csReleaseTree(
 
 CSName*
 csGetNewName(
-    const NQ_TCHAR* name,
+    const NQ_WCHAR* name,
     CSUid uid
     )
 {
@@ -1550,7 +1671,7 @@ csGetNewName(
         if (staticData->names[i].nid == (CSNid)CS_ILLEGALID || staticData->names[i].first == NULL)
         {
             staticData->names[i].nid = i;   /* set "self" index */
-            cmTStrcpy(staticData->names[i].name, name);
+            syWStrcpy(staticData->names[i].name, name);
             staticData->names[i].first = NULL;
             staticData->names[i].uid = uid;
             staticData->names[i].markedForDeletion = FALSE;
@@ -1576,7 +1697,7 @@ csGetNewName(
 }
 
 /*====================================================================
- * PURPOSE: Determine whether a file was marked ofr deletion
+ * PURPOSE: Determine whether a file was marked for deletion
  *--------------------------------------------------------------------
  * PARAMS:  IN file name
  *
@@ -1589,7 +1710,7 @@ csGetNewName(
 
 NQ_BOOL
 csFileMarkedForDeletion(
-    const NQ_TCHAR* name
+    const NQ_WCHAR* name
     )
 {
     NQ_INT i;      /* just an index */
@@ -1598,7 +1719,7 @@ csFileMarkedForDeletion(
     {
         if (staticData->names[i].nid != (CSNid)CS_ILLEGALID && staticData->names[i].first != NULL)
         {
-            if (staticData->names[i].markedForDeletion && cmTStrcmp(name, staticData->names[i].name)==0)
+            if (staticData->names[i].markedForDeletion && cmWStrcmp(name, staticData->names[i].name)==0)
             {
                 return TRUE;
             }
@@ -1755,7 +1876,7 @@ csReleaseName(
         if (NQ_SUCCESS == status)
         {
 #ifdef UD_NQ_INCLUDEEVENTLOG
-		    NQ_TCHAR* pUserName = NULL;
+		    NQ_WCHAR* pUserName = NULL;
 			const NQ_IPADDRESS *pIp = NULL;
 
 			if (NULL != pUser)
@@ -1899,7 +2020,7 @@ csGetNameByNid(
 
 CSName*
 csGetNameByName(
-    const NQ_TCHAR* name
+    const NQ_WCHAR* name
     )
 {
     NQ_INT i;  /* index in staticData->files */
@@ -1908,7 +2029,7 @@ csGetNameByName(
     {
         if (   (staticData->names[i].nid != CS_ILLEGALID
             && staticData->names[i].first != NULL)
-            && (cmTStrcmp(name, staticData->names[i].name) == 0)
+            && (cmWStrcmp(name, staticData->names[i].name) == 0)
            )
         {
             return &staticData->names[i];
@@ -1930,7 +2051,7 @@ csGetNameByName(
  *          array of slots
  *          insert file in the front of the file chain of the file name descriptor.
  *          Name descriptor's access bits are Or-ed with the file access bits
- *          This will "worsen" the share restrictions.
+ *          This will "worse" the share restrictions.
  *====================================================================
  */
 
@@ -2007,7 +2128,8 @@ csGetNewFile(
         staticData->files[candidate].sid = (CSSid)CS_ILLEGALID;
 #endif
         staticData->files[candidate].oplockGranted = FALSE;
-        staticData->files[candidate].pFileOplockBreaker = NULL;
+        staticData->files[candidate].isBreakingOpLock = FALSE;
+        staticData->files[candidate].isCreatePending = FALSE;
         staticData->numFiles++;
         return &staticData->files[candidate];
     }
@@ -2042,7 +2164,7 @@ csGetNewFile(
  *====================================================================
  */
 
-const NQ_TCHAR*
+const NQ_WCHAR*
 csGetFileName(
     CSFid fid
     )
@@ -2276,25 +2398,27 @@ csReleaseFile(
 {
 #ifdef UD_NQ_INCLUDEEVENTLOG
     CSUser* pUser;                    /* user structure pointer */
-    UDFileAccessEvent eventInfo;            /* share event information */
+    UDFileAccessEvent eventInfo;      /* share event information */
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-    CSFile * pFile;                         /* file pointer */
+    CSFile * pFile;                   /* file pointer */
+    CSFid index;
 
     TRCB();
     
-    if (fid2Index(fid) >= UD_FS_NUMSERVERFILEOPEN)
+    index = (CSFid)fid2Index(fid);
+    if (index >= UD_FS_NUMSERVERFILEOPEN)
     {
         TRCERR("Illegal FID value, fid: %d", fid);
         TRCE();
         return;
     }
-    if (staticData->files[fid2Index(fid)].fid != fid)
+    if (staticData->files[index].fid != fid)
     {
-        TRCERR("Illegal FID in the slot, expected: %d, is: %d", fid, staticData->files[fid2Index(fid)].fid);
+        TRCERR("Illegal FID in the slot, expected: %d, is: %d", fid, staticData->files[index].fid);
         TRCE();
         return;
     }
-    pFile = &staticData->files[fid2Index(fid)];
+    pFile = &staticData->files[index];
 
 #ifdef UD_NQ_INCLUDEEVENTLOG
     eventInfo.fileName = staticData->names[pFile->nid].name;
@@ -2347,12 +2471,12 @@ csReleaseFile(
                     UD_LOG_FILE_CLOSE,
                     pUser->name,
                     pUser->ip,
-                    syGetLastError(),
+                    (NQ_UINT32)syGetLastError(),
                     (const NQ_BYTE*)&eventInfo
                     );
                 }
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-                    TRCERR("Close operation failed, Directory name %s", cmTDump(staticData->names[staticData->files[fid2Index(fid)].nid].name));
+                    TRCERR("Close operation failed, Directory name %s", cmWDump(staticData->names[staticData->files[index].nid].name));
             }
 #ifdef UD_NQ_INCLUDEEVENTLOG
             else
@@ -2390,7 +2514,7 @@ csReleaseFile(
 				eventInfo.before = FALSE;
 			}
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-            if (syCloseFile(staticData->files[fid2Index(fid)].file) != NQ_SUCCESS)
+            if (syCloseFile(staticData->files[index].file) != NQ_SUCCESS)
             {
 #ifdef UD_NQ_INCLUDEEVENTLOG
                 if (NULL != pUser)
@@ -2401,12 +2525,12 @@ csReleaseFile(
                     UD_LOG_FILE_CLOSE,
                     pUser->name,
                     pUser->ip,
-                    syGetLastError(),
+                    (NQ_UINT32)syGetLastError(),
                     (const NQ_BYTE*)&eventInfo
                     );
                 }
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-                TRCERR("Close operation failed, File name: %s, file ID: %d", cmTDump(staticData->names[staticData->files[fid2Index(fid)].nid].name), staticData->files[fid2Index(fid)].file);
+                TRCERR("Close operation failed, File name: %s, file ID: %d", cmWDump(staticData->names[staticData->files[index].nid].name), staticData->files[index].file);
             }
 #ifdef UD_NQ_INCLUDEEVENTLOG
             else
@@ -2427,8 +2551,8 @@ csReleaseFile(
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         }
 #ifdef UD_CS_INCLUDERPC
-        if (staticData->files[fid2Index(fid)].isPipe)
-            csDcerpcClosePipe(&staticData->files[fid2Index(fid)]);
+        if (staticData->files[index].isPipe)
+            csDcerpcClosePipe(&staticData->files[index]);
 #endif
 #ifdef UD_CS_INCLUDERPC_SPOOLSS    
     }
@@ -2441,12 +2565,12 @@ csReleaseFile(
 
     /* release from the chain in the file name */
 
-    if (staticData->files[fid2Index(fid)].nid != (CSNid)CS_ILLEGALID)
+    if (staticData->files[index].nid != (CSNid)CS_ILLEGALID)
     {
-        if (staticData->files[fid2Index(fid)].prev == NULL && staticData->files[fid2Index(fid)].next == NULL)
+        if (staticData->files[index].prev == NULL && staticData->files[index].next == NULL)
         {
-            staticData->names[staticData->files[fid2Index(fid)].nid].first = staticData->files[fid2Index(fid)].next;
-            if (staticData->files[fid2Index(fid)].next == NULL)
+            staticData->names[staticData->files[index].nid].first = staticData->files[index].next;
+            if (staticData->files[index].next == NULL)
                 csReleaseName(
 #ifdef UD_NQ_INCLUDEEVENTLOG
                     pUser,
@@ -2457,31 +2581,31 @@ csReleaseFile(
         }
         else
         {
-            if (staticData->files[fid2Index(fid)].next != NULL)
+            if (staticData->files[index].next != NULL)
             {
-                staticData->files[fid2Index(fid)].next->prev = staticData->files[fid2Index(fid)].prev;
+                staticData->files[index].next->prev = staticData->files[index].prev;
             }
-            if (staticData->files[fid2Index(fid)].prev != NULL)
+            if (staticData->files[index].prev != NULL)
             {
-                staticData->files[fid2Index(fid)].prev->next = staticData->files[fid2Index(fid)].next;
+                staticData->files[index].prev->next = staticData->files[index].next;
             }
             else
             {
-                staticData->names[staticData->files[fid2Index(fid)].nid].first = staticData->files[fid2Index(fid)].next;
+                staticData->names[staticData->files[index].nid].first = staticData->files[index].next;
             }
         }
     }
 
     /* clean up */
 
-    syInvalidateFile(&staticData->files[fid2Index(fid)].file);
-    syInvalidateDirectory(&staticData->files[fid2Index(fid)].directory);
-    staticData->files[fid2Index(fid)].fid = (CSFid)CS_ILLEGALID;
-    staticData->files[fid2Index(fid)].user = NULL;
+    syInvalidateFile(&staticData->files[index].file);
+    syInvalidateDirectory(&staticData->files[index].directory);
+    staticData->files[index].fid = (CSFid)CS_ILLEGALID;
+    staticData->files[index].user = NULL;
 #ifdef UD_NQ_INCLUDESMB2
-    if (staticData->files[fid2Index(fid)].sid != (CSSid)CS_ILLEGALID)
+    if (staticData->files[index].sid != (CSSid)CS_ILLEGALID)
     {
-        csReleaseSearch(staticData->files[fid2Index(fid)].sid);
+        csReleaseSearch(staticData->files[index].sid);
     }
 #endif
     staticData->numFiles--;
@@ -2522,14 +2646,14 @@ csGetFilesCount(
 
 CSShare*
 csGetShareByName(
-    const NQ_TCHAR* name
+    const NQ_WCHAR* name
     )
 {
     NQ_INT i;  /* just an index */
 
     for (i = 0; i < UD_FS_NUMSERVERSHARES; i++)
     {
-        if (!staticData->shares[i].isFree && (cmTStricmp(name, staticData->shares[i].name) == 0))
+        if (!staticData->shares[i].isFree && (cmWStricmp(name, staticData->shares[i].name) == 0))
         {
             return &staticData->shares[i];
         }
@@ -2562,7 +2686,7 @@ csGetShareByUidTid(
         return NULL;
     }
 
-    if (staticData->sessions[staticData->trees[tid].session].socket != csDispatchGetSocket())
+    if (staticData->sessions[staticData->trees[Tid2Index(tid)].session].socket != csDispatchGetSocket())
     {
         TRCERR("TID for unexpected socket");
         return NULL;
@@ -2575,7 +2699,7 @@ csGetShareByUidTid(
         return NULL;
     }*/
 
-    if (tree->share == NULL || tree->share->map == NULL)
+    if (tree->share == NULL)
     {
         TRCERR("Tree has no share or share has no mapping");
         return NULL;
@@ -2633,7 +2757,7 @@ csLoadShareSecurityDescriptor(
         sizeof(staticData->shares[share->idx].sd.data));
     if (0 == staticData->shares[share->idx].sd.length || !cmSdIsValid(&staticData->shares[share->idx].sd))
     {
-        TRC1P("Cannot load security descriptor for share: %s", cmTDump(staticData->shares[share->idx].name));
+        TRC1P("Cannot load security descriptor for share: %s", cmWDump(staticData->shares[share->idx].name));
         TRC("   loading default security descriptor");
         cmSdGetShareSecurityDescriptor(&staticData->shares[share->idx].sd);
     }
@@ -2676,14 +2800,14 @@ csGetSharesCount(
 
 CSShare*
 csGetHiddenShareByMap(
-        const NQ_TCHAR* map
+        const NQ_WCHAR* map
     )
 {
     NQ_INT i;  /* just an index */
 
     for (i = 0; i < UD_FS_NUMSERVERSHARES; i++)
     {
-        if (!staticData->shares[i].isFree && staticData->shares[i].isHidden == TRUE && (cmTStrincmp(staticData->shares[i].map, map, (NQ_COUNT)cmTStrlen(staticData->shares[i].map)) == 0))
+        if (!staticData->shares[i].isFree && staticData->shares[i].isHidden == TRUE && (cmWStrincmp(staticData->shares[i].map, map, (NQ_COUNT)syWStrlen(staticData->shares[i].map)) == 0))
         {
             return &staticData->shares[i];
         }
@@ -2778,9 +2902,38 @@ csGetUserByIndex(
         {
             if (0 == idx--)
             {
-
                 return &staticData->users[i];
             }
+        }
+    }
+    return NULL;
+}
+
+/*
+ *====================================================================
+ * PURPOSE: get a file by index
+ *--------------------------------------------------------------------
+ * PARAMS:  IN file index
+ *
+ * RETURNS: pointer to a file descriptor or NULL
+ *
+ * NOTES:
+ *====================================================================
+ */
+
+CSFile*
+csGetFileByIndex(
+    NQ_UINT idx
+    )
+{
+    NQ_INT i;       /* just a counter */
+
+    for (i = 0; i < UD_FS_NUMSERVERFILEOPEN; i++)
+    {
+        if (staticData->files[i].fid != CS_ILLEGALID)
+        {
+            if (0 == idx--)
+                return &staticData->files[i];
         }
     }
     return NULL;
@@ -3059,7 +3212,7 @@ csEnumerateNotifyRequest(
 
 #ifdef UD_NQ_INCLUDEEVENTLOG
 
-static const NQ_TCHAR questionMark[] = {cmTChar('?'), 0};
+static const NQ_WCHAR questionMark[] = {cmWChar('?'), 0};
 
 /*====================================================================
  * PURPOSE: Read share connection entries
@@ -3088,16 +3241,25 @@ nqEnumerateConnectedShares (
         {
             const CSUser* pUser = csGetUserByUid(staticData->trees[i].uid);
 
-            cmTStrncpy(
-                buffer->userName,
+#ifdef UD_CM_UNICODEAPPLICATION
+            syWStrncpy(
+            	buffer->userName,
                 NULL == pUser? questionMark : pUser->name,
-                sizeof(buffer->userName) / sizeof(NQ_TCHAR)
+                sizeof(buffer->userName) / sizeof(NQ_WCHAR)
                 );
-            cmTStrncpy(
+            syWStrncpy(
                 buffer->shareName,
                 staticData->trees[i].share->name,
-                sizeof(buffer->shareName) / sizeof(NQ_TCHAR)
+                sizeof(buffer->shareName) / sizeof(NQ_WCHAR)
                 );
+#else
+            if (NULL == pUser)
+            	syUnicodeToAnsi(buffer->userName, questionMark);
+            else
+            	syUnicodeToAnsi(buffer->userName, pUser->name);
+
+            syUnicodeToAnsi(buffer->shareName, staticData->trees[i].share->name);
+#endif
             if (NULL == pUser)
             {
                 syMemset(&buffer->ip, 0, sizeof(buffer->ip));
@@ -3143,22 +3305,32 @@ nqEnumerateOpenFiles (
         if (staticData->files[i].fid != (CSFid)CS_ILLEGALID)
         {
             const CSUser* pUser = csGetUserByUid(staticData->files[i].uid);
-
-            cmTStrncpy(
+#ifdef UD_CM_UNICODEAPPLICATION
+            syWStrncpy(
                 buffer->fileName,
                 staticData->names[staticData->files[i].nid].name,
-                sizeof(buffer->fileName) / sizeof(NQ_TCHAR)
+                sizeof(buffer->fileName) / sizeof(NQ_WCHAR)
                 );
-            cmTStrncpy(
+            syWStrncpy(
                 buffer->userName,
                 NULL == pUser? questionMark : pUser->name,
-                sizeof(buffer->userName) / sizeof(NQ_TCHAR)
+                sizeof(buffer->userName) / sizeof(NQ_WCHAR)
                 );
-            cmTStrncpy(
+            syWStrncpy(
                 buffer->shareName,
                 staticData->trees[staticData->files[i].tid].share->name,
-                sizeof(buffer->shareName) / sizeof(NQ_TCHAR)
+                sizeof(buffer->shareName) / sizeof(NQ_WCHAR)
                 );
+#else
+            if (NULL == pUser)
+               	syUnicodeToAnsi(buffer->userName, questionMark);
+            else
+               	syUnicodeToAnsi(buffer->userName, pUser->name);
+
+            syUnicodeToAnsi(buffer->shareName, staticData->trees[staticData->files[i].tid].share->name);
+
+            syUnicodeToAnsi(buffer->fileName, staticData->names[staticData->files[i].nid].name);
+#endif
             if (NULL == pUser)
             {
                 syMemset(&buffer->ip, 0, sizeof(buffer->ip));
@@ -3204,39 +3376,39 @@ csDumpDatabase(
     syPrintf(" List of connected clients\n");
     for (i=0; i < UD_FS_NUMSERVERSESSIONS; i++)
     {
-        syPrintf("Key: %d\n", staticData->sessions[i].key);
+        syPrintf("Key: %ld\n", (long int)staticData->sessions[i].key);
     }
     syPrintf(" List of logged users\n");
     for (i=0; i < UD_FS_NUMSERVERUSERS; i++)
     {
-        syPrintf("Uid: %d, session: %d\n", staticData->users[i].uid, staticData->users[i].session);
+        syPrintf("Uid: %d, session: %ld\n", staticData->users[i].uid, (long int)staticData->users[i].session);
     }
     syPrintf(" List of tree connections\n");
     for (i=0; i < UD_FS_NUMSERVERTREES; i++)
     {
-        syPrintf("Tid: %d, session: %d, uid: %d, share: %p\n", staticData->trees[i].tid, staticData->trees[i].session, staticData->trees[i].uid, (void *) staticData->trees[i].share);
+        syPrintf("Tid: %d, session: %ld, uid: %d, share: %p\n", staticData->trees[i].tid, (long int)staticData->trees[i].session, staticData->trees[i].uid, (void *) staticData->trees[i].share);
     }
     syPrintf(" List of unique files\n");
     for (i=0; i < UD_FS_NUMSERVERFILENAMES; i++)
     {
-        syPrintf("Nid: %d, name: %s, first: %p\n", staticData->names[i].nid, cmTDump(staticData->names[i].name), (void *) staticData->names[i].first);
+        syPrintf("Nid: %d, name: %s, first: %p\n", staticData->names[i].nid, cmWDump(staticData->names[i].name), (void *) staticData->names[i].first);
     }
     syPrintf(" List of opened files\n");
     for (i=0; i < UD_FS_NUMSERVERFILEOPEN; i++)
     {
-        syPrintf("fid: %d, nid: %d, tid: %d nxt: %p, pr: %p, ntfy: %d, pid: %d\n", staticData->files[i].fid, staticData->files[i].nid, staticData->files[i].tid, (void *) staticData->files[i].next, (void *) staticData->files[i].prev, staticData->files[i].notifyPending, staticData->files[i].pid);
+        syPrintf("fid: %d, nid: %d, tid: %d nxt: %p, pr: %p, ntfy: %d, pid: %ld\n", staticData->files[i].fid, staticData->files[i].nid, staticData->files[i].tid, (void *) staticData->files[i].next, (void *) staticData->files[i].prev, staticData->files[i].notifyPending, (long int)staticData->files[i].pid);
     }
     syPrintf(" List of active search operations\n");
     for (i=0; i < UD_FS_NUMSERVERSEARCHES; i++)
     {
-        syPrintf("Sid: %d, session: %d, tid: %d\n", staticData->searches[i].sid, staticData->searches[i].session, staticData->searches[i].tid);
+        syPrintf("Sid: %d, session: %ld, tid: %d\n", staticData->searches[i].sid, (long int)staticData->searches[i].session, staticData->searches[i].tid);
     }
     syPrintf(" List of shares\n");
     for (i = 0; i < UD_FS_NUMSERVERSHARES; i++)
     {
-        syPrintf("Addr: %p, Name: %s, ", (void *) &staticData->shares[i], cmTDump(staticData->shares[i].name));
-        syPrintf("path: %s, ", cmTDump(staticData->shares[i].map));
-        syPrintf("description: %s, ipc: %d\n", cmTDump(staticData->shares[i].description), staticData->shares[i].ipcFlag);
+        syPrintf("Addr: %p, Name: %s, ", (void *) &staticData->shares[i], cmWDump(staticData->shares[i].name));
+        syPrintf("path: %s, ", cmWDump(staticData->shares[i].map));
+        syPrintf("description: %s, ipc: %d\n", cmWDump(staticData->shares[i].description), staticData->shares[i].ipcFlag);
     }
 
     syPrintf("======== End ============\n\n");
@@ -3268,20 +3440,23 @@ const CMTime *cs2GetServerStartTime(void)
  *====================================================================
  */
 NQ_STATUS
-nqCleanUserServerConnections(
-    const NQ_TCHAR *name,
+nqCleanUserServerConnectionsW(
+    const NQ_WCHAR *name,
     NQ_BOOL isDomainUser
     )
 {
     NQ_INT i; 
     NQ_STATUS result = NQ_FAIL;
+    const NQ_WCHAR *pName;
+    pName = name;
+
 
     /* find all user slots by user name and user type (domain or local), 
        release user and optionally disconnect if there are no more users within the session */
     for (i = 0; i < UD_FS_NUMSERVERUSERS; i++)
     {
         if (   staticData->users[i].uid != CS_ILLEGALID
-            && 0 == cmTStrcmp(staticData->users[i].name, name)
+            && 0 == cmWStrcmp(staticData->users[i].name, pName)
             && isDomainUser == staticData->users[i].isDomainUser
             && !staticData->users[i].isAnonymous
            )
@@ -3291,6 +3466,21 @@ nqCleanUserServerConnections(
        }
     }
     return result;
+}
+
+NQ_STATUS
+nqCleanUserServerConnectionsA(
+    const NQ_CHAR *name,
+    NQ_BOOL isDomainUser
+    )
+{
+    const NQ_WCHAR *pName;
+    NQ_STATIC NQ_WCHAR userNameW[256];
+
+    syAnsiToUnicode(userNameW, name);
+    pName = userNameW;
+
+    return nqCleanUserServerConnectionsW(pName , isDomainUser);
 }
 
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
@@ -3304,7 +3494,7 @@ csIsMessageSigningEnabled(
 
 
 NQ_BOOL
-csIsMessageSigningRequired(void
+csIsMessageSigningRequired(
   )
 {
     return staticData->signingRequired;

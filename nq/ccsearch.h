@@ -38,6 +38,8 @@ typedef struct _ccsearch
 	NQ_BOOL isFirst;		/* TRUE for the first query, FALSE for others. */
     CMBlob lastFile;        /* Pointer to the last file name in the buffer. This may be used by FindNext. */
 	NQ_BOOL localFile;		/* TRUE if the search has a local path , FALSE if remote path */ 
+	NQ_BOOL isAscii;        /* TRUE if path in the search is in ASCII characters */
+	NQ_BOOL disconnected;   /* TRUE when connection was disconnected */
 } CCSearch; /* Search descriptor. */
 
 /* -- API Functions */
@@ -54,6 +56,8 @@ NQ_BOOL ccSearchStart(void);
    Returns 
    None
  */
+NQ_BOOL ccValidateSearchHandle(NQ_HANDLE handle);
+
 void ccSearchShutdown(void);
 
 #endif /* _CCSEARCH_H_ */

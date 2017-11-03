@@ -27,15 +27,21 @@
 typedef struct {
     CSUid uid;                             /* user id */
     CSTid tid;                             /* tree id */
-    const NQ_TCHAR* pFileName;             /* name of the file to query on     */
+    const NQ_WCHAR* pFileName;             /* name of the file to query on     */
     NQ_UINT level;                         /* information level required       */
     const NQ_BYTE* pData;                  /* pointer to the data area in the request */
 } InfoContext;
+/* This code implements information commands and sub commands */
+
+NQ_UINT32									/* NQ file access rights */
+convertNqAccessToNtAccess(
+	NQ_UINT16 nqAccess						/* NQ file access rights */
+	);
 
 NQ_UINT32                                   /* error or 0 */
 csQueryFileInformationByName(
     const CSFile* pFile,                    /* file descriptor (may be NULL)    */
-    const NQ_TCHAR* pFileName,              /* name of the file to query on     */
+    const NQ_WCHAR* pFileName,              /* name of the file to query on     */
     NQ_COUNT shareNameLen,                  /* length of the share map name     */
     NQ_UINT level,                          /* information level required       */
     NQ_BOOL unicodeRequired,                /* whether the client asks for UNICODE names */

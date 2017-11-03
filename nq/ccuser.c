@@ -17,16 +17,18 @@
 #include "ccuser.h"
 #include "ccshare.h"
 #include "amspnego.h"
+#include "cmsmb2.h"
 
 #ifdef UD_NQ_INCLUDECIFSCLIENT
 
 /* -- Static data -- */
 
+static NQ_BOOL isInit = FALSE;
 typedef struct
 {
     SYMutex guard;                  /* critical section guard */
     AMCredentialsW admin;           /* pointer to administrative credentials */
-    NQ_BOOL useAdmin;               /* whether to use admin. credentials */ 
+    NQ_BOOL useAdmin;               /* whether to use admin. credentials */
 }
 StaticData;
 
@@ -59,14 +61,14 @@ static void dumpOne(CMItem * pItem)
 /* wrapper for SMB's doSessionSetup  - used as AM callback. it converts NQ_ERR_MOREDATA into NQ_SUCCESS  */
 static NQ_STATUS doSessionSetup(void * pUser, const CMBlob * outBlob, CMBlob * inBlob)
 {
-    NQ_STATUS status;           /* operation status */
+    NQ_STATUS status; /* operation status */
     CMBlob outBlobFragment;     /* current fragment of the outgoing blob */
-    NQ_COUNT remainingLen;      /* remaing data length in the outgoing blob */
-    NQ_COUNT maxFragmentLen;    /* available length of an outgoing blob gragment */ 
+    NQ_COUNT remainingLen;      /* remaining data length in the outgoing blob */
+    NQ_COUNT maxFragmentLen;    /* available length of an outgoing blob fragment */
 
     outBlobFragment = *outBlob;
     remainingLen = outBlob->len;
-    maxFragmentLen = ((CCUser *)pUser)->server->maxTrans - 120; /* leave enough room for headers */ 
+    maxFragmentLen = (NQ_COUNT)(((CCUser *)pUser)->server->maxTrans - 120); /* leave enough room for headers */
     
     for (;;)
     {
@@ -74,13 +76,16 @@ static NQ_STATUS doSessionSetup(void * pUser, const CMBlob * outBlob, CMBlob * i
         outBlobFragment.len = remainingLen > maxFragmentLen? maxFragmentLen : remainingLen; 
         status = ((CCUser *)pUser)->server->smb->doSessionSetupExtended(pUser, &outBlobFragment, inBlob);
         if (status != NQ_SUCCESS && status != NQ_ERR_MOREDATA)
-            return status;
+            goto Exit;
         if (remainingLen == outBlobFragment.len)
             break;
         remainingLen -= maxFragmentLen;
         outBlobFragment.data += maxFragmentLen;
     }
-    return NQ_SUCCESS;
+    status = NQ_SUCCESS;
+
+Exit:
+    return status;
 }
 #endif /* UD_CC_INCLUDEEXTENDEDSECURITY */
 
@@ -93,7 +98,7 @@ static void disposeUser(CCUser * pUser)
 {
     CCServer * pServer = pUser->server;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "user:%p", pUser);
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "About to dispose user %s", cmWDump(pUser->item.name));
 
     if (pServer->masterUser != (CMItem *)pUser)
@@ -101,7 +106,10 @@ static void disposeUser(CCUser * pUser)
    	    ccUserLogoff(pUser);
         cmListShutdown(&pUser->shares);
         if (NULL != pUser->credentials)
+        {
             cmMemoryFree(pUser->credentials);
+            pUser->credentials = NULL;
+        }
 	    cmListItemRemoveAndDispose((CMItem *)pUser);
     }
     else
@@ -126,16 +134,14 @@ static NQ_BOOL unlockCallback(CMItem * pItem)
 /* query user credentials from application */
 static AMCredentialsW * queryCredentials(const NQ_WCHAR * path)
 {
-	AMCredentialsW * pCredentials = NULL;	/* credentials allocated */
-	
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    AMCredentialsW * pCredentials = NULL;  /* credentials allocated */
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "path:%s", cmWDump(path));
 
 	pCredentials = (AMCredentialsW *)cmMemoryAllocate(sizeof(AMCredentialsW));
 	if (NULL == pCredentials)
 	{
 		sySetLastNqError(NQ_ERR_OUTOFMEMORY);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NULL;
+		goto Exit;
 	}
 	/* query credentials */
     if (staticData->useAdmin)
@@ -144,35 +150,31 @@ static AMCredentialsW * queryCredentials(const NQ_WCHAR * path)
     }
     else
     {
-	    AMCredentials * pCredentialsT;	/* credentials allocated */
-	    pCredentialsT = (AMCredentials *)cmMemoryAllocate(sizeof(AMCredentials));
-	    if (NULL == pCredentialsT)
-	    {
-            cmMemoryFree(pCredentials);
-            sySetLastNqError(NQ_ERR_OUTOFMEMORY);
-		    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		    return NULL;
-	    }
+	    pCredentials->domain.realm[0] = 0;
         syMutexTake(&staticData->guard);
-	    if (!udGetCredentials(path, pCredentialsT->user, pCredentialsT->password, pCredentialsT->domain.name))
+	    if (!udGetCredentials(path, pCredentials->user, pCredentials->password, pCredentials->domain.name))
 	    {
             syMutexGive(&staticData->guard);
-		    cmMemoryFree(pCredentials);
-		    cmMemoryFree(pCredentialsT);
 		    LOGERR(CM_TRC_LEVEL_ERROR, "udGetCredentials canceled");
 		    sySetLastNqError(NQ_ERR_BADPARAM);
-		    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		    return NULL;
+			goto Error;
 	    }
         syMutexGive(&staticData->guard);
-        amCredentialsTcharToW(pCredentials, pCredentialsT);
-        cmMemoryFree(pCredentialsT);
     }
+
+    cmWStrupr(pCredentials->domain.name);
+
 	LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Domain: %s", cmWDump(pCredentials->domain.name));
 	LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "User: %s", cmWDump(pCredentials->user));
-	LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Password: %s", cmWDump(pCredentials->password));
+	LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Password: xxx");
+    goto Exit;
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+Error:
+    cmMemoryFree(pCredentials);
+    pCredentials = NULL;
+
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pCredentials);
 	return pCredentials;
 }
 
@@ -180,27 +182,27 @@ static CCUser * createUser(CCServer * pServer, const AMCredentialsW * pCredentia
 {
 	CCUser * pUser;					/* user pointer */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p credentials:%p", pServer, pCredentials);
 
 	/* create a user and logon to it */
-	pUser = (CCUser *)cmListItemCreateAndAdd(&pServer->users, sizeof(CCUser), pCredentials->user, unlockCallback , TRUE);
+	pUser = (CCUser *)cmListItemCreateAndAdd(&pServer->users, sizeof(CCUser), pCredentials->user, unlockCallback , CM_LISTITEM_LOCK);
+
 	if (NULL == pUser)
 	{
 		sySetLastNqError(NQ_ERR_OUTOFMEMORY);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NULL;
+		goto Exit;
 	}
 
 	pUser->server = pServer;
 	pUser->logged = FALSE;
 	cmListStart(&pUser->shares);
-    pUser->credentials = cmMemoryAllocate(sizeof(AMCredentialsW));
+    pUser->credentials = (AMCredentialsW *)cmMemoryAllocate(sizeof(AMCredentialsW));
 	if (NULL == pUser->credentials)
 	{
 	    cmListItemCheck((CMItem *)pUser);
 		sySetLastNqError(NQ_ERR_OUTOFMEMORY);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NULL;
+		pUser = NULL;
+		goto Exit;
 	}
     syMemcpy(pUser->credentials, pCredentials, sizeof(AMCredentialsW));
     cmListItemAddReference((CMItem *)pUser, (CMItem *)pServer);
@@ -208,6 +210,16 @@ static CCUser * createUser(CCServer * pServer, const AMCredentialsW * pCredentia
    	cmU64Zero(&pUser->uid);
 	pUser->macSessionKey.data = NULL;
     pUser->sessionKey.data = NULL;
+    pUser->isEncrypted = FALSE;
+    pUser->isLogginOff = FALSE;
+#ifdef UD_NQ_INCLUDESMB3
+    pUser->encryptionKey.data = NULL;
+    pUser->decryptionKey.data = NULL;
+    pUser->applicationKey.data = NULL;
+#ifdef UD_NQ_INCLUDESMB311
+    pUser->isPreauthIntegOn = FALSE;
+#endif /* UD_NQ_INCLUDESMB311 */
+#endif /* UD_NQ_INCLUDESMB3 */
    	pUser->isGuest = FALSE;
 #if SY_DEBUGMODE
 	pUser->item.dump = dumpOne; 
@@ -219,59 +231,74 @@ static CCUser * createUser(CCServer * pServer, const AMCredentialsW * pCredentia
 		pUser = NULL;
 	}
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pUser);
 	return pUser;
 }
 
-static CCUser * findUser(CCServer * pServer, const AMCredentialsW * pCredentials)
+CCUser * findUser(CCServer * pServer, const AMCredentialsW * pCredentials)
 {
     CMIterator iterator;    /* user iterator */
+    CCUser * pUser;
 
     cmListIteratorStart(&pServer->users, &iterator);
     while (cmListIteratorHasNext(&iterator))
     {
-        CCUser * pUser = (CCUser *)cmListIteratorNext(&iterator);
-        if (NULL != pUser->credentials &&
+        pUser = (CCUser *)cmListIteratorNext(&iterator);
+        if (pUser->item.findable &&
+        	NULL != pUser->credentials &&
             0 == cmWStrcmp(pCredentials->user, pUser->credentials->user) && 
             0 == cmWStrcmp(pCredentials->domain.name, pUser->credentials->domain.name) && 
             0 == cmWStrcmp(pCredentials->password, pUser->credentials->password) 
             )
         {
             cmListItemLock((CMItem *)pUser);
-            cmListIteratorTerminate(&iterator);
-            return pUser;
+            goto Exit;
         }
     }
+    pUser = NULL;
+
+Exit:
     cmListIteratorTerminate(&iterator);
-    return NULL;
+    return pUser;
 }
 
 /* -- API Functions */
 
 NQ_BOOL ccUserStart(void)
 {
+    NQ_BOOL result = FALSE;
+
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
     if (NULL == staticData)
     {
-        TRCERR("Unable to allocate user data");
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate user data");
+        sySetLastError(NQ_ERR_OUTOFMEMORY);
+        goto Exit;
     }
 #endif /* SY_FORCEALLOCATION */
 
     syMutexCreate(&staticData->guard);
     staticData->useAdmin = FALSE;
-	return TRUE;
+    isInit = TRUE;
+	result = TRUE;
+
+Exit:
+    return result;
 }
 
 void ccUserShutdown(void)
 {
-    syMutexDelete(&staticData->guard);
+	if (TRUE == isInit)
+	{
+		syMutexDelete(&staticData->guard);
+	}
 
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
-        syFree(staticData);
+        cmMemoryFree(staticData);
     staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
 }
@@ -291,20 +318,26 @@ NQ_BOOL ccUserIsAnonymousCredentials(const AMCredentialsW *pCredentials)
 CCUser * ccUserFindById(CCServer * pServer, NQ_UINT64 uid)
 {
     CMIterator iterator;    /* user iterator */
+    CCUser * pNextUser;     /* next user pointer */
 
     ccServerIterateUsers(pServer, &iterator);
     while (cmListIteratorHasNext(&iterator))
     {
-        CCUser * pNextUser;     /* next user pointer */
-
         pNextUser = (CCUser *)cmListIteratorNext(&iterator);
         if (0 == cmU64Cmp(&uid, &pNextUser->uid))
         {
-            return pNextUser;
+        	if (FALSE == pNextUser->item.findable)
+        	{
+        		pNextUser = NULL;
+        	}
+            goto Exit;
         }
     }
+    pNextUser = NULL;
+
+Exit:
     cmListIteratorTerminate(&iterator);
-    return NULL;
+    return pNextUser;
 }
 
 void ccUserIterateShares(CCUser * pUser, CMIterator * iterator)
@@ -314,7 +347,7 @@ void ccUserIterateShares(CCUser * pUser, CMIterator * iterator)
 
 NQ_BOOL ccUserUseSignatures(CCUser * pUser)
 {
-    return !pUser->isAnonymous && (pUser->uid.high != 0 || pUser->uid.low != 0) && NULL != pUser->macSessionKey.data && !pUser->isGuest;
+    return !pUser->isAnonymous && !pUser->isGuest;
 }
 
 void ccUserSetAdministratorCredentials(const AMCredentialsW * credentials)
@@ -326,7 +359,7 @@ void ccUserSetAdministratorCredentials(const AMCredentialsW * credentials)
     staticData->useAdmin = NULL != credentials;
 }
 
-const AMCredentialsW * ccUserGetAdministratorCredentials(void)
+const AMCredentialsW * ccUserGetAdministratorCredentials()
 {
     return staticData->useAdmin ? &staticData->admin : NULL;
 }
@@ -337,7 +370,7 @@ CCUser * ccUserGet(CCServer * pServer, const NQ_WCHAR * path, const AMCredential
 	CCUser * pUser = NULL;				                    /* user pointer */
     const AMCredentialsW * credentials = * pCredentials;    /* credentials to use */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p path:%s credentials:%p", pServer, cmWDump(path), pCredentials);
 
     cmListItemTake((CMItem *)pServer);
 #ifdef UD_CC_CACHECREDENTIALS
@@ -350,23 +383,18 @@ CCUser * ccUserGet(CCServer * pServer, const NQ_WCHAR * path, const AMCredential
     {
         if (!pUser->logged && !ccUserLogon(pUser))
         {
-            cmListItemGive((CMItem *)pServer);
             cmListItemUnlock((CMItem *)pUser);
-            LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	        return NULL;
+            pUser = NULL;
+            goto Exit;
         }
-        cmListItemGive((CMItem *)pServer);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	    return pUser;
+        goto Exit;
     }
     if (NULL != credentials)
     {
         pUser = createUser(pServer, credentials);
         if (NULL != pUser)
         {
-            cmListItemGive((CMItem *)pServer);
-            LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	        return pUser;
+            goto Exit;
         }
     }
 #endif /* UD_CC_CACHECREDENTIALS */
@@ -374,15 +402,16 @@ CCUser * ccUserGet(CCServer * pServer, const NQ_WCHAR * path, const AMCredential
     credentials = queryCredentials(path);
     if (NULL == credentials)
     {
-        cmListItemGive((CMItem *)pServer);
         sySetLastNqError(NQ_ERR_OUTOFMEMORY);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NULL;
+        pUser = NULL;
+        goto Exit;
     }
 
     pUser = findUser(pServer, credentials);
     if (NULL == pUser || (NULL != pUser && !pUser->logged))
     {
+    	if (pUser != NULL)
+    		cmListItemUnlock((CMItem *)pUser); /* remove the lock from findUser */
         pUser = createUser(pServer, credentials);
     }
 
@@ -392,8 +421,9 @@ CCUser * ccUserGet(CCServer * pServer, const NQ_WCHAR * path, const AMCredential
     }
 	cmMemoryFree(credentials);
 
+Exit:
     cmListItemGive((CMItem *)pServer);
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pUser);
 	return pUser;
 }
 
@@ -402,13 +432,24 @@ void ccUserLogoff(CCUser * pUser)
 	CMIterator iterator;		/* to enumerate users */
 	CCServer * pServer;			/* server pointer */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "user:%p", pUser);
 
-    if (!pUser->logged)
+	pServer = pUser->server;
+
+	cmListItemTake(&pServer->item);
+	cmListItemTake(&pUser->item);
+
+	if (!pUser->logged || pUser->isLogginOff)
 	{
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    	return;
+		cmListItemGive(&pUser->item);
+		cmListItemGive(&pServer->item);
+		goto Exit;
 	}
+	pUser->isLogginOff = TRUE;
+
+	cmListItemGive(&pUser->item);
+	cmListItemGive(&pServer->item);
+
 	cmListIteratorStart(&pUser->shares, &iterator);
 	while (cmListIteratorHasNext(&iterator))
 	{
@@ -422,12 +463,20 @@ void ccUserLogoff(CCUser * pUser)
 	pServer = pUser->server;
 	if (NULL!= pServer->smb && pUser->logged)
     {
+		pUser->isLogginOff = TRUE;
 		pServer->smb->doLogOff(pUser);
+		pUser->isLogginOff = FALSE;
         pUser->logged = FALSE;
     }
     amSpnegoFreeKey(&pUser->sessionKey);
 	amSpnegoFreeKey(&pUser->macSessionKey);
+#ifdef UD_NQ_INCLUDESMB3
+	cmMemoryFreeBlob(&pUser->encryptionKey);
+	cmMemoryFreeBlob(&pUser->decryptionKey);
+	cmMemoryFreeBlob(&pUser->applicationKey);
+#endif /* UD_NQ_INCLUDESMB3 */
 
+Exit:
 	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
@@ -435,22 +484,31 @@ NQ_BOOL ccUserLogon(CCUser * pUser)
 {
 	NQ_STATUS status;	        /* SPNEGO status */
 	CCServer * pServer;	        /* server pointer */
+    NQ_BOOL result = FALSE;     /* return value */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-
-    amSpnegoFreeKey(&pUser->sessionKey);       /* in case of reconnect, otherwise - will be NULL */
-	amSpnegoFreeKey(&pUser->macSessionKey);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "user:%p", pUser);
 
     cmListItemTake((CMItem *)pUser);
     if (pUser->logged)
     {
-        cmListItemGive((CMItem *)pUser);
         LOGMSG(CM_TRC_LEVEL_MESS_ALWAYS, "Logon: user already logged in");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return TRUE;
+        result = TRUE;
+        goto Exit;
     }
 
-    pServer = pUser->server;
+	pServer = pUser->server;
+#ifdef UD_NQ_INCLUDESMB311
+    syMemcpy(pUser->preauthIntegHashVal , pServer->preauthIntegHashVal , SMB3_PREAUTH_INTEG_HASH_LENGTH);
+    pUser->isPreauthIntegOn = TRUE; /* hashing process starting. turn on hash flag */
+#endif /* UD_NQ_INCLUDESMB311 */
+	
+    amSpnegoFreeKey(&pUser->sessionKey);       /* in case of reconnect, otherwise - will be NULL */
+   	amSpnegoFreeKey(&pUser->macSessionKey);
+#ifdef UD_NQ_INCLUDESMB3
+	cmMemoryFreeBlob(&pUser->encryptionKey);
+	cmMemoryFreeBlob(&pUser->decryptionKey);
+	cmMemoryFreeBlob(&pUser->applicationKey);
+#endif /* UD_NQ_INCLUDESMB3 */
 
 #ifdef UD_CC_INCLUDEEXTENDEDSECURITY
     if (pServer->useExtendedSecurity)
@@ -470,19 +528,37 @@ NQ_BOOL ccUserLogon(CCUser * pUser)
             );
         if (AM_SPNEGO_SUCCESS == status)
         {
-			pServer->useSigning = TRUE;
-			if (!pServer->isLoggedIn && !pUser->isAnonymous)
-			{
-			    pServer->isLoggedIn = TRUE;
-			}
-			pUser->logged = TRUE;
+        	pUser->logged = TRUE;
+        	if (!pUser->isAnonymous && pServer->firstSecurityBlob.len == 0 && !pUser->isGuest)
+        	{
+        		result = FALSE;
+				goto Exit;
+        	}
+        	if (pServer->capabilities & CC_CAP_MESSAGESIGNING && nqGetMessageSigning())
+        		pServer->useSigning = TRUE;
+
         }
-        cmListItemGive((CMItem *)pUser);
         if (AM_SPNEGO_SUCCESS == status && NULL != pUser->macSessionKey.data && pUser->macSessionKey.len > pServer->smb->maxSigningKeyLen)
             pUser->macSessionKey.len = pServer->smb->maxSigningKeyLen;  /* restrict bigger keys */
+
+#ifdef UD_NQ_INCLUDESMB311
+        if (pServer->smb->revision < SMB3_1_1_DIALECTREVISION)
+        /* for revision 3.1.1 key derivation done earlier since we need to verify session setup success packet signature */
+#endif
+        	pUser->server->smb->keyDerivation(pUser);
+
+#ifdef UD_NQ_INCLUDESMB3
+        if (AM_SPNEGO_SUCCESS != status)
+        {
+            cmMemoryFreeBlob(&pUser->encryptionKey);
+            cmMemoryFreeBlob(&pUser->decryptionKey);
+            cmMemoryFreeBlob(&pUser->applicationKey);
+        }
+#endif /* UD_NQ_INCLUDESMB3 */
+
         LOGMSG(CM_TRC_LEVEL_MESS_ALWAYS, "Logon: %s", AM_SPNEGO_SUCCESS == status ? "ok" : "failed");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return AM_SPNEGO_SUCCESS == status; 
+        result = (AM_SPNEGO_SUCCESS == status);
+        goto Exit;
 	}
 	else
 #endif /* UD_CC_INCLUDEEXTENDEDSECURITY */
@@ -496,10 +572,8 @@ NQ_BOOL ccUserLogon(CCUser * pUser)
 
             if (NULL == pServer->firstSecurityBlob.data)
             {
-                cmListItemGive((CMItem *)pUser);
                 sySetLastError(NQ_ERR_BADPARAM);
-                LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                return FALSE;
+                goto Exit;
             }
             pUser->sessionKey = cmMemoryCloneBlob(&pServer->firstSecurityBlob);
             
@@ -516,14 +590,9 @@ NQ_BOOL ccUserLogon(CCUser * pUser)
                 if (NQ_SUCCESS == status)
 			    {
         			pServer->useSigning = TRUE;
-                    pUser->logged = TRUE;
-        			if (!pServer->isLoggedIn && !pUser->isAnonymous)
-        			{
-        			    pServer->isLoggedIn = TRUE;
-        			}
-                    cmListItemGive((CMItem *)pUser);
-				    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-				    return TRUE;
+                    pUser->logged = TRUE;        			
+				    result = TRUE;
+				    goto Exit;
 			    }
                 amSpnegoFreeKey(&pUser->sessionKey);
 			    sySetLastNqError((NQ_UINT32)status);
@@ -540,37 +609,41 @@ NQ_BOOL ccUserLogon(CCUser * pUser)
 			    {
         			pServer->useSigning = TRUE;
                     pUser->logged = TRUE;
-        			if (!pServer->isLoggedIn && !pUser->isAnonymous)
-        			{
-        			    pServer->isLoggedIn = TRUE;
-        			}
                     if (NULL != pUser->macSessionKey.data && pUser->macSessionKey.len > 16)
                         pUser->macSessionKey.len = 16;  /* restict bigger keys */
-                    cmListItemGive((CMItem *)pUser);
-				    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-				    return TRUE;
+				    result = TRUE;
+				    goto Exit;
 			    }
                 amSpnegoFreeKey(&pUser->sessionKey);
                 amSpnegoFreeKey(&pUser->macSessionKey);
+#ifdef UD_NQ_INCLUDESMB3
+                cmMemoryFreeBlob(&pUser->encryptionKey);
+                cmMemoryFreeBlob(&pUser->decryptionKey);
+                cmMemoryFreeBlob(&pUser->applicationKey);
+#endif /* UD_NQ_INCLUDESMB3 */
+
 			    sySetLastNqError((NQ_UINT32)status);
 		    }
             else
             {
                 cmMemoryFreeBlob(&pUser->sessionKey);
+                sySetLastNqError(NQ_ERR_LOGONFAILURE);
             }
 
         }
     }
-    cmListItemGive((CMItem *)pUser);   
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return FALSE;
+Exit:
+    cmListItemGive((CMItem *)pUser);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+	return result;
 }
 
 NQ_BOOL ccUserReconnectShares(CCUser * pUser)
 {
-	CMIterator iterator;		/* to enumerate users */
+	CMIterator 	iterator;		/* to enumerate users */
+	NQ_BOOL		res = FALSE;
 	
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "user:%p", pUser);
 	
 	cmListIteratorStart(&pUser->shares, &iterator);
 	while (cmListIteratorHasNext(&iterator))
@@ -578,13 +651,17 @@ NQ_BOOL ccUserReconnectShares(CCUser * pUser)
 		CCShare * pShare;			/* next share pointer */
 		
 		pShare = (CCShare *)cmListIteratorNext(&iterator);
-		ccShareConnectExisting(pShare, TRUE);
-		ccShareReopenFiles(pShare);
+		res = ccShareConnectExisting(pShare, NULL, TRUE);
+		if (res)
+		{
+			/* if a single file failed to restorer we still return true so other files will continue previous activity */
+			ccShareReopenFiles(pShare);
+		}
 	}
 	cmListIteratorTerminate(&iterator);
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return TRUE;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", res ? "TRUE" : "FALSE");
+	return res;
 }
 
 #endif /* UD_NQ_INCLUDECIFSCLIENT */

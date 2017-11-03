@@ -25,8 +25,8 @@
 
 /* value of the flags and flags2 field for a server response */
 
-#define CS_SMBFLAGS   0x88    /* caseinsensitive & response */
-#define CS_SMBFLAGS2  cmHtol16(0x0001)  /* unicode & aware of long names */
+#define CS_SMBFLAGS   0x88              /* case insensitive & response */
+#define CS_SMBFLAGS2  cmHtol16(0x0001)  /* aware of long names */
 
 /* supported dialect */
 
@@ -42,8 +42,8 @@
 #define CS_PASSWORDLEN      16              /* the exact length of the password */
 
 #define CS_SMB2_SESSIONEXPIRATIONTIME  (10*3600)  /* maximal time (in seconds) for smb2 session (uid) to live */
-#define CS_SMB2_MAX_READ_SIZE   (CS_MAXBUFFERSIZE - SMB2_HEADERSIZE - 16)   /* 16 = sructure size of SMB2 Read command  */
-#define CS_SMB2_MAX_WRITE_SIZE  (CS_MAXBUFFERSIZE - SMB2_HEADERSIZE - 48)   /* 48 = sructure size of SMB2 Write command */
+#define CS_SMB2_MAX_READ_SIZE   (CS_MAXBUFFERSIZE - SMB2_HEADERSIZE - 16)   /* 16 = structure size of SMB2 Read command  */
+#define CS_SMB2_MAX_WRITE_SIZE  (CS_MAXBUFFERSIZE - SMB2_HEADERSIZE - 48)   /* 48 = structure size of SMB2 Write command */
 
 #endif  /* _CSPARAMS_H_ */
 

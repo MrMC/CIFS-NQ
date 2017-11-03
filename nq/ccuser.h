@@ -42,6 +42,17 @@ typedef struct _ccuser
 	CMBlob sessionKey;			        /* Session key - used for logons and later for message signing. Data is allocated. */
 	CMBlob macSessionKey;		        /* MAC session key. Used for signing. Data is allocated. */
 	NQ_BOOL isGuest;					/* TRUE when user is guest */
+    NQ_BOOL isEncrypted;                /* TRUE when (global) data encryption is required for session (SMB3).*/
+    NQ_BOOL isLogginOff;				/* TRUE when user is going to log off */
+#ifdef UD_NQ_INCLUDESMB3
+	CMBlob encryptionKey;
+	CMBlob decryptionKey;
+	CMBlob applicationKey;
+#ifdef UD_NQ_INCLUDESMB311
+	NQ_BOOL isPreauthIntegOn;	/* is pre-authentication integrity validation on*/
+	NQ_BYTE preauthIntegHashVal[SMB3_PREAUTH_INTEG_HASH_LENGTH]; /* array to hold hash results of negotiate packets */
+#endif /* UD_NQ_INCLUDESMB311 */
+#endif /* UD_NQ_INCLUDESMB3 */
 } CCUser; /* User logon. */
 
 /* -- API Functions */
@@ -198,6 +209,6 @@ void ccUserSetAdministratorCredentials(const AMCredentialsW * credentials);
    credentials. 
    Notes
    NQ assumes a critical section between */
-const AMCredentialsW * ccUserGetAdministratorCredentials(void);
+const AMCredentialsW * ccUserGetAdministratorCredentials();
 
 #endif /* _CCUSER_H_ */

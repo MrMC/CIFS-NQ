@@ -24,9 +24,13 @@
    TRUE on success, FALSE on failure.                          */
 typedef struct 
 {
-    NQ_IPADDRESS ip;    /* IP address   either v4 or v6 */
-    NQ_UINT32 bcast;    /* IPv4 broadcast address */ 
-    NQ_UINT32 subnet;   /* IPv4 subnet address */
+    NQ_IPADDRESS ip;    	/* IP address   either v4 or v6 */
+    NQ_UINT32 bcast;   	 	/* IPv4 broadcast address */
+    NQ_UINT32 subnet;   	/* IPv4 subnet address */
+#ifdef CM_NQ_STORAGE
+    NQ_UINT osIndex;		/* adapter index as in the OS */
+    NQ_BOOL rdmaCapable;	/* TRUE when this adapter supports RDMA */
+#endif
 }
 CMSelfIp;
 

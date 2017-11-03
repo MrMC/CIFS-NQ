@@ -18,6 +18,7 @@
 #include "ccfile.h"
 #include "ccutils.h"
 #include "ccdfs.h"
+#include "ccmount.h"
 
 #ifdef UD_NQ_INCLUDECIFSCLIENT
 
@@ -25,7 +26,7 @@
 
 
 /*
- * Explicitely dispose and disconnect server:
+ * Explicitly dispose and disconnect server:
  *  - disconnects from the share
  *  - disposes private data  
  */
@@ -33,38 +34,27 @@ static void disposeShare(CCShare * pShare)
 {
 	CMIterator iterator;
 	
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "share:%p", pShare);
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "About to dispose share %s ", cmWDump(pShare->item.name));
 
-	/* Currently cmListShutdown doesn't call the item Callback we have to do it manually*/
+	cmListShutdown(&pShare->files);
 
-	cmListIteratorStart(&pShare->files, &iterator);
-    while (cmListIteratorHasNext(&iterator))
-    {
-        CMItem * pItem;
+    /* Currently cmListShutdown doesn't call the item Callback we have to do it manually*/
 
-        pItem = cmListIteratorNext(&iterator);
-        cmListItemUnlock(pItem);
-    }
-    cmListIteratorTerminate(&iterator);
-	
 	cmListIteratorStart(&pShare->searches, &iterator);
     while (cmListIteratorHasNext(&iterator))
     {
         CMItem * pItem;
-
         pItem = cmListIteratorNext(&iterator);
         cmListItemUnlock(pItem);
     }
     cmListIteratorTerminate(&iterator);
-	
-    cmListShutdown(&pShare->files);
 	cmListShutdown(&pShare->searches);
+
     if (pShare->connected)
         ccShareDisconnect(pShare);
     cmListItemRemoveAndDispose((CMItem *)pShare);
     LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-
 }
 
 /*
@@ -85,10 +75,10 @@ static NQ_BOOL unlockCallback(CMItem * pItem)
 
 static void dumpOne(CMItem * pItem)
 {
-#ifdef UD_NQ_INCLUDETRACE
+#if defined (UD_NQ_EXTERNALTRACE) || defined (NQ_INTERNALTRACE)
     CCShare * pShare = (CCShare *)pItem;
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "  Share:: TID: %d", pShare->tid);
-#endif /* UD_NQ_INCLUDETRACE */
+#endif /* defined (UD_NQ_EXTERNALTRACE) || defined (NQ_INTERNALTRACE) */
 }
 #endif /* SY_DEBUGMODE */
 
@@ -98,33 +88,42 @@ static void dumpOne(CMItem * pItem)
 
 static CCShare * shareCreate(const NQ_WCHAR * path, const NQ_WCHAR * treeName, NQ_BOOL isIpc, CCUser * pUser,const AMCredentialsW ** pCredentials)
 {
-    CCShare * pShare;       /* share pointer */
+    CCShare * pShare;         /* share pointer */
+    CCShare * pResult = NULL; /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "path:%s tree:%s isIpc:%s user:%p credentials:%p", cmWDump(path), cmWDump(treeName), isIpc ? "TRUE" : "FALSE", pUser, pCredentials);
 
     /* create share object */
-    pShare = (CCShare *)cmListItemCreateAndAdd(&pUser->shares, sizeof(CCShare), treeName, unlockCallback , TRUE);
+    pShare = (CCShare *)cmListItemCreateAndAdd(&pUser->shares, sizeof(CCShare), treeName, unlockCallback , CM_LISTITEM_LOCK);
     if (NULL == pShare)
     {
         cmListItemUnlock((CMItem *)pUser);  /* try disposal */
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_OUTOFMEMORY);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NULL;
+        goto Exit;
     }
     cmListStart(&pShare->files);
 	cmListStart(&pShare->searches);
     pShare->user = pUser;
     pShare->connected = FALSE;
     pShare->isIpc = isIpc;
+    pShare->isPrinter = FALSE;
+    pShare->encrypt = FALSE;
     pShare->dfsReferral = NULL;
+    pShare->flags = 0;
+    pShare->capabilities = 0;
     cmListItemAddReference((CMItem *)pShare, (CMItem *)pUser);
     cmListItemUnlock((CMItem *)pUser);
 
 #if SY_DEBUGMODE
     pShare->item.dump = dumpOne; 
 #endif /* SY_DEBUGMODE */
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return pShare;
+
+    pResult = pShare;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pResult);
+    return pResult;
 }
 
 /* -- API Functions */
@@ -141,28 +140,30 @@ void ccShareShutdown(void)
 
 CCShare * ccShareFindById(CCUser * pUser, NQ_UINT32 tid)
 {
-    CMIterator iterator;    /* user iterator */
+    CMIterator iterator;         /* user iterator */
+    CCShare * pNextShare = NULL; /* next share pointer */
 
     ccUserIterateShares(pUser, &iterator);
     while (cmListIteratorHasNext(&iterator))
     {
-        CCShare * pNextShare;     /* next share pointer */
 
         pNextShare = (CCShare *)cmListIteratorNext(&iterator);
         if (tid == pNextShare->tid)
         {
-            return pNextShare;
+            goto Exit;
         }
     }
+
+Exit:
     cmListIteratorTerminate(&iterator);
-    return NULL;
+    return pNextShare;
 }
 
 CCShare * ccShareFind(CCServer * pServer, const NQ_WCHAR * path, const NQ_WCHAR * treeName,  CCUser * pUser,const AMCredentialsW ** pCredentials)
 {
     CCShare * pShare;     /* share pointer */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p path:%s tree:%s user:%p credentials:%p", pServer, cmWDump(path), cmWDump(treeName), pUser, pCredentials );
 
     cmListItemTake((CMItem *)pServer);
 
@@ -174,41 +175,39 @@ CCShare * ccShareFind(CCServer * pServer, const NQ_WCHAR * path, const NQ_WCHAR 
         cmListItemUnlock((CMItem *)pUser);
     }
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "share: %s %s", cmWDump((const NQ_WCHAR *)treeName), pShare ? "found" : "not found");
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, " result:%p", pShare);
     return pShare;
 }
 
 
-CCShare * ccShareConnect(const NQ_WCHAR * path, const AMCredentialsW ** pCredentials, NQ_BOOL doDfs)
+CCShare * ccShareConnect(const NQ_WCHAR * path, void *pMount, const AMCredentialsW ** pCredentials, NQ_BOOL doDfs)
 {
-    const NQ_WCHAR * serverName;            /* a copy of host name portion */
-    const NQ_WCHAR * treeName;              /* a copy of three path portion */
+    const NQ_WCHAR * serverName = NULL;     /* a copy of host name portion */
+    const NQ_WCHAR * treeName = NULL;       /* a copy of tree path portion */
     CCServer       * pServer = NULL;        /* server object pointer */
     CCShare        * pShare = NULL;         /* share object pointer */
     CCUser         * pUser = NULL;          /* user object pointer */
     NQ_BOOL          security[] = {TRUE, FALSE};    /* whether to use extended security */
-    NQ_INT           i;                     /* just a counter */
+    NQ_COUNT         i;                     /* just a counter */
     NQ_STATUS        prevStatus = 0;        /* status to handle failed connect tries*/        
+    CCShare        * pResult = NULL;        /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "path: %s, doDfs: %d", cmWDump((const NQ_WCHAR *)path), doDfs);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "path:%s credentials:%p doDfs:%s", cmWDump(path), pCredentials, doDfs ? "TRUE" : "FALSE");
 
     serverName = ccUtilsHostFromRemotePath(path);
     if (NULL == serverName)
     {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_OUTOFMEMORY);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NULL;
+        goto Exit;
     }
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "serverName: %s", cmWDump((const NQ_WCHAR *)serverName));
 
     treeName = ccUtilsShareFromRemotePath(path);
     if (NULL == treeName)
     {
-        cmMemoryFree(serverName);
         sySetLastError(NQ_ERR_OUTOFMEMORY);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NULL;
+        goto Exit;
     }
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "treeName: %s", cmWDump((const NQ_WCHAR *)treeName));
 
@@ -221,7 +220,7 @@ CCShare * ccShareConnect(const NQ_WCHAR * path, const AMCredentialsW ** pCredent
             LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Created or found server: %p %s", pServer, cmWDump((const NQ_WCHAR *)pServer->item.name));
             cmListItemLock((CMItem *)pServer);  
             cmListItemTake((CMItem *)pServer);
-            
+
             pUser = ccUserGet(pServer, path, pCredentials);
             if (NULL == pUser)
             {
@@ -230,6 +229,26 @@ CCShare * ccShareConnect(const NQ_WCHAR * path, const AMCredentialsW ** pCredent
                 cmListItemUnlock((CMItem *)pServer);
                 LOGERR(CM_TRC_LEVEL_ERROR , "Couldn't Find or Create User");
                 continue;
+            }
+            else
+            {
+            	if (!pServer->isNegotiationValidated)
+            	{
+            		if (FALSE == pServer->smb->validateNegotiate(pServer, pUser, NULL))
+					{
+						cmListItemGive((CMItem *)pServer);
+						cmListItemUnlock((CMItem *)pServer);
+						cmListItemUnlock((CMItem *)pServer);
+						cmListItemGive((CMItem *)pUser);
+						cmListItemUnlock((CMItem *)pUser);
+						LOGERR(CM_TRC_LEVEL_ERROR , "validate negotiation failed.");
+						break;
+					}
+					else
+					{
+						pServer->isNegotiationValidated = TRUE;
+					}
+            	}
             }
             LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Created or found user: %p %s", pUser, cmWDump((const NQ_WCHAR *)pUser->item.name));
             
@@ -242,20 +261,17 @@ CCShare * ccShareConnect(const NQ_WCHAR * path, const AMCredentialsW ** pCredent
             {
                 cmListItemUnlock((CMItem *)pServer);
             }
-            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Created or found share: %p %s", pShare, cmWDump((const NQ_WCHAR *)pShare->item.name));
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Created or found share: %p %s", pShare, NULL != pShare? cmWDump((const NQ_WCHAR *)pShare->item.name) : "");
             
-            if (NULL != pShare  && !ccShareConnectExisting(pShare, doDfs))
+            if (NULL != pShare  && !ccShareConnectExisting(pShare, (CCMount *)pMount, doDfs))
             {
                 cmListItemGive((CMItem *)pServer);
                 prevStatus = syGetLastError();
                 if (NULL != pShare)
-                    cmListItemUnlock((CMItem *)pShare); 
+                    cmListItemUnlock((CMItem *)pShare);
                 cmListItemUnlock((CMItem *)pServer);
-                cmMemoryFree(serverName);
-                cmMemoryFree(treeName);
                 sySetLastError(prevStatus);
-                LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                return NULL;
+                goto Exit;
             }
             cmListItemUnlock((CMItem *)pServer);
             if (NULL != pShare && doDfs && NULL != pShare->dfsReferral)
@@ -281,69 +297,93 @@ CCShare * ccShareConnect(const NQ_WCHAR * path, const AMCredentialsW ** pCredent
             break;
     }
 
-    cmMemoryFree(serverName);
-    cmMemoryFree(treeName);
     if (NULL == pShare)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Unable to connect to remote path");
-    }    
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return pShare;
+    }
+
+    pResult = pShare;
+
+Exit:
+    cmMemoryFree(serverName);
+    cmMemoryFree(treeName);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pResult);
+    return pResult;
 }
 
 CCShare * ccShareConnectIpc(CCServer * pServer, const AMCredentialsW ** pCredentials)
 {
     const NQ_WCHAR treeName[] = {cmWChar('I'), cmWChar('P'), cmWChar('C'), cmWChar('$'), cmWChar(0)};
-    CCShare * pShare;       /* share object pointer */
+    CCShare * pShare;         /* share object pointer */
     CCUser  * pUser;
-    NQ_WCHAR * path;        /* full path to IPC */
-    NQ_STATUS   prevStatus; /* Status in case connection failed*/
+    NQ_WCHAR * path = NULL;   /* full path to IPC */
+    NQ_STATUS   prevStatus;   /* Status in case connection failed*/
+    CCShare * pResult = NULL; /* share object pointer */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p credentials:%p", pServer, pCredentials);
 
     path = ccUtilsComposeRemotePathToShare(pServer->item.name, treeName);
     if (NULL == path)
     {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_OUTOFMEMORY);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NULL;
+        goto Exit;
     }
     pUser = ccUserGet(pServer, path, pCredentials);
     if (NULL == pUser)
     {
-        cmMemoryFree(path);
         LOGERR(CM_TRC_LEVEL_ERROR , "Couldn't Find or Create User");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NULL;
+        goto Exit;
     }
+
     pShare = ccShareFind(pServer, path, treeName, pUser, pCredentials);
     if (NULL == pShare)
     {
         pShare = shareCreate(path, treeName, TRUE, pUser, pCredentials);
     }
-    if (NULL != pShare && !pShare->connected && !ccShareConnectExisting(pShare, FALSE))
+    if (NULL == pShare)
+    {
+    	goto Exit;
+    }
+
+    if (!pShare->connected && !ccShareConnectExisting(pShare, NULL, FALSE))
     {
         prevStatus = syGetLastError();
         cmListItemUnlock((CMItem *)pShare);
-        cmMemoryFree(path);
         sySetLastError(prevStatus);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NULL;
+        goto Exit;
     }
-    cmMemoryFree(path);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return pShare;
+    if (!pServer->isNegotiationValidated)
+    {
+		if (FALSE == pServer->smb->validateNegotiate(pServer, pUser, pShare))
+		{
+			cmListItemUnlock((CMItem *)pShare);
+			LOGERR(CM_TRC_LEVEL_ERROR , "validate negotiation failed.");
+			pShare = NULL;
+		}
+		else
+		{
+			pServer->isNegotiationValidated = TRUE;
+		}
+    }
+
+    pResult = pShare;
+
+Exit:
+    cmMemoryFree(path);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pResult);
+    return pResult;
 }
 
 CCShare * ccShareConnectIpcAnonymously(const NQ_WCHAR * server)
 {
     CCServer * pServer = NULL;    /* pointer to server */
-    CCShare * pShare = NULL;    /* pointer to IPC$ share */
+    CCShare * pShare = NULL;      /* pointer to IPC$ share */
     NQ_BOOL security[] = {TRUE, FALSE}; /* whether to use extended security */
-    NQ_INT i;                       /* just a counter */
+    NQ_COUNT i;                   /* just a counter */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%s", cmWDump(server));
 
     for (i = 0; i < sizeof(security)/sizeof(security[0]); i++)
     {
@@ -368,7 +408,7 @@ CCShare * ccShareConnectIpcAnonymously(const NQ_WCHAR * server)
         }
     }
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pShare);
     return pShare;
 }
 
@@ -389,34 +429,42 @@ void ccShareDisconnect(CCShare * pShare)
     }
 }
 
-NQ_BOOL ccShareConnectExisting(CCShare * pShare, NQ_BOOL doDfs)
+NQ_BOOL ccShareConnectExisting(CCShare * pShare, void *pMount, NQ_BOOL doDfs)
 {
     NQ_STATUS res;            /* exchange status */
     CCServer * pServer;       /* connected server */
+    NQ_BOOL result = FALSE;   /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-    
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "share:%p doDfs:%s", pShare, doDfs ? "TRUE" : "FALSE");
+
     pServer = pShare->user->server;
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Server: %p, %s", pServer, cmWDump(pServer->item.name));
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Share: %p, %s, doDfs: %d", pShare, cmWDump(pShare->item.name), doDfs);
 
+    cmListItemTake((CMItem *)pServer);
     cmListItemTake((CMItem *)pShare);
     if (pShare->connected)
     {
+        cmListItemGive((CMItem *)pShare);
+        cmListItemGive((CMItem *)pServer);
         if (!ccShareEcho(pShare))
         {
-            pShare->user->server->transport.connected = FALSE;
+            cmListItemTake((CMItem *)pServer);
+            cmListItemTake((CMItem *)pShare);
             res = ccServerReconnect(pShare->user->server);
             if (res != TRUE)
             {
-                cmListItemGive((CMItem *)pShare);
-                return FALSE; 
+                goto Exit; 
             }
         }
-        cmListItemGive((CMItem *)pShare);
+        else
+        {
+            cmListItemTake((CMItem *)pServer);
+            cmListItemTake((CMItem *)pShare);
+        }
         LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Share already connected");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return TRUE;
+        result = TRUE;
+        goto Exit; 
     }
 
 #ifdef UD_CC_INCLUDEDFS    
@@ -424,9 +472,9 @@ NQ_BOOL ccShareConnectExisting(CCShare * pShare, NQ_BOOL doDfs)
         CCDfsResult dfsResult;      /* result of DFS resolution */
 
         /* resolve share (not file path) over DFS, done once on addMount() */
-        if (doDfs && !pShare->isIpc)
+        if (doDfs && !pShare->isIpc && !pShare->isPrinter)
         {
-            dfsResult = ccDfsResolvePath(pShare, NULL); 
+            dfsResult = ccDfsResolvePath((CCMount *)pMount, pShare, NULL, NULL);
             if (NULL != dfsResult.path)
             {
                 pShare->dfsReferral = dfsResult.share;
@@ -434,10 +482,9 @@ NQ_BOOL ccShareConnectExisting(CCShare * pShare, NQ_BOOL doDfs)
                 LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Resolved share: %p, %s", pShare, cmWDump(dfsResult.share->item.name));
                 ccDfsResolveDispose(&dfsResult);
                 /* resolved share is always connected */
-                cmListItemGive((CMItem *)pShare);
                 LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Share connected");
-                LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                return TRUE;
+                result = TRUE;
+                goto Exit; 
             }
         }
     }
@@ -447,42 +494,50 @@ NQ_BOOL ccShareConnectExisting(CCShare * pShare, NQ_BOOL doDfs)
     if (!pShare->connected)
     {
 #ifdef UD_CC_INCLUDEDFS 
-        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Last error: %d", syGetLastError()); 
-        if (doDfs && (syGetLastError() == NQ_ERR_BADACCESS)) 
-        { 
-            cmListItemGive((CMItem *)pShare); 
-            LOGERR(CM_TRC_LEVEL_ERROR, "DFS was attempted, but got access-related error"); 
-            LOGFE(CM_TRC_LEVEL_FUNC_COMMON); 
-            return FALSE; 
-        } 
+        {
+            NQ_STATUS lastError = syGetLastError();
+
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Last error: 0x%x", lastError);
+            if (doDfs && (lastError == NQ_ERR_BADACCESS))
+            {
+                LOGERR(CM_TRC_LEVEL_ERROR, "DFS was attempted, but got access-related error");
+                goto Exit;
+            }
+        }
 #endif /* UD_CC_INCLUDEDFS */ 
         res = pServer->smb->doTreeConnect(pShare);
         if (NQ_SUCCESS != res)
         {
-            cmListItemGive((CMItem *)pShare);
             sySetLastError((NQ_UINT32)res);
             LOGERR(CM_TRC_LEVEL_ERROR, "Failed to connect");
-            LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-            return FALSE;
+            goto Exit; 
         }
         pShare->connected = TRUE;
     }
-    cmListItemGive((CMItem *)pShare);
+
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Share connected");
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return TRUE;
+    result = TRUE;
+
+Exit:
+    cmListItemGive((CMItem *)pShare);
+    cmListItemGive((CMItem *)pServer);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", result);
+    return result;
 }
 
-void ccShareReopenFiles(CCShare * pShare)
+NQ_BOOL ccShareReopenFiles(CCShare * pShare)
 {
-    CMIterator iterator;    /* to enumerate files */
+    CMIterator  iterator;    /* to enumerate files */
+    NQ_BOOL     res = TRUE;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "share:%p", pShare);
 
     if (pShare->isIpc)
     {
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return;   /* no file restore for IPC$ */
+        /* no file restore for IPC$ */
+        LOGERR(CM_TRC_LEVEL_ERROR, "no file restore for IPC");
+        res = FALSE;
+        goto Exit;
     }
 
     cmListIteratorStart(&pShare->files, &iterator);
@@ -491,31 +546,37 @@ void ccShareReopenFiles(CCShare * pShare)
         CCFile * pFile;     /* next file pointer */
 
         pFile = (CCFile *)cmListIteratorNext(&iterator);
-        ccFileRestore(pFile);
+        if (ccFileRestore(pFile) == FALSE)
+        	res = FALSE;
     }
     cmListIteratorTerminate(&iterator);
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", res ? "TRUE" : "FALSE");
+    return res;
 }
 
 NQ_BOOL ccShareEcho(CCShare * pShare)
 {
     CCServer *  pServer;
     NQ_STATUS   res;
+    NQ_BOOL result = FALSE;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-    
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "share:%p", pShare);
+
     pServer = pShare->user->server;
 
     res = pServer->smb->doEcho(pShare);
-    if (res == NQ_ERR_NOTCONNECTED || res == NQ_ERR_TIMEOUT || res == NQ_ERR_RECONNECTREQUIRED)
+    if (res == NQ_ERR_NOTCONNECTED || res == NQ_ERR_TIMEOUT || res == (NQ_STATUS) NQ_ERR_RECONNECTREQUIRED)
     {
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "doEcho() failed:%d", res);
+        goto Exit;
     }
-    
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return TRUE;
+    result = TRUE;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+    return result;
 }
 
 #endif /* UD_NQ_INCLUDECIFSCLIENT */
-

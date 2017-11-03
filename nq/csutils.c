@@ -30,8 +30,8 @@
 
 static NQ_BOOL
 findFileInPath(
-    const NQ_TCHAR* path,       /* path to the containing directory (in correct case) */
-    NQ_TCHAR* file              /* file name to look for (may have incorrect case) */
+    const NQ_WCHAR* path,       /* path to the containing directory (in correct case) */
+    NQ_WCHAR* file              /* file name to look for (may have incorrect case) */
     );
 
 /*
@@ -77,7 +77,7 @@ csPrepareSocket(
 #ifdef UD_NQ_USETRANSPORTNETBIOS
     case NS_TRANSPORT_NETBIOS:
         cmNetBiosNameFormat((NQ_CHAR*)cmNetBiosGetHostNameInfo()->name, CM_NB_POSTFIX_SERVER);
-        res = nsBindNetBios(socket, cmNetBiosGetHostNameInfo());
+        res = nsBindNetBios(socket, cmNetBiosGetHostNameInfo(), NS_BIND_SERVER);
         break;
 #endif /* UD_NQ_USETRANSPORTNETBIOS */
 
@@ -221,11 +221,11 @@ csChangeFileAttributes(
 NQ_BOOL
 csCheckFile(
     const CSShare* pShare,
-    NQ_TCHAR* pName,
+    NQ_WCHAR* pName,
     NQ_BOOL preservesCase
     )
 {
-    NQ_TCHAR* pSeparator;    /* pointer to the separator before the file name in the path */
+    NQ_WCHAR* pSeparator;    /* pointer to the separator before the file name in the path */
     NQ_BOOL resValue;       /* the result value */
     SYFileInformation fileInfo;     /* placeholder - value not used */
 
@@ -236,17 +236,17 @@ csCheckFile(
         TRCE();
         return TRUE;
     }
-    if (preservesCase || (pShare != NULL && 0==cmTStrcmp(pShare->map, pName)))
+    if (preservesCase || (pShare != NULL && 0==syWStrcmp(pShare->map, pName)))
     {
         resValue =  syGetFileInformationByName(pName, &fileInfo) == NQ_SUCCESS;
     }
     else
     {
-        if ((pSeparator = cmTStrrchr(pName, cmTChar(SY_PATHSEPARATOR))) != NULL)
+        if ((pSeparator = syWStrrchr(pName, cmWChar(SY_PATHSEPARATOR))) != NULL)
         {
-            *pSeparator = cmTChar(0);
+            *pSeparator = cmWChar(0);
             resValue = findFileInPath(pName, pSeparator + 1);
-            *pSeparator = cmTChar(SY_PATHSEPARATOR);
+            *pSeparator = cmWChar(SY_PATHSEPARATOR);
         }
         else
         {
@@ -278,21 +278,21 @@ csCheckFile(
 NQ_BOOL
 csCheckPath(
     const CSShare* pShare,
-    NQ_TCHAR* pName,
+    NQ_WCHAR* pName,
     NQ_UINT treeLen,
     NQ_BOOL preservesCase
     )
 {
-    NQ_TCHAR* pSeparator1;          /* pointer to the separator before the directory being checked */
-    NQ_TCHAR* pSeparator2 = NULL;   /* pointer to the separator after the directory being checked */
-    NQ_TCHAR* pFileSeparator;       /* pointer to the separator before the file name */
+    NQ_WCHAR* pSeparator1;          /* pointer to the separator before the directory being checked */
+    NQ_WCHAR* pSeparator2 = NULL;   /* pointer to the separator after the directory being checked */
+    NQ_WCHAR* pFileSeparator;       /* pointer to the separator before the file name */
     NQ_BOOL resValue;               /* the result value */
     NQ_UINT relativePartsNum = 0;   /* number of relative parts of the path: '.' and '..' */
     NQ_UINT absolutePartsNum = 0;   /* number of absolute parts of the path */
 
     TRCB();
 
-    TRC3P("  Share [%s], map [%s], name [%s]", cmTDump(pShare->name), cmTDump(pShare->map), cmTDump(pName));
+    TRC3P("  Share [%s], map [%s], name [%s]", cmWDump(pShare->name), cmWDump(pShare->map), cmWDump(pName));
     TRC2P("  tree length %d, preserves case %d", treeLen, preservesCase);
     
     if (pShare->ipcFlag)
@@ -300,7 +300,7 @@ csCheckPath(
         TRCE();
         return TRUE;
     }
-    if (    (pFileSeparator = cmTStrrchr(pName, cmTChar(SY_PATHSEPARATOR))) == NULL
+    if (    (pFileSeparator = syWStrrchr(pName, cmWChar(SY_PATHSEPARATOR))) == NULL
          || (NQ_UINT)(pFileSeparator - pName) < treeLen
         )
     {
@@ -310,20 +310,23 @@ csCheckPath(
     else
     {        
         /* check whether given path points above the shared directory */ 
-        pSeparator1 = cmTStrchr(pName + treeLen, cmTChar(SY_PATHSEPARATOR)); 
-        for ( ; pSeparator1 != pFileSeparator; pSeparator1 = cmTStrchr(pSeparator1 + 1, cmTChar(SY_PATHSEPARATOR)))
+        pSeparator1 = syWStrchr(pName + treeLen, cmWChar(SY_PATHSEPARATOR));
+        for ( ; pSeparator1 != pFileSeparator; pSeparator1 = syWStrchr(pSeparator1 + 1, cmWChar(SY_PATHSEPARATOR)))
         {
-            if (*(pSeparator1 + 1) == cmTChar('.'))
+        	if (NULL == pSeparator1)
+        		break;
+
+            if (*(pSeparator1 + 1) == cmWChar('.'))
             {
-                if (*(pSeparator1 + 2) == cmTChar('.'))
+                if (*(pSeparator1 + 2) == cmWChar('.'))
                 {
-                    if (*(pSeparator1 + 3) == cmTChar(SY_PATHSEPARATOR))
+                    if (*(pSeparator1 + 3) == cmWChar(SY_PATHSEPARATOR))
                     {
                         relativePartsNum++;
                         continue;
                     }
                 }
-                if (*(pSeparator1 + 2) == cmTChar(SY_PATHSEPARATOR))
+                if (*(pSeparator1 + 2) == cmWChar(SY_PATHSEPARATOR))
                     continue;
             }    
             absolutePartsNum++;
@@ -335,16 +338,16 @@ csCheckPath(
             return FALSE;
         }                    
         
-        *pFileSeparator = cmTChar(0);
+        *pFileSeparator = cmWChar(0);
 
         resValue = TRUE;
-        pSeparator1 = cmTStrchr(pName + treeLen, cmTChar(SY_PATHSEPARATOR));
+        pSeparator1 = syWStrchr(pName + treeLen, cmWChar(SY_PATHSEPARATOR));
 
         if (preservesCase)
         {
             SYDirectory dir;            /* directory descriptor */
             NQ_STATUS status;           /* operation status */
-            const NQ_TCHAR* nextName;   /* name in the next directory entry */
+            const NQ_WCHAR* nextName;   /* name in the next directory entry */
 
             status = syFirstDirectoryFile(
                 pName,
@@ -360,7 +363,7 @@ csCheckPath(
             }
 
             syCloseDirectory(dir);
-            *pFileSeparator = cmTChar(SY_PATHSEPARATOR);
+            *pFileSeparator = cmWChar(SY_PATHSEPARATOR);
             TRCE();
             return TRUE;
         }
@@ -368,23 +371,23 @@ csCheckPath(
         {
             while (pSeparator1 != NULL)
             {
-                *pSeparator1 = cmTChar(0);
-                pSeparator2 = cmTStrchr(pSeparator1 + 1, cmTChar(SY_PATHSEPARATOR));
+                *pSeparator1 = cmWChar(0);
+                pSeparator2 = syWStrchr(pSeparator1 + 1, cmWChar(SY_PATHSEPARATOR));
                 if (pSeparator2 != NULL)
-                    *pSeparator2 = cmTChar(0);
+                    *pSeparator2 = cmWChar(0);
                 if (!findFileInPath(pName, pSeparator1 + 1))
                 {
                     resValue = FALSE;
                     break;
                 }
-                *pSeparator1 = cmTChar(SY_PATHSEPARATOR);
+                *pSeparator1 = cmWChar(SY_PATHSEPARATOR);
                 pSeparator1 = pSeparator2;
             }
             if (pSeparator1 != NULL)
-                *pSeparator1 = cmTChar(SY_PATHSEPARATOR);
+                *pSeparator1 = cmWChar(SY_PATHSEPARATOR);
             if (pSeparator2 != NULL)
-                *pSeparator2 = cmTChar(SY_PATHSEPARATOR);
-            *pFileSeparator = cmTChar(SY_PATHSEPARATOR);
+                *pSeparator2 = cmWChar(SY_PATHSEPARATOR);
+            *pFileSeparator = cmWChar(SY_PATHSEPARATOR);
         }
     }
 
@@ -410,7 +413,7 @@ csCheckPath(
 NQ_BOOL
 csCheckPathAndFile(
     const CSShare* pShare,
-    NQ_TCHAR* pName,
+    NQ_WCHAR* pName,
     NQ_UINT treeLen,
     NQ_BOOL preservesCase
     )
@@ -420,7 +423,7 @@ csCheckPathAndFile(
 
     TRCB();
 
-    TRC3P("  Share [%s], map [%s], name [%s]", cmTDump(pShare->name), cmTDump(pShare->map), cmTDump(pName));
+    TRC3P("  Share [%s], map [%s], name [%s]", cmWDump(pShare->name), cmWDump(pShare->map), cmWDump(pName));
     
     if (pShare->ipcFlag)
     {
@@ -458,7 +461,7 @@ csCheckPathAndFile(
 NQ_STATUS
 csGetFileInformation(
     const CSFile* pFile,
-    const NQ_TCHAR* pFileName,
+    const NQ_WCHAR* pFileName,
     SYFileInformation* pFileInfo
     )
 {
@@ -514,14 +517,16 @@ csGetFileInformation(
 #ifdef UD_CS_INCLUDERPC
     else if (pFile->isPipe)
     {
+    	NQ_TIME zero = {0, 0};
+
         pFileInfo->allocSizeHigh = 0;
         pFileInfo->allocSizeLow = 0;
         pFileInfo->attributes = 0;
-        pFileInfo->creationTime = 0;
         pFileInfo->isDeleted = FALSE;
-        pFileInfo->lastAccessTime = 0;
-        pFileInfo->lastChangeTime = 0;
-        pFileInfo->lastWriteTime = 0;
+        pFileInfo->creationTime = zero;
+        pFileInfo->lastAccessTime = zero;
+        pFileInfo->lastChangeTime = zero;
+        pFileInfo->lastWriteTime = zero;
         pFileInfo->numLinks = 0;
         pFileInfo->sizeHigh = 0;
         pFileInfo->sizeLow = 0;
@@ -550,7 +555,7 @@ csGetFileInformation(
 NQ_STATUS
 csGetFileInformationByName(
     const CSShare* pShare,
-    const NQ_TCHAR* pFileName,
+    const NQ_WCHAR* pFileName,
     SYFileInformation* pFileInfo
 #ifdef UD_NQ_INCLUDEEVENTLOG
     ,const CSUser	*			pUser
@@ -571,7 +576,7 @@ csGetFileInformationByName(
 			pTree = csGetNextTreeByShare(pShare, pTree->tid);
 		}
 		eventInfo.rid = csGetUserRid(pUser);
-		eventInfo.tid = pTree != NULL ? pTree->tid : CS_ILLEGALID;
+		eventInfo.tid = (NQ_UINT32)(pTree != NULL ? pTree->tid : CS_ILLEGALID);
 		eventInfo.fileName = pFileName != NULL ? pFileName : NULL;
 	}
 #endif /* UD_NQ_INCLUDEEVENTLOG */
@@ -616,17 +621,20 @@ csGetFileInformationByName(
     }
     else
     {
+    	NQ_TIME zero = {0, 0};
+
         pFileInfo->allocSizeHigh = 0;
         pFileInfo->allocSizeLow = 0;
         pFileInfo->attributes = 0;
-        pFileInfo->creationTime = 0;
         pFileInfo->isDeleted = FALSE;
-        pFileInfo->lastAccessTime = 0;
-        pFileInfo->lastChangeTime = 0;
-        pFileInfo->lastWriteTime = 0;
+        pFileInfo->creationTime = zero;
+        pFileInfo->lastAccessTime = zero;
+        pFileInfo->lastChangeTime = zero;
+        pFileInfo->lastWriteTime = zero;
         pFileInfo->numLinks = 0;
         pFileInfo->sizeHigh = 0;
         pFileInfo->sizeLow = 0;
+
         return NQ_SUCCESS;
     }
 }
@@ -649,7 +657,7 @@ csGetFileInformationByName(
 NQ_STATUS
 csSetFileInformation(
     const CSFile* pFile,
-    const NQ_TCHAR* pFileName,
+    const NQ_WCHAR* pFileName,
     const SYFileInformation* pFileInfo
     )
 {
@@ -724,7 +732,7 @@ csSetFileInformation(
 
 NQ_BOOL
 csCanDeleteFile(
-    const NQ_TCHAR* pFileName
+    const NQ_WCHAR* pFileName
 #ifdef UD_NQ_INCLUDEEVENTLOG
     ,const CSUser * pUser,
     const UDFileAccessEvent eventLogInfo
@@ -845,7 +853,7 @@ csCanDeleteFile(
 NQ_UINT32
 csTruncateFile(
     CSFile* pFile,
-    const NQ_TCHAR* pFileName,
+    const NQ_WCHAR* pFileName,
     NQ_UINT32 sizeLow,
     NQ_UINT32 sizeHigh
     )
@@ -854,8 +862,9 @@ csTruncateFile(
     NQ_STATUS result;
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDFileAccessEvent	eventInfo;
-    CSUser	*	pUser = NULL;
+    CSUser	*	pUser = (pFile && pFile->user) ? pFile->user : NULL;
 #endif /* UD_NQ_INCLUDEEVENTLOG*/
+
     TRCB();
 
     if (pFile == NULL)
@@ -873,24 +882,6 @@ csTruncateFile(
             TRCE();
             return csErrorReturn(SMB_STATUS_INVALID_PARAMETER, SRV_ERRinvuid);
         }
-#ifdef UD_NQ_INCLUDEEVENTLOG
-		eventInfo.tid = pFile->tid;
-		eventInfo.fileName = pFileName;
-		pUser = (pFile->user != NULL) ? pFile->user : csGetUserByUid(pFile->uid);
-		if (pUser != NULL)
-		{
-			eventInfo.rid  = csGetUserRid(pUser);
-			udEventLog(
-					UD_LOG_MODULE_CS,
-					UD_LOG_CLASS_FILE,
-					UD_LOG_FILE_OPEN,
-					pUser->name,
-					pUser->ip,
-					0,
-					(const NQ_BYTE *)&eventInfo
-					);
-		}
-#endif /* UD_NQ_INCLUDEEVENTLOG*/
     }
     else
     {
@@ -902,10 +893,9 @@ csTruncateFile(
     eventInfo.fileName = pFileName;
     eventInfo.sizeHigh = sizeHigh;
     eventInfo.sizeLow  = sizeLow;
-    eventInfo.tid 	   = pFile->tid;
-    pUser = (pFile->user != NULL) ? pFile->user : csGetUserByUid(pFile->uid);
     if (pUser != NULL)
     {
+    	eventInfo.tid  = (NQ_UINT32)((pFile != NULL) ? pFile->tid : CS_ILLEGALID);
     	eventInfo.rid  = csGetUserRid(pUser);
 		udEventLog(
 				UD_LOG_MODULE_CS,
@@ -937,6 +927,10 @@ csTruncateFile(
 					);
 		}
 #endif /* UD_NQ_INCLUDEEVENTLOG*/
+		if (pFile == NULL)
+		{
+			result = syCloseFile(file);
+		}
         TRCERR("unable to truncate file");
         TRCE();
         return csErrorGetLast();
@@ -1011,7 +1005,7 @@ csTruncateFile(
 		}
 		eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEVENTLOG*/
-        result = sySeekFileStart(pFile->file, (NQ_UINT32)pFile->offsetLow, (NQ_UINT32)pFile->offsetHigh);
+        result = (NQ_STATUS)sySeekFileStart(pFile->file, (NQ_UINT32)pFile->offsetLow, (NQ_UINT32)pFile->offsetHigh);
 #ifdef UD_NQ_INCLUDEEVENTLOG
 		if (pUser != NULL)
 		{
@@ -1092,17 +1086,17 @@ csGetHostType(
 
 static NQ_BOOL
 findFileInPath(
-    const NQ_TCHAR* path,
-    NQ_TCHAR* file
+    const NQ_WCHAR* path,
+    NQ_WCHAR* file
     )
 {
     SYDirectory dir;            /* directory descriptor */
     NQ_STATUS status;           /* operation status */
-    const NQ_TCHAR* nextName;   /* name in the next directory entry */
+    const NQ_WCHAR* nextName;   /* name in the next directory entry */
 
     TRCB();
 
-    TRC2P("  Path [%s], file [%s]", cmTDump(path), cmTDump(file));
+    TRC2P("  Path [%s], file [%s]", cmWDump(path), cmWDump(file));
     
     status = syFirstDirectoryFile(
         path,
@@ -1113,16 +1107,16 @@ findFileInPath(
     if (status != NQ_SUCCESS)
     {
         TRCERR("Cannot open directory for file path check");
-        TRC1P(" path: %s", cmTDump(path));
+        TRC1P(" path: %s", cmWDump(path));
         TRCE();
         return FALSE;
     }
 
     while (status == NQ_SUCCESS && nextName != NULL)
     {
-        if (cmTStricmp(file, nextName) == 0)
+        if (cmWStricmp(file, nextName) == 0)
         {
-            cmTStrcpy(file, nextName);
+            cmWStrcpy(file, nextName);
             if (syCloseDirectory(dir) != NQ_SUCCESS)
             {
                 TRCERR("Close directory failed");
@@ -1241,11 +1235,11 @@ csCheckShareMapping(
 {
 #ifndef UD_CS_AVOIDSHAREACCESSCHECK
     SYFileInformation fileInfo;
-    const NQ_TCHAR rootDir[] = {SY_PATHSEPARATOR, cmTChar(0)};
+    const NQ_WCHAR rootDir[] = {SY_PATHSEPARATOR, cmWChar(0)};
 
     return pShare->ipcFlag || pShare->isPrintQueue ? 
         TRUE : NQ_SUCCESS == syGetFileInformationByName(
-                                                        0 == cmTStrlen(pShare->map)?
+                                                        0 == syWStrlen(pShare->map)?
                                                             rootDir :
                                                             pShare->map, &fileInfo
                                                         );

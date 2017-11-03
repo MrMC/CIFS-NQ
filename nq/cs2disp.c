@@ -27,14 +27,11 @@
 
 typedef struct
 {
-    NQ_BYTE responseBuffer[CM_NB_DATAGRAMBUFFERSIZE];/* buffer for late reponse */
+    NQ_BYTE responseBuffer[CM_NB_DATAGRAMBUFFERSIZE];/* buffer for late response */
     NSSocketHandle savedSocket;       /* handle of the socket over which the current */
     CSFid quickFid;                   /* saved fid for compounded requests */
     CMSmb2Header* header;             /* pointer to the current header */
-#ifdef UD_CS_INCLUDEDIRECTTRANSFER    
-    NQ_BOOL dtIn;                     /* incoming Data Transfer flag */
-    NQ_BOOL dtOut;                    /* outgoing Data Transfer flag */
-#endif
+    NQ_BOOL	encrypedPacket;
 }
 StaticData;
 
@@ -172,13 +169,14 @@ cs2DispatchInit(
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(*staticData));
     if (NULL == staticData)
     {
         LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
         return NQ_FAIL;
     }
 #endif /* SY_FORCEALLOCATION */
+    staticData->encrypedPacket = FALSE;
 
     LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
     return NQ_SUCCESS;
@@ -288,25 +286,79 @@ csSmb2DispatchRequest(
     CMBufferWriter packet;
 #endif
     CSUser *session = NULL;
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    CSSocketDescriptor * sockDescr;
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+    NQ_BOOL 	encryptedPacket = FALSE;
+    CSSession *connection = csGetSessionBySocket();
+#ifdef UD_NQ_INCLUDESMB3
+    static NQ_BYTE ctxBuff[SHA512_CTXSIZE];
+#endif
 
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_TOOL, "recvDescr:%p request:%p length:%d", recvDescr, request, length);
+
+    if (connection == NULL)
+		connection = csGetNewSession();
 
     staticData->savedSocket = recvDescr->socket;
     
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    sockDescr = csGetClientSocketDescriptorBySocket(staticData->savedSocket);
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+
     /* always respond NT STATUS */
     csDispatchSetNtError(TRUE);
-
+#ifdef UD_NQ_INCLUDESMB3
+    if (syMemcmp(request , cmSmb2TrnsfrmHdrProtocolId , sizeof(cmSmb2TrnsfrmHdrProtocolId)) == 0)
+    {
+    	NQ_BOOL res;
+		
+    	encryptedPacket = TRUE;
+    	res = cs2TransformHeaderDecrypt( recvDescr , request , length);
+    	if (res)
+    	{
+    		pBuf = request + SMB2_TRANSFORMHEADER_SIZE + 4;
+    		length =  length - SMB2_TRANSFORMHEADER_SIZE + 4;
+    	}
+    	else
+    	{
+			LOGERR(CM_TRC_LEVEL_ERROR, "Encrypted Packet Signature doesn't match");
+			LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
+			return NQ_FAIL;
+    	}
+    }
+#endif /* UD_NQ_INCLUDESMB3 */
+    staticData->encrypedPacket = encryptedPacket;
     /* according to nsGetBuffer() implementation its return value can not be NULL */
     response = nsGetBuffer();
 
-    if (NQ_FAIL == nsRecvIntoBuffer(recvDescr, pBuf, 62)) /* read the rest of the header + StructureSize */
+    if (!encryptedPacket)
     {
-        LOGERR(CM_TRC_LEVEL_ERROR, "Error reading from socket");
-        LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
-        return NQ_FAIL;
+		if (NQ_FAIL == nsRecvIntoBuffer(recvDescr, pBuf, 62)) /* read the rest of the header + StructureSize */
+		{
+			LOGERR(CM_TRC_LEVEL_ERROR, "Error reading from socket");
+			LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
+			return NQ_FAIL;
+		}
+    }
+    else
+    {
+    	syMemset(response , 0 , UD_NS_BUFFERSIZE);
+    	response += SMB2_TRANSFORMHEADER_SIZE;
     }
     
-    cmBufferReaderInit(&reader, request, length);
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    if (!encryptedPacket)
+    {
+    	cmCapturePacketWritePacket(request + 4, 62);
+    }
+    else
+    {
+    	cmCapturePacketWritePacket(pBuf - 4 , length);
+    	cmCapturePacketWriteEnd();
+    }
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+    cmBufferReaderInit(&reader, !encryptedPacket ? request : pBuf - 4 ,length);
     cmBufferWriterInit(&primary, nsSkipHeader(recvDescr->socket, response), UD_NS_BUFFERSIZE);
 
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
@@ -340,19 +392,18 @@ csSmb2DispatchRequest(
         /* read payload size */
         cmBufferReadUint16(&reader, &size);
 
-/*        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Q: %s(0x%02x), mid=%lu/%lu, pid=0x%08x, sid=%lu, tid=0x%08x", (in.command < CM_ARRAY_SIZE(_entries) ? _entries[in.command].name : "UNKNOWN"), (NQ_UINT32)in.command, in.mid.high, in.mid.low, in.pid, in.sid.low, in.tid);*/
-        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Request: command=%d, mid=%lu/%lu, pid=0x%08x, sid=%lu, tid=0x%08x", in.command, in.mid.high, in.mid.low, in.pid, in.sid.low, in.tid);
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Request: command=%d, mid=%u/%u, pid=0x%08x, sid=0x%08x, tid=0x%08x, credits=%d", in.command, in.mid.high, in.mid.low, in.pid, in.sid.low, in.tid, in.credits);
         
         /* command range check */
         if (in.command < CM_ARRAY_SIZE(_entries))
         {
             NQ_UINT creditsGranted;
-            const Entry *e = &_entries[in.command];
-            CSSession *connection = csGetSessionBySocket();
+            const Entry *e = &_entries[in.command];            
 
         /* try DT IN */
 #ifdef UD_CS_INCLUDEDIRECTTRANSFER
-        staticData->dtIn = staticData->dtOut = FALSE;
+        csDispatchSetDtOut(FALSE);
+        csDispatchSetDtIn(FALSE);
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
         if (isFirstInChain)
         {
@@ -360,20 +411,20 @@ csSmb2DispatchRequest(
             if ((_entries[in.command].flags & FLAG_DTIN) 
                     && in.next == 0 
 #ifdef UD_CS_MESSAGESIGNINGPOLICY            
-                    && (connection == NULL || !connection->signingOn)
+                    && ((in.flags & SMB2_FLAG_SIGNED) == 0)
 #endif /* UD_CS_MESSAGESIGNINGPOLICY */            
+					&& !encryptedPacket
             )
             { 
                 /* use DirectTransfer - read according to word count */
-                staticData->dtIn = TRUE;
-                csDispatchSetDtIn();
-                msgLen = nsRecvIntoBuffer(recvDescr, pBuf, size - 3); /* read command structure */
+                csDispatchSetDtIn(TRUE);
+                msgLen = (NQ_INT)nsRecvIntoBuffer(recvDescr, pBuf, (NQ_COUNT)(size - 3)); /* read command structure */
                 csDispatchDtSaveParameters(pBuf + size - 3, recvDescr);
             }
             else
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
             {
-                msgLen = nsRecvIntoBuffer(recvDescr, pBuf, length); /* read the rest of the packet */
+                msgLen = (!encryptedPacket) ? nsRecvIntoBuffer(recvDescr, pBuf, length) : (NQ_INT)length; /* read the rest of the packet */
             }
             if (msgLen == NQ_FAIL)
             {
@@ -382,6 +433,44 @@ csSmb2DispatchRequest(
                 LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
                 return FALSE;
             }
+
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+#ifdef UD_CS_INCLUDEDIRECTTRANSFER
+            if (e->flags & FLAG_DTIN && !encryptedPacket)
+            {
+            	NQ_BYTE *	tempBuf;
+            	NQ_UINT32	dataLen;
+            	NQ_UINT16	offset;
+            	CMBufferReader	reader;
+
+            	cmBufferReaderInit(&reader , pBuf , (NQ_COUNT)(size - 3));
+            	cmBufferReadUint16(&reader , &offset);
+            	cmBufferReadUint32(&reader , &dataLen);
+
+            	if (offset > (size - 1 + SMB2_HEADERSIZE  ) )
+            	{
+            		dataLen += (NQ_UINT32)(offset - (size - 1 + SMB2_HEADERSIZE ));
+            	}
+
+            	tempBuf = (NQ_BYTE *)cmMemoryAllocate(dataLen);
+            	syMemset(tempBuf , 0 , dataLen);
+
+            	cmCapturePacketWritePacket(pBuf, (NQ_UINT)size - 3);
+            	cmCapturePacketWritePacket(tempBuf, (NQ_UINT)dataLen);
+				cmCapturePacketWriteEnd();
+
+            	cmMemoryFree(tempBuf);
+            }
+            else
+#endif /* UD_CS_INCLUDEDIRECTTRANSFER */
+            {
+            	if (!encryptedPacket)
+				{
+					cmCapturePacketWritePacket(pBuf, (NQ_UINT)msgLen);
+					cmCapturePacketWriteEnd();
+				}
+            }
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
         }
         
       /* try DT OUT */
@@ -390,52 +479,50 @@ csSmb2DispatchRequest(
                 (_entries[in.command].flags & FLAG_DTOUT) && 
                 in.next == 0 
 #ifdef UD_CS_MESSAGESIGNINGPOLICY            
-                && (connection == NULL || !connection->signingOn)
+                && ((in.flags & SMB2_FLAG_SIGNED) == 0)
 #endif /* UD_CS_MESSAGESIGNINGPOLICY */            
+				&& !encryptedPacket
         )
         { 
             /* use DirectTransfer - prepare socket */
             syDtStartPacket(((SocketSlot*)recvDescr->socket)->socket);
-            staticData->dtOut = TRUE;
-            csDispatchSetDtOut();
+            csDispatchSetDtOut(TRUE);
         }
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
 
         /* setup data writer */
         cmBufferWriterBranch(&primary, &data, SMB2_HEADERSIZE);
-        /* setup response header
-         * we calculate number of credits */
-        out = in;
-        if (NULL == connection)
-        {
-            creditsGranted = 1;
-        }
-        else
-        {
-            creditsGranted = connection->credits > in.credits? in.credits : connection->credits;
-        }
-        if (in.command == SMB2_CMD_NEGOTIATE)
-        {
-            creditsGranted = 1;
-        }
-        cmSmb2HeaderSetForResponse(&out, &primary, (NQ_UINT16)creditsGranted);
-        if (NULL != connection)
-        {
-            connection->credits -=  creditsGranted - 1;
-        }
-
-        if ((e->flags & FLAG_NOCONNECTION) || connection != NULL)
+       
+        if (connection != NULL)
+        /* connection == NULL can happen only if we reached max connections */		
         {
             /* option: Add an additional size column "min" to the command table. For all commands except SESSION_SETUP it will be
                        equal to size. For SESSION_SETUP it should be 21 (in case there is no security blob).
                        In the following line add "&& cmBufferReaderGetRemaining(&data) >= e->size2" to check for buffer overrun in
                        a static part of a command. */
+
+        	/* setup response header
+			 * we calculate number of credits */
+			out = in;
+			if (in.command == SMB2_CMD_NEGOTIATE)
+			{
+				creditsGranted = 1;
+			}
+			else
+			{
+				creditsGranted = connection->credits > in.credits? in.credits : connection->credits;
+				connection->creditsToGrant = creditsGranted;
+			}
+
+			cmSmb2HeaderSetForResponse(&out, &primary, (NQ_UINT16)creditsGranted);
+
+			connection->credits -=  creditsGranted - 1;
+
             if (size == e->size)
             {
                 NQ_BOOL nosess = (e->flags & FLAG_NOSESSION) != 0;
                 
                 session = nosess ? NULL : csGetUserByUid((CSUid)sessionIdToUid(in.sid.low));
-
                 if (NULL != session)
                 { 
                     /* renew session timestamp */
@@ -451,24 +538,59 @@ csSmb2DispatchRequest(
                     if (notree || async || tree != NULL)
                     {
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
+#ifdef UD_NQ_INCLUDESMB3						
+                   	    if (connection->dialect >= CS_DIALECT_SMB30)
+					    {
+						    if (!encryptedPacket && !csCheckMessageSignatureSMB3(session, (NQ_BYTE*)in._start , (NQ_COUNT)(in.next == 0 ? dataLength : in.next) , in.flags))
+                    	    {								
+                    		    LOGERR(CM_TRC_LEVEL_ERROR, "incoming signature doesn't match");
+                    		    out.status = result = SMB_STATUS_ACCESS_DENIED;
+                    		    cmBufferWriterReset(&data);
+							    writeErrorResponseData(&data);
+							    cmSmb2HeaderWrite(&out, &primary);
+							    cmBufferWriterSync(&primary, &data);
+							    dataLength -= (NQ_COUNT)in.next;
+							    break;
+                    	    }
+                        }
                         /* check incoming message signature */
-                        if (!csCheckMessageSignatureSMB2(session, (NQ_BYTE*)in._start, (NQ_COUNT)(in.next == 0 ? dataLength : in.next), in.flags))
-                        {
-                            LOGERR(CM_TRC_LEVEL_ERROR, "incoming signature doesn't match");
-                            out.status = result = SMB_STATUS_ACCESS_DENIED;;      
-                            cmBufferWriterReset(&data);
-                            writeErrorResponseData(&data);
-                            cmSmb2HeaderWrite(&out, &primary);
-                            cmBufferWriterSync(&primary, &data);
-                            dataLength -= (NQ_COUNT)in.next;
-                            break;
-                        } 
+                   	    else
+#endif /* UD_NQ_INCLUDESMB3 */
+                   	    {
+						    if (!csCheckMessageSignatureSMB2(session, (NQ_BYTE*)in._start, (NQ_COUNT)(in.next == 0 ? dataLength : in.next), in.flags))
+							{
+								LOGERR(CM_TRC_LEVEL_ERROR, "incoming signature doesn't match");
+								out.status = result = SMB_STATUS_ACCESS_DENIED;
+								cmBufferWriterReset(&data);
+								writeErrorResponseData(&data);
+								cmSmb2HeaderWrite(&out, &primary);
+								cmBufferWriterSync(&primary, &data);
+								dataLength -= (NQ_COUNT)in.next;
+								break;
+							}
+                   	    }
+
                         dataLength -= (NQ_COUNT)in.next;                    
-#endif /* UD_CS_MESSAGESIGNINGPOLICY */
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */						
+
+#ifdef UD_NQ_INCLUDESMB3
+#ifndef UD_CS_ALLOW_NONENCRYPTED_ACCESS_TO_ENCRYPTED_SHARE
+                        if (!encryptedPacket && ((session && csIsServerEncrypted()) || (tree && tree->share->isEncrypted)))
+                        {
+                            LOGERR(CM_TRC_LEVEL_ERROR, "%s requires encrypted access and received packet is not encrypted.", csIsServerEncrypted() ? "server" : "share");
+							out.status = result = SMB_STATUS_ACCESS_DENIED;
+                    		cmBufferWriterReset(&data);
+							writeErrorResponseData(&data);
+							cmSmb2HeaderWrite(&out, &primary);
+							cmBufferWriterSync(&primary, &data);
+							dataLength -= (NQ_COUNT)in.next;
+							break;
+						}
+#endif /* UD_CS_ALLOW_NONENCRYPTED_ACCESS_TO_ENCRYPTED_SHARE */
+#endif /* UD_NQ_INCLUDESMB3 */
 
                         /* process request and set the status */
                         result = e->handler ? e->handler(&in, &out, &reader, connection, session, tree, &data) : SMB_STATUS_NOT_IMPLEMENTED;
-
                         switch (result)
                         {
                             case SMB_STATUS_DISCONNECT:
@@ -525,19 +647,34 @@ csSmb2DispatchRequest(
             /* write response header (including processing status) */
             cmSmb2HeaderWrite(&out, &primary);
 
-/*                LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "A: %s(0x%02x), mid=%lu/%lu, pid=0x%08x, sid=%lu, tid=0x%08x, status=%x", e->name, out.command, out.mid.high, out.mid.low, out.pid, out.sid.low, out.tid, out.status);*/
-            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Response: command=%d, mid=%lu/%lu, pid=0x%08x, sid=%lu, tid=0x%08x, status=%x", out.command, out.mid.high, out.mid.low, out.pid, out.sid.low, out.tid, out.status);
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Response: command=%d, mid=%u/%u, pid=0x%08x, sid=0x%08x, tid=0x%08x, status=%x", out.command, out.mid.high, out.mid.low, out.pid, out.sid.low, out.tid, out.status);
 
             /* prepare main writer for the next header */
             cmBufferWriterSync(&primary, &data);
 
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
-            /* sign outgoing message signature */
             cmBufferWriterSync(&packet, &primary);
-            csCreateMessageSignatureSMB2(out.sid.low, cmBufferWriterGetStart(&packet), cmBufferWriterGetDataCount(&packet));
+#ifdef UD_NQ_INCLUDESMB3
+            /* sign message if dialect 3.0 or above and
+            if dialect 3.1.1 and command was session setup with success - signing required */
+#ifdef UD_NQ_INCLUDESMB311
+            if (in.command == SMB2_CMD_SESSIONSETUP && connection->dialect == CS_DIALECT_SMB311 && result == NQ_SUCCESS)
+            	*(packet.origin + 16) |= SMB2_FLAG_SIGNED;
+#endif
+               
+            if (connection->dialect >= CS_DIALECT_SMB30)
+            {   
+			    if (!encryptedPacket)
+                    csCreateMessageSignatureSMB3(out.sid.low, cmBufferWriterGetStart(&packet), cmBufferWriterGetDataCount(&packet));
+            }
+            else
+#endif /* UD_NQ_INCLUDESMB3 */
+            {
+                csCreateMessageSignatureSMB2(out.sid.low, cmBufferWriterGetStart(&packet), cmBufferWriterGetDataCount(&packet));
+            }
             cmBufferWriterBranch(&primary, &packet, 0);
-#endif /* UD_CS_MESSAGESIGNINGPOLICY */
 
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */
         }
         else
         {
@@ -559,7 +696,7 @@ csSmb2DispatchRequest(
     while (cmSmb2HeaderShiftNext(&in, &reader));
 
 #ifdef UD_CS_INCLUDEDIRECTTRANSFER
-    if (staticData->dtIn)
+    if (csDispatchIsDtIn())
     {
         if (!csDispatchDtFromSocket(recvDescr, csDispatchDtGetCount()))
         {
@@ -569,7 +706,7 @@ csSmb2DispatchRequest(
         }
     }
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
-  
+
     nsEndRecvIntoBuffer(recvDescr);
 
     /* send the response */
@@ -578,15 +715,83 @@ csSmb2DispatchRequest(
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "sending response packet: size=%d", written);
 
 #ifdef UD_CS_INCLUDEDIRECTTRANSFER
-    if (staticData->dtOut && csDispatchDtAvailable())
+    if (csDispatchIsDtOut() && csDispatchDtAvailable())
     {
-        packetLen = written + csDispatchDtGetCount();
+        packetLen = (NQ_COUNT)((NQ_COUNT)written + csDispatchDtGetCount());
     }
     else
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
     {
         packetLen = (NQ_COUNT)written;
     }
+
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    sockDescr->captureHdr.receiving = FALSE;
+    cmCapturePacketWriteStart(&sockDescr->captureHdr , packetLen);
+#ifdef UD_CS_INCLUDEDIRECTTRANSFER
+    if (csDispatchIsDtOut() && csDispatchDtAvailable())
+    {
+    	NQ_BYTE *	tempBuf;
+    	NQ_COUNT	len;
+
+    	len = csDispatchDtGetCount();
+    	tempBuf = (NQ_BYTE *)cmMemoryAllocate(len);
+    	syMemset(tempBuf , 0 , len);
+
+    	cmCapturePacketWritePacket(response + 4 , (NQ_UINT)written);
+    	cmCapturePacketWritePacket(tempBuf , len);
+
+    	cmMemoryFree(tempBuf);
+    }
+    else
+#endif /* UD_CS_INCLUDEDIRECTTRANSFER */
+    {
+    	cmCapturePacketWritePacket(response + 4 , packetLen);
+    }
+    cmCapturePacketWriteEnd();
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+
+#ifdef UD_NQ_INCLUDESMB3
+    /* calculate hash on response packets. request calculated above */
+    if (connection->dialect == CS_DIALECT_SMB311)
+    {
+
+    	if (out.command == SMB2_CMD_NEGOTIATE && connection->preauthIntegOn)
+    	{
+    		cmSmb311CalcMessagesHash(primary.origin, (NQ_UINT)(written), connection->preauthIntegHashVal, ctxBuff);
+    		connection->preauthIntegOn = FALSE;
+    	}
+		if (out.command == SMB2_CMD_SESSIONSETUP)
+		{
+			CSUser *	pUser = NULL;
+
+			pUser = csGetUserByUid((CSUid)sessionIdToUid(out.sid.low));
+			if (pUser != NULL && pUser->preauthIntegOn)
+			{
+				cmSmb311CalcMessagesHash(primary.origin, (NQ_UINT)(written), pUser->preauthIntegHashVal, ctxBuff);
+			}
+		}
+    }
+
+    if (encryptedPacket)
+    {
+    	NQ_INT yes = SMB2_TRANSFORMHEADER_SIZE;
+
+    	yes -= nsSkipHeader(recvDescr->socket, response) == response ? 0 : 4;
+    	cs2TransformHeaderEncrypt(NULL, response - yes, (NQ_COUNT)written);
+    	response -= SMB2_TRANSFORMHEADER_SIZE;
+    	written += SMB2_TRANSFORMHEADER_SIZE;
+    	packetLen = (NQ_COUNT)written;
+    }
+#endif /* UD_NQ_INCLUDESMB3 */
+    written = (NQ_INT)nsPrepareNBBuffer(response, (NQ_UINT)packetLen, (NQ_UINT)written);
+	if (0 == written)
+	{
+        /* error */
+        LOGERR(CM_TRC_LEVEL_ERROR, "prepare buffer failed");
+        LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
+        return FALSE;
+	}
 
     if ((sent = nsSendFromBuffer(
                     staticData->savedSocket, 
@@ -603,7 +808,7 @@ csSmb2DispatchRequest(
     }
 
 #ifdef UD_CS_INCLUDEDIRECTTRANSFER
-    if (staticData->dtOut)
+    if (csDispatchIsDtOut())
     {
         /* Transfer bytes from file to socket */
         if (!csDispatchDtToSocket(recvDescr))
@@ -611,9 +816,8 @@ csSmb2DispatchRequest(
             TRCE();
             return NQ_SUCCESS;
         }
-    }
-    if (staticData->dtOut)
         syDtEndPacket(((SocketSlot*)recvDescr->socket)->socket);
+    }
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
 
     LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
@@ -640,7 +844,8 @@ cs2DispatchSaveResponseContext(
     const CMSmb2Header * header
     )
 {
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);    
+    contextBuffer->prot.smb2.flags = header->flags;
     contextBuffer->prot.smb2.tid = header->tid;
     contextBuffer->prot.smb2.sid = header->sid;
     contextBuffer->prot.smb2.mid = header->mid;
@@ -648,9 +853,41 @@ cs2DispatchSaveResponseContext(
     contextBuffer->prot.smb2.command = (NQ_BYTE)header->command;
     contextBuffer->prot.smb2.aid = header->aid;
     contextBuffer->socket = staticData->savedSocket;
+#ifdef UD_NQ_INCLUDESMB3
+    contextBuffer->doEncrypt = staticData->encrypedPacket;
+#endif
     LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
+/*
+ *====================================================================
+ * PURPOSE: get new context for this file - for late responses on file requests.
+ *--------------------------------------------------------------------
+ * PARAMS:  pFile - pointer to a file descriptor
+ * 
+ * RETURNS: pointer to context
+ *
+ * NOTES:
+ *====================================================================
+ */
+/*
+CSLateResponseContext
+cs2DispatchGetFreeResponseContext(
+	CSFile * pFile)
+{
+    NQ_COUNT i;
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+
+    for (i = 0, i < CM_RPC_MAXNUMOF_PENDINGNOTIFYCTXS; ++i)
+    {
+        if (pFile->notifyContext[i].status == 0)
+            return &(pFile->notifyContext[i]);
+    }
+    return NULL;
+    
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+}
+*/
 /*
  *====================================================================
  * PURPOSE: compose header and calculate command data pointer and size
@@ -689,7 +926,8 @@ cs2DispatchPrepareLateResponse(
     out.aid = context->prot.smb2.aid;
     out.flags = SMB2_FLAG_SERVER_TO_REDIR | SMB2_FLAG_ASYNC_COMMAND;
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
-    if ((pUser = csGetUserByUid((CSUid)sessionIdToUid(out.sid.low))) && (pSession = csGetSessionById(pUser->session)) && pSession->signingOn)
+    if (((pUser = csGetUserByUid((CSUid)sessionIdToUid(out.sid.low))) && (pSession = csGetSessionById(pUser->session)) && pSession->signingOn) ||
+       (context->prot.smb2.flags & SMB2_FLAG_SIGNED))
         out.flags |= SMB2_FLAG_SIGNED;
 #endif /* UD_CS_MESSAGESIGNINGPOLICY */
     out.status = status;
@@ -709,8 +947,6 @@ cs2DispatchPrepareLateResponse(
  *          IN command data length
  *
  * RETURNS: TRUE for success
- *
- * NOTES:   prepares CIFS header
  *====================================================================
  */
 
@@ -720,21 +956,88 @@ cs2DispatchSendLateResponse(
     NQ_COUNT dataLength
     )
 {
-    NQ_COUNT packetLen;
+    CSSession * pSession;
+    NQ_COUNT packetLen;  /* packet length, no NB header */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    CSSocketDescriptor *	sockDescr;
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+#ifdef UD_NQ_INCLUDESMB3
+    NQ_BYTE	encryptBuf[CM_NB_DATAGRAMBUFFERSIZE + SMB2_TRANSFORMHEADER_SIZE];
+
+    NQ_BOOL	isEncrypted = context->doEncrypt;
+#endif
     
-    LOGFB(CM_TRC_LEVEL_FUNC_TOOL);
-    
-    packetLen = (NQ_COUNT)(context->commandData + dataLength - staticData->responseBuffer);
+    LOGFB(CM_TRC_LEVEL_FUNC_TOOL, "context:%p dataLength:%d", context, dataLength);
+
+    pSession = csGetSessionBySpecificSocket(context->socket);
+    packetLen = (NQ_COUNT)(context->commandData + dataLength - nsSkipHeader(context->socket, staticData->responseBuffer));
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "packetLen:%d", packetLen);
 
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
-    csCreateMessageSignatureSMB2(context->prot.smb2.sid.low, nsSkipHeader(context->socket, staticData->responseBuffer), packetLen);
+    {
+		CMBufferReader	reader;
+		CMBufferWriter	writer;
+		CMSmb2Header hdr;
+
+		cmBufferReaderInit(&reader , nsSkipHeader(context->socket, staticData->responseBuffer) , 64);
+		cmSmb2HeaderRead(&hdr, &reader);
+		cmBufferWriterInit(&writer , nsSkipHeader(context->socket, staticData->responseBuffer) , 64);
+		cmSmb2HeaderWrite(&hdr , &writer);
+
+		if (pSession->dialect < CS_DIALECT_SMB30)
+		{
+			csCreateMessageSignatureSMB2(context->prot.smb2.sid.low, nsSkipHeader(context->socket, staticData->responseBuffer), packetLen);
+		}
+#ifdef UD_NQ_INCLUDESMB3
+		else if (pSession->dialect >= CS_DIALECT_SMB30)
+		{
+			csCreateMessageSignatureSMB3(context->prot.smb2.sid.low, nsSkipHeader(context->socket, staticData->responseBuffer), packetLen);
+		}
+#endif /* UD_NQ_INCLUDESMB3 */
+    }
 #endif /* UD_CS_MESSAGESIGNINGPOLICY */
+
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    sockDescr = csGetClientSocketDescriptorBySocket(context->socket);
+    if (sockDescr != NULL)
+    {
+		sockDescr->captureHdr.receiving = FALSE;
+		cmCapturePacketWriteStart(&sockDescr->captureHdr , packetLen);
+		cmCapturePacketWritePacket(staticData->responseBuffer + 4, packetLen);
+		cmCapturePacketWriteEnd();
+    }
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+#ifdef UD_NQ_INCLUDESMB3
+    if (isEncrypted)  			/* !!!! TODO: if packet is encrypted*/
+	{
+    	NQ_INT	nbHeader;
+
+    	nbHeader = nsSkipHeader(staticData->savedSocket, staticData->responseBuffer) == (NQ_BYTE *)staticData->responseBuffer ? 0 : 4;
+    	syMemcpy(&encryptBuf[SMB2_TRANSFORMHEADER_SIZE + nbHeader], &staticData->responseBuffer[nbHeader] , packetLen);
+		cs2TransformHeaderEncrypt( NULL , &encryptBuf[nbHeader] , packetLen);
+		packetLen = packetLen + SMB2_TRANSFORMHEADER_SIZE;
+	}
+#endif /* UD_NQ_INCLUDESMB3 */
+    packetLen = nsPrepareNBBuffer(
+#ifdef UD_NQ_INCLUDESMB3
+    		isEncrypted ? encryptBuf :
+#endif
+    				staticData->responseBuffer, packetLen, packetLen);
+    if(0 == packetLen)
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error prepare buffer for late response");
+        LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
+        return FALSE;
+    }
 
     if (packetLen != (NQ_COUNT)nsSendFromBuffer(
                 context->socket, 
-                staticData->responseBuffer, 
-                packetLen, 
-                packetLen, 
+#ifdef UD_NQ_INCLUDESMB3
+                isEncrypted ? encryptBuf :
+#endif
+                		staticData->responseBuffer,
+                packetLen,
+                packetLen,
                 NULL
                 )
           )
@@ -766,40 +1069,101 @@ NQ_UINT32 csSmb2SendInterimResponse(
     CMSmb2Header out;           /* outgoing header */
     CMBufferWriter writer;      /* response writer */
     NQ_BYTE outBuffer[SMB2_HEADERSIZE + 10 + 8];    /* response buffer */ 
-    NQ_INT expected;            /* expected packet length to send */
+    NQ_BYTE encryptedBuffer[SMB2_TRANSFORMHEADER_SIZE + SMB2_HEADERSIZE + 10 + 8];    /* encrypted response buffer */
+    NQ_COUNT expected;          /* expected packet length to send */
     NQ_INT sent = 0;            /* actually sent bytes */
-#ifdef UD_CS_MESSAGESIGNINGPOLICY
-    CSUser *pUser;
-    CSSession *pSession;
-#endif /* UD_CS_MESSAGESIGNINGPOLICY */
+    CSSession *pSession = NULL;
+    CSUser *pUser = NULL;
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    CSSocketDescriptor *	sockDescr;
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+    NQ_BOOL	isEncrypted = staticData->encrypedPacket;
     
     LOGFB(CM_TRC_LEVEL_FUNC_TOOL);
 
+    pUser = csGetUserByUid((CSUid)sessionIdToUid(in->sid.low));
+    if (NULL == pUser)
+    {
+         LOGERR(CM_TRC_LEVEL_ERROR, "Sending interim response failed, invalid session");
+         LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
+         return 0;
+    }
+    pSession = csGetSessionById(pUser->session);
+    if (NULL == pSession)
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Sending interim response failed, invalid session");
+        LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
+        return 0;
+    }
+
     out = *in;      /* copy fields */
     cmBufferWriterInit(&writer, nsSkipHeader(staticData->savedSocket, outBuffer), sizeof(outBuffer));
-    cmSmb2HeaderSetForResponse(&out, &writer, 1);
+    cmSmb2HeaderSetForResponse(&out, &writer, (NQ_UINT16)pSession->creditsToGrant);
     out.flags |= SMB2_FLAG_ASYNC_COMMAND;
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
-    if ((pUser = csGetUserByUid((CSUid)sessionIdToUid(out.sid.low))) && (pSession = csGetSessionById(pUser->session)) && pSession->signingOn)
+    if (pSession->signingOn)
         out.flags |= SMB2_FLAG_SIGNED;
 #endif /* UD_CS_MESSAGESIGNINGPOLICY */
     out.status = SMB_STATUS_PENDING;
     cs2GenerateNextAsyncId(&out.aid);
     cmSmb2HeaderWrite(&out, &writer);
     writeErrorResponseData(&writer);
-    expected = (NQ_INT)cmBufferWriterGetDataCount(&writer);
+    expected = cmBufferWriterGetDataCount(&writer);
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
-    csCreateMessageSignatureSMB2(out.sid.low, nsSkipHeader(staticData->savedSocket, outBuffer), (NQ_COUNT)expected);
+    if (pSession->dialect < CS_DIALECT_SMB30)
+	{
+		csCreateMessageSignatureSMB2(out.sid.low, nsSkipHeader(staticData->savedSocket, outBuffer), expected);
+	}
+#ifdef UD_NQ_INCLUDESMB3
+	else if (pSession->dialect >= CS_DIALECT_SMB30 && !isEncrypted)
+	{
+		csCreateMessageSignatureSMB3(out.sid.low, nsSkipHeader(staticData->savedSocket, outBuffer), expected);
+	}
+#endif /* UD_NQ_INCLUDESMB3 */
 #endif /* UD_CS_MESSAGESIGNINGPOLICY */
     
-    if ((sent != nsSendFromBuffer(
-            staticData->savedSocket, 
-            outBuffer, 
-            (NQ_UINT)expected, 
-            (NQ_UINT)expected, 
-            NULL
-            )
-        ) == expected)
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    sockDescr = csGetClientSocketDescriptorBySocket(staticData->savedSocket);
+    if (sockDescr != NULL)
+    {
+		sockDescr->captureHdr.receiving = FALSE;
+		cmCapturePacketWriteStart(&sockDescr->captureHdr, expected);
+		cmCapturePacketWritePacket(outBuffer + 4, expected);
+		cmCapturePacketWriteEnd();
+    }
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+#ifdef UD_NQ_INCLUDESMB3
+    if (isEncrypted)
+	{
+    	NQ_INT	nbHeader;
+    	NQ_INT	skip = SMB2_TRANSFORMHEADER_SIZE;
+
+    	syMemset(&encryptedBuffer , 0 , sizeof(encryptedBuffer));
+    	nbHeader = (nsSkipHeader(staticData->savedSocket, outBuffer) == (NQ_BYTE *)outBuffer) ? 0 : 4;
+    	skip += nbHeader;
+
+    	syMemcpy((NQ_BYTE *)&encryptedBuffer[skip], (NQ_BYTE *)&outBuffer[nbHeader] , expected);
+		cs2TransformHeaderEncrypt(NULL, (NQ_BYTE *)&encryptedBuffer[nbHeader], expected);
+		expected = expected + SMB2_TRANSFORMHEADER_SIZE;
+	}
+#endif /* UD_NQ_INCLUDESMB3 */
+    expected = nsPrepareNBBuffer(isEncrypted ? encryptedBuffer : outBuffer, expected, expected);
+	if (0 == expected)
+	{
+        LOGERR(CM_TRC_LEVEL_ERROR, "prepare buffer for interim response failed");
+        LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
+        return 0;
+	}
+
+    sent = nsSendFromBuffer(
+                            staticData->savedSocket,
+                            isEncrypted ? encryptedBuffer : outBuffer,
+                            expected,
+                            expected,
+                            NULL
+                            );
+
+    if (sent != expected)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Sending interim response failed: size=%d, sent=%d", expected, sent);
         LOGFE(CM_TRC_LEVEL_FUNC_TOOL);

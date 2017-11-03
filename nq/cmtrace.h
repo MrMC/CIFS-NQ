@@ -28,13 +28,13 @@
 #define CM_TRC_INCLUDE_ERRORS             /* define this parameter to include TRCERR and LOGERR traces */
 #define CM_TRC_INCLUDE_CALLS              /* define this parameter to include TRCB, TRCE and LOGFB , LOGFE traces */
 #define CM_TRC_INCLUDE_MESSAGES           /* define this parameter to include TRC, TRCxP and LOGMSG traces */
-#define CM_TRC_INCLUDE_DUMPS              /* define this parameter to include TRCDUMP traces */
+#define CM_TRC_INCLUDE_DUMPS              /* define this parameter to include TRCDUMP and LOGDUMP traces */
 #define CM_TRC_INCLUDE_TASKS              /* define this parameter to include LOGSTART and LOGSTOP traces */
 
 #ifdef SY_TRC_DEBUG_LEVEL
 #define CM_TRC_DEBUG_LEVEL          SY_TRC_DEBUG_LEVEL   /* default traces level threshold */
 #else /* SY_TRC_DEBUG_LEVEL */
-#define CM_TRC_DEBUG_LEVEL          1000 //500   /* default traces level threshold */
+#define CM_TRC_DEBUG_LEVEL          500   /* default traces level threshold */
 #endif /* SY_TRC_DEBUG_LEVEL */
 
 #define CM_TRC_LEVEL_ASSERT         5     /* default level for LOGASSERT    */
@@ -54,21 +54,18 @@
 #define CM_TRC_LEVEL_FUNC_TOOL      100   /* auxiliary functions       */
 #define CM_TRC_LEVEL_FUNC_COMMON    1000  /* very common functions     */
 
-#define CM_TRC_LEVEL_MEMORY			CM_TRC_LEVEL_ERROR          /* memory dump traces, to see only memory traces 
+#define CM_TRC_LEVEL_MEMORY			(CM_TRC_DEBUG_LEVEL + 1)    /* memory dump traces, to see only memory traces 
                                                                    define CM_TRC_DEBUG_LEVEL = CM_TRC_LEVEL_MEMORY */
 #define CM_TRC_LEVEL_CMLIST         (CM_TRC_DEBUG_LEVEL + 1)    /* cmlist traces, not reported by default */
 
 
 void cmTraceMessage(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *format, ...);
 void cmTraceError(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *format, ...);
-void cmTraceFuncEnter(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level);
-void cmTraceFuncLeave(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level);
+void cmTraceFuncEnter(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *format, ...);
+void cmTraceFuncLeave(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *format, ...);
 void cmTraceDump(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *str, const void *addr, NQ_UINT nBytes);
 void cmTraceInit(void);
 void cmTraceFinish(void);
-void cmTraceStart(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *name);
-void cmTraceStop(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *name);
-
 
 #ifdef UD_NQ_INCLUDETRACE
 
@@ -123,21 +120,33 @@ void cmTraceStop(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_
 #endif /* CM_TRC_INCLUDE_ERRORS */
 
 #ifdef CM_TRC_INCLUDE_CALLS
-#define TRCB()                       cmTraceFuncEnter(SY_LOG_FILE, SY_LOG_FUNCTION, SY_LOG_LINE, CM_TRC_LEVEL_FUNC_TOOL)
-#define TRCE()                       cmTraceFuncLeave(SY_LOG_FILE, SY_LOG_FUNCTION, SY_LOG_LINE, CM_TRC_LEVEL_FUNC_TOOL)
-#define LOGFB(_level)                cmTraceFuncEnter(SY_LOG_FILE, SY_LOG_FUNCTION, SY_LOG_LINE, _level)
-#define LOGFE(_level)                cmTraceFuncLeave(SY_LOG_FILE, SY_LOG_FUNCTION, SY_LOG_LINE, _level)
+#define TRCB()                       cmTraceFuncEnter(SY_LOG_FILE, SY_LOG_FUNCTION, SY_LOG_LINE, CM_TRC_LEVEL_FUNC_TOOL, "")
+#define TRCE()                       cmTraceFuncLeave(SY_LOG_FILE, SY_LOG_FUNCTION, SY_LOG_LINE, CM_TRC_LEVEL_FUNC_TOOL, "")
+#ifdef SY_C99_MACRO
+#define LOGFB(_level, ...)           cmTraceFuncEnter(SY_LOG_FILE, SY_LOG_FUNCTION, SY_LOG_LINE, _level, ""__VA_ARGS__)
+#define LOGFE(_level, ...)           cmTraceFuncLeave(SY_LOG_FILE, SY_LOG_FUNCTION, SY_LOG_LINE, _level, ""__VA_ARGS__)
 #else 
+#define LOGFB(_level, _fmt...)       cmTraceFuncEnter(SY_LOG_FILE, SY_LOG_FUNCTION, SY_LOG_LINE, _level, ""_fmt)
+#define LOGFE(_level, _fmt...)       cmTraceFuncLeave(SY_LOG_FILE, SY_LOG_FUNCTION, SY_LOG_LINE, _level, ""_fmt)
+#endif /* SY_C99_MACRO */
+#else
 #define TRCB()                    
 #define TRCE()
-#define LOGFB(_level)                
-#define LOGFE(_level)                
+#ifdef SY_C99_MACRO
+#define LOGFB(_level, ...)
+#define LOGFE(_level, ...)
+#else
+#define LOGFB(_level, _fmt...)
+#define LOGFE(_level, _fmt...)
+#endif /* SY_C99_MACRO */
 #endif /* CM_TRC_INCLUDE_CALLS */
 
 #ifdef CM_TRC_INCLUDE_DUMPS
 #define TRCDUMP(_str, _addr, _len)   cmTraceDump(SY_LOG_FILE, SY_LOG_FUNCTION, SY_LOG_LINE, CM_TRC_LEVEL_MESS_NORMAL, _str, _addr, _len)
+#define LOGDUMP(_str, _addr, _len)   cmTraceDump(SY_LOG_FILE, SY_LOG_FUNCTION, SY_LOG_LINE, CM_TRC_LEVEL_MESS_NORMAL, _str, _addr, _len)
 #else 
 #define TRCDUMP(_str, _addr, _len)
+#define LOGDUMP(_str, _addr, _len)
 #endif /* CM_TRC_INCLUDE_DUMPS */
 
 #ifdef CM_TRC_INCLUDE_TASKS       
@@ -153,9 +162,8 @@ void cmTraceStop(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_
 #define LOGASSERT(_level, expr)
 #define TRCB()                    
 #define TRCE()
-#define LOGFB(_level)                
-#define LOGFE(_level)    
 #define TRCDUMP(_str, _addr, _len)
+#define LOGDUMP(_str, _addr, _len)
 #define LOGSTART(_name)                      
 #define LOGSTOP(_name) 
 #ifdef SY_C99_MACRO
@@ -166,6 +174,8 @@ void cmTraceStop(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_
 #define TRC3P(f,...)    
 #define LOGERR(_level, _fmt,...)
 #define TRCERR(f,...)      
+#define LOGFB(_level, ...)                
+#define LOGFE(_level, ...)    
 #else
 #define LOGMSG(_level, _fmt...)
 #define TRC(f...)
@@ -174,6 +184,8 @@ void cmTraceStop(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_
 #define TRC3P(f...)    
 #define LOGERR(_level, _fmt...)
 #define TRCERR(f...)      
+#define LOGFB(_level, _fmt...)
+#define LOGFE(_level, _fmt...)
 #endif /* SY_C99_MACRO */
 #endif /* UD_NQ_INCLUDETRACE */
 

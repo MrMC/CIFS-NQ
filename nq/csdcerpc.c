@@ -187,7 +187,7 @@ csDcerpcInit(
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(StaticData));
     if (NULL == staticData)
     {
         TRCERR("Unable to allocate DCEPRC data");
@@ -317,7 +317,7 @@ csDcerpcWrite(
 
     if (pFile->rpcBuffer == NULL)
     {
-        pFile->rpcBuffer = (NQ_BYTE *)syCalloc(sizeof(BufferDescriptor), 1);
+        pFile->rpcBuffer = (NQ_BYTE *)syMalloc(sizeof(BufferDescriptor));
         if (pFile->rpcBuffer == NULL)
         {
             TRCERR("Unable to allocate RPC buffer descriptor");
@@ -363,10 +363,7 @@ csDcerpcWrite(
         dataLen -= buffer->count;
 
         /* allocate buffer for this fragment */
-        fragBuf = (FragmentDescriptor*)syCalloc(
-            buffer->remaining + sizeof(FragmentDescriptor),
-            1
-            );
+        fragBuf = (FragmentDescriptor*)syMalloc(buffer->remaining + sizeof(FragmentDescriptor));
         if (fragBuf == NULL)
         {
             freeBuffer(buffer);
@@ -412,7 +409,7 @@ csDcerpcWrite(
         {
             requiredLen = UD_NS_BUFFERSIZE;
         }
-        buffer->data = (NQ_BYTE *)syCalloc(requiredLen, 1);
+        buffer->data = (NQ_BYTE *)syMalloc(requiredLen);
         if (buffer->data == NULL)
         {
             freeBuffer(buffer);
@@ -635,7 +632,7 @@ csDcerpcTransact(
 
 NQ_BOOL
 csDcerpcOpenPipe(
-    const NQ_TCHAR* pipeName,
+    const NQ_WCHAR* pipeName,
     CSFile* pFile
     )
 {
@@ -644,15 +641,15 @@ csDcerpcOpenPipe(
 
     TRCB();
 
-    if (cmTStrlen(pipeName) + 1 > sizeof(pipeNameAscii))
+    if (syWStrlen(pipeName) + 1 > sizeof(pipeNameAscii))
     {
         TRCERR("Pipe name too long");
-        TRC1P("  name: %s", cmTDump(pipeName));
+        TRC1P("  name: %s", cmWDump(pipeName));
         TRCE();
         return FALSE;
     }
 
-    cmTcharToAnsi(pipeNameAscii, pipeName);
+    syUnicodeToAnsi(pipeNameAscii, pipeName);
 
     for (i = 0; i < sizeof(pipes)/sizeof(pipes[0]); i++)
     {
@@ -667,7 +664,7 @@ csDcerpcOpenPipe(
     }
 
     TRCERR("Pipe not found");
-    TRC1P("  name: %s", cmTDump(pipeName));
+    TRC1P("  name: %s", cmWDump(pipeName));
     TRCE();
     return FALSE;
 }
@@ -878,7 +875,7 @@ csDcerpcSaveCompleteResponse(
 {
     BufferDescriptor * buffer;
     
-    buffer = (BufferDescriptor*)syCalloc(sizeof(BufferDescriptor), 1);
+    buffer = (BufferDescriptor*)syMalloc(sizeof(BufferDescriptor));
     if (NULL == buffer)
     {
         TRCERR("Unable to allocate RPC buffer descriptor");
@@ -888,7 +885,7 @@ csDcerpcSaveCompleteResponse(
         buffer->first = NULL;       /* no fragments */
         buffer->type = BUFFERTYPE_SAVED;
         buffer->count = dataSize;
-        buffer->data = syCalloc(dataSize, 1);
+        buffer->data = (NQ_BYTE *)syMalloc(dataSize);
         if (NULL == buffer->data)
         {
             TRCERR("Unable to allocate data buffer");
@@ -904,7 +901,7 @@ csDcerpcSaveCompleteResponse(
     {
         freeBuffer((BufferDescriptor *)pFile->rpcBuffer);
     }
-    pFile->rpcBuffer = (void *)buffer;
+    pFile->rpcBuffer = (NQ_BYTE *)buffer;
 }
 
 
@@ -1195,7 +1192,7 @@ dcerpcProceed(
             cmRpcPackUint32(&outPdu, 1);          /* we do not support association groups and always
                                                      return the same ID */
             /* skip the back slash at the beginning of the pipe name */
-            cmTcharToAnsi(tempPipeName, candidate->name + 1);
+            syUnicodeToAnsi(tempPipeName, candidate->name + 1);
             syStrcpy(pipeName + 6, tempPipeName);
             cmRpcPackAscii(&outPdu, pipeName, CM_RP_SIZE16 | CM_RP_NULLTERM); /* secondary address */
             cmRpcAllignZero(&outPdu, 4);
@@ -1322,7 +1319,7 @@ dcerpcProceed(
                     if (resSize > UD_NS_BUFFERSIZE)
                     {
                         NQ_BYTE * newData;      /* bigger buffer */
-                        newData = (NQ_BYTE *)syCalloc(resSize, 1);
+                        newData = (NQ_BYTE *)syMalloc(resSize);
                         if (newData == NULL)
                         {
                             TRCERR("Unable to allocate buffer for a big response");

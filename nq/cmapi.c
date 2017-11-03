@@ -42,112 +42,122 @@ cmInit(
     void
     )
 {
-    
+    NQ_STATUS result = NQ_FAIL;
+
     if (sizeof(NQ_UINT32) != 4)
     {
-        printf("Type 'long' is not 4 bytes on the target platform. Define SY_INT32 in SYCOMPIL.H\n");
-        return NQ_FAIL;
+        syPrintf("Type 'long' is not 4 bytes on the target platform. Define SY_INT32 in SYCOMPIL.H\n");
+        sySetLastError(NQ_ERR_INVALIDUINT32SIZE);
+        goto Exit;
     }
+
+    if (!cmMemoryStart(0))
+	{
+		syPrintf("cmMemoryStart() failed\n");
+		goto Exit;
+	}
 
     if (NQ_FAIL == cmNetBiosInit())
     {
-        return NQ_FAIL;
+        syPrintf("cmNetBiosInit() failed\n");
+        goto Error1;
     }
-        
+
     if (NQ_FAIL == cmCifsInit())
     {
-        cmNetBiosExit();
-        return NQ_FAIL;
+        syPrintf("cmCifsInit() failed\n");
+        goto Error2;
     }
 
 #if defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS)
     if (NQ_FAIL == cmSdInit())
     {
-        cmNetBiosExit();
-        cmCifsExit();      
-        return NQ_FAIL;
-    }    
+        syPrintf("cmSdInit() failed\n");
+        goto Error3;
+    }
 #endif /* defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS) */
 
-    if (NQ_FAIL == cmFindDCInit())
-    {
-        cmNetBiosExit();
-        cmCifsExit();
-#if defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS)      
-        cmSdExit();
-#endif /* defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS) */       
-        return NQ_FAIL;       
-    }
 
-    /* new modules */
-    if (!cmMemoryStart(0))
-    {
-        cmNetBiosExit();
-        cmCifsExit();
-#if defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS)      
-        cmSdExit();
-#endif /* defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS) */
-        cmFindDCInit();
-        return NQ_FAIL;       
-    }
     if (!cmSelfipStart())
     {
-        cmNetBiosExit();
-        cmCifsExit();   
-#if defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS)      
-        cmSdExit();
-#endif /* defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS) */
-        cmFindDCInit();
-        cmMemoryShutdown();
-        return NQ_FAIL;       
+        syPrintf("cmSelfipStart() failed\n");
+        goto Error4;
     }
+
     if (!cmResolverStart())
     {
-        cmNetBiosExit();
-        cmCifsExit();
-#if defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS)      
-        cmSdExit();
-#endif /* defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS) */
-        cmFindDCInit();
-        cmMemoryShutdown();
-        cmSelfipShutdown();
-        return NQ_FAIL;       
+        syPrintf("cmResolverStart() failed\n");
+        goto Error5;
     }
 
     if (!cmThreadStart())
     {
-        cmNetBiosExit();
-        cmCifsExit();
-#if defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS)      
-        cmSdExit();
-#endif /* defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS) */
-        cmFindDCInit();
-        cmMemoryShutdown();
-        cmSelfipShutdown();
-        cmResolverShutdown();
-        return NQ_FAIL;       
+        syPrintf("cmThreadStart() failed\n");
+        goto Error6;
     }
 
-	
-#ifdef UD_NQ_INCLUDETRACE
+    if (!cmPortManageStart())
+    {
+        syPrintf("cmPortManageStart() failed\n");
+        goto Error7;
+    }
+
+    if (NQ_FAIL == cmFindDCInit())
+    {
+        syPrintf("cmFindDCInit() failed\n");
+        goto Error7;
+    }
+
+#ifdef NQ_INTERNALTRACE
     cmTraceInit();
 #endif    
+#ifdef UD_NQ_EXTERNALTRACE
+    syTraceInit();
+#endif
 
     if (!amSpnegoStart())
     {
-        cmNetBiosExit();
-        cmCifsExit();
-#if defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS)      
-        cmSdExit();
-#endif /* defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS) */
-        cmFindDCInit();
-        cmMemoryShutdown();
-        cmSelfipShutdown();
-        cmResolverShutdown();
-        cmThreadShutdown();
-        return NQ_FAIL;       
+        syPrintf("amSpnegoStart() failed\n");
+        goto Error8;
     }
-    return NQ_SUCCESS;
+
+    cmBufManStart();
+
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    cmCaptureStart();
+#endif  /*UD_NQ_INCLUDESMBCAPTURE*/
+
+    result = NQ_SUCCESS;
+    goto Exit;
+
+Error8:
+    cmFindDCExit();
+
+Error7:
+    cmThreadShutdown();
+
+Error6:
+    cmResolverShutdown();
+
+Error5:
+    cmSelfipShutdown();
+
+Error4:
+#if defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS)
+    cmSdExit();
+#endif /* defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS) */
+
+Error3:
+	cmCifsExit();
+
+Error2:
+	cmNetBiosExit();
+
+Error1:
+	cmMemoryShutdown();
+
+Exit:
+    return result;
 }
 
 /*
@@ -165,6 +175,10 @@ cmExit(
     void
     )
 {    
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    cmCaptureShutdown();
+#endif  /*UD_NQ_INCLUDESMBCAPTURE*/
+    cmBufManShutdown();
     cmNetBiosExit();
     cmCifsExit();
 #if defined(UD_CS_INCLUDESECURITYDESCRIPTORS) || defined(UD_CC_INCLUDESECURITYDESCRIPTORS)
@@ -173,11 +187,80 @@ cmExit(
     cmFindDCExit();
     /* new modules */
     cmResolverShutdown();
-#ifdef UD_NQ_INCLUDETRACE
+#ifdef NQ_INTERNALTRACE
     cmTraceFinish();
-#endif    
+#endif
+#ifdef UD_NQ_EXTERNALTRACE
+    syTraceShutdown();
+#endif
     cmThreadShutdown();
     cmSelfipShutdown();
     amSpnegoShutdown();
     cmMemoryShutdown();
+}
+
+NQ_UINT
+cmGetNumOfAvailableTransports(
+    void
+    )
+{
+	NQ_UINT defaultTransports[] = {
+#ifdef UD_NQ_USETRANSPORTIPV4
+	          NS_TRANSPORT_IPV4,
+#endif /* UD_NQ_USETRANSPORTIPV4 */
+#ifdef UD_NQ_USETRANSPORTNETBIOS
+	          NS_TRANSPORT_NETBIOS,
+#endif /* UD_NQ_USETRANSPORTNETBIOS */
+#ifdef UD_NQ_USETRANSPORTIPV6
+	          NS_TRANSPORT_IPV6,
+#endif /* UD_NQ_USETRANSPORTIPV6 */
+	          0 } ;
+
+	return (NQ_UINT)(sizeof(defaultTransports) / sizeof(NQ_UINT) - 1);
+}
+
+/*
+ *====================================================================
+ * PURPOSE: returns the list of transports by their priorities
+ *--------------------------------------------------------------------
+ * PARAMS:  None
+ *
+ * RETURNS: the pointer to array of transports following by zero
+ *
+ * NOTES:
+ *====================================================================
+ */
+
+void
+cmGetTransportPriorities(
+    NQ_UINT	*	pBuf
+    )
+{
+    static const NQ_UINT defaultTransports[] = {
+#ifdef UD_NQ_USETRANSPORTIPV4
+          NS_TRANSPORT_IPV4,
+#endif /* UD_NQ_USETRANSPORTIPV4 */
+#ifdef UD_NQ_USETRANSPORTNETBIOS
+          NS_TRANSPORT_NETBIOS,
+#endif /* UD_NQ_USETRANSPORTNETBIOS */
+#ifdef UD_NQ_USETRANSPORTIPV6
+          NS_TRANSPORT_IPV6,
+#endif /* UD_NQ_USETRANSPORTIPV6 */
+          0 } ;
+
+	const NQ_UINT *t;
+	NQ_INT i, p;
+
+    if (pBuf != NULL)
+    {
+		for (p = 3, i = 0; p > 0; p--)
+		{
+			/* lets try all transports */
+			for (t = defaultTransports; *t; t++)
+			{
+				if (udGetTransportPriority(*t) == p)
+					pBuf[i++] = *t;
+			}
+		}
+    }
 }

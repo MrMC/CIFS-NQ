@@ -23,26 +23,6 @@
 
 #ifdef UD_NQ_INCLUDECIFSSERVER
 
-/* sequence number constants for signing */
-
-#define FIRST_REQUEST 2             /* first session setup: current request - 0, next - 2 */
-#define SUBSEQUENT_REQUEST 2        /* second session setup: current request - 2, next - 4 */
-#define FIRST_RESPONSE 1            /* first session setup: current response - -1, next - 1 */
-#define SUBSEQUENT_RESPONSE 1       /* second session setup: current response - 1, next - 3 */
-
-
-
-#ifdef UD_CS_MESSAGESIGNINGPOLICY
-static
-NQ_BOOL
-isSessionSigned(
-    NQ_UINT16 flags2
-    )
-{
-    return csIsMessageSigningEnabled() ? (csIsMessageSigningRequired() ? TRUE : (flags2 & SMB_FLAGS2_SMB_SECURITY_SIGNATURES)) : FALSE;
-}
-#endif
-
 /*====================================================================
  * PURPOSE: Perform LOGOFF_ANDX command
  *--------------------------------------------------------------------
@@ -67,7 +47,7 @@ csComLogoffAndX(
 {
     CMCifsLogoffAndXRequest* logoffRequest;   /* casted pointer to the request */
     CMCifsLogoffAndXResponse* logoffResponse; /* casted pointer to the response */
-    NQ_UINT32 returnValue;      /* error code returnes by other routines - NT */
+    NQ_UINT32 returnValue;      /* error code returns by other routines - NT */
     CSUser* pUser;              /* user descriptor */
 
     TRCB();
@@ -173,10 +153,11 @@ csComSessionSetupAndX(
     CSSession* pSession;        /* pointer to the session slot */
     CMCifsSessionSetupAndXRequest* setupRequest;   /* casted pointer to the request */
     CMCifsSessionSetupAndXResponse* setupResponse; /* casted pointer to the response */
-    NQ_UINT32 returnValue;      /* error code returnes by other routines - NT */
+    NQ_UINT32 returnValue;      /* error code returns by other routines - NT */
     NQ_BOOL unicodeRequired;    /* client requires UNICODE */
     const NQ_BYTE* pOsName;     /* pointer to the OS name */
     CSUser* pUser = NULL;       /* pointer to the user descriptor */
+    CSUid uid;					/* UID value in request */
     NQ_BYTE* pData;             /* abstract pointer */
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
     NQ_COUNT blobLength;        /* length of the security blob generated */
@@ -184,8 +165,9 @@ csComSessionSetupAndX(
 #endif  /* UD_CS_INCLUDEEXTENDEDSECURITY */
     NQ_UINT32 response;         /* status to return */
     NQ_UINT32 clientCapabilities; /* client capabilities */
-#ifdef UD_CS_MESSAGESIGNINGPOLICY
     CMCifsHeader *pHeaderIn;    /* pointer to incoming header */
+#ifdef UD_CS_MESSAGESIGNINGPOLICY
+    NQ_BOOL	andXCommand = FALSE;
 #endif /* UD_CS_MESSAGESIGNINGPOLICY */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDUserAccessEvent	eventInfo;
@@ -199,6 +181,7 @@ csComSessionSetupAndX(
 
     /* cast pointers */
 
+    pHeaderIn = (CMCifsHeader *)(pRequest - sizeof(CMCifsHeader));
     setupRequest = (CMCifsSessionSetupAndXRequest*)pRequest;
     setupResponse = (CMCifsSessionSetupAndXResponse*)(*pResponse);
 
@@ -255,6 +238,9 @@ csComSessionSetupAndX(
     case SMB_COM_SET_INFORMATION:
     case SMB_COM_OPEN_PRINT_FILE:
     case SMB_COM_COPY:
+#ifdef UD_CS_MESSAGESIGNINGPOLICY
+    	andXCommand = TRUE;
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */
     case 0xFF:
         break;
     default:
@@ -266,10 +252,20 @@ csComSessionSetupAndX(
 
 #ifdef UD_CS_MESSAGESIGNINGPOLICY    
     /* decide on security signatures */
-    pHeaderIn = (CMCifsHeader *)(pRequest - sizeof(CMCifsHeader));
-    pSession->signingOn = isSessionSigned(cmLtoh16(cmGetSUint16(pHeaderIn->flags2)));
+    pSession->signingOn = (csIsMessageSigningEnabled() ? (csIsMessageSigningRequired() ?
+    					TRUE : (cmLtoh16(cmGetSUint16(pHeaderIn->flags2)) & SMB_FLAGS2_SMB_SECURITY_SIGNATURES)) : FALSE);
     TRC("session will %s signed", pSession->signingOn ? "be" : "not be");
-#endif
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */
+
+    /* read UID */
+
+    uid = cmLtoh16(cmGetSUint16(pHeaderIn->uid));
+    if (uid != 0)
+    {
+    	pUser = csGetUserByUid(uid);
+    	if (pUser != NULL && pUser->authenticated)
+    		pUser = NULL;
+    }
 
     /* check client authentication  */
 
@@ -288,7 +284,7 @@ csComSessionSetupAndX(
                     &pUser,
                     &pOsName
                     );
-    if (0 != response)
+    if (NQ_SUCCESS != response)
     {
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
         if (csErrorReturn(SMB_STATUS_MORE_PROCESSING_REQUIRED, NQ_ERR_MOREDATA) != response)
@@ -297,13 +293,13 @@ csComSessionSetupAndX(
 #ifdef UD_NQ_INCLUDEEVENTLOG
         	if (response != csErrorReturn(SMB_STATUS_LOGON_FAILURE, DOS_ERRnoaccess))
         	{
-        		NQ_TCHAR nullName = '\0';
+        		NQ_WCHAR nullName = '\0';
 
 				eventInfo.rid = (pUser != NULL) ? csGetUserRid(pUser) : CS_ILLEGALID;
 				udEventLog(UD_LOG_MODULE_CS,
 					UD_LOG_CLASS_USER,
 					UD_LOG_USER_LOGON,
-					(pUser != NULL) ? (NQ_TCHAR *)&pUser->name : (NQ_TCHAR *)&nullName,
+					(pUser != NULL) ? (NQ_WCHAR *)&pUser->name : (NQ_WCHAR *)&nullName,
 					&pSession->ip,
 					response,
 					(NQ_BYTE *)&eventInfo);
@@ -317,31 +313,22 @@ csComSessionSetupAndX(
 #endif  /* UD_CS_INCLUDEEXTENDEDSECURITY */   
     }
 
-#ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
-#ifdef UD_CS_INCLUDEEXTENDEDSECURITY
-    if (0 == response)
-#endif  /* UD_CS_INCLUDEEXTENDEDSECURITY */
+    if (NQ_SUCCESS == response)
     {
-        csFillUserToken(pUser, unicodeRequired);
-    }
-#endif /*  UD_CS_INCLUDESECURITYDESCRIPTORS */
+    	pUser->authenticated = TRUE;
 #ifdef UD_NQ_INCLUDEEVENTLOG
-    if (0 == response)
-    {
-        eventInfo.rid = csGetUserRid(pUser);
-        udEventLog(UD_LOG_MODULE_CS,
-            UD_LOG_CLASS_USER,
-            UD_LOG_USER_LOGON,
-            (NQ_TCHAR *)&pUser->name,
-            &pSession->ip,
-            0,
-            (NQ_BYTE *)&eventInfo);
-    }
+		{
+			eventInfo.rid = csGetUserRid(pUser);
+			udEventLog(UD_LOG_MODULE_CS,
+				UD_LOG_CLASS_USER,
+				UD_LOG_USER_LOGON,
+				(NQ_WCHAR *)&pUser->name,
+				&pSession->ip,
+				0,
+				(NQ_BYTE *)&eventInfo);
+		}
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-
-
-
-
+    }
 
     /* prepare the response */
 
@@ -374,7 +361,7 @@ csComSessionSetupAndX(
     {
         NQ_STATIC NQ_CHAR lanStr[100];
 
-        sySprintf(lanStr, "NQ %d.%d", CM_SOFTWAREVERSIONMAJOR, CM_SOFTWAREVERSIONMINOR);
+        sySprintf(lanStr, "NQE %d.%d", CM_SOFTWAREVERSIONMAJOR, CM_SOFTWAREVERSIONMINOR);
         if (unicodeRequired)
         {
             NQ_WCHAR* pStr;
@@ -431,19 +418,24 @@ csComSessionSetupAndX(
         cmPutSUint16(setupResponse->andXOffset, cmHtol16(offset));
     }
 
-    /* consider client's operating system */
+    /* set UID in the header for response and request (for further AndX commands) */
+    cmPutSUint16(pHeaderOut->uid, cmLtoh16(pUser->uid));
 
-    if (NULL != pUser) 
+    if (pUser->authenticated)
     {
+    	cmPutSUint16(setupResponse->action, pUser->isGuest ? cmLtoh16(CS_SESSIONACTION_GUEST) : 0);
+
+    	/* consider client's operating system */
+
         pUser->preservesCase = (UD_FS_FILESYSTEMATTRIBUTES & CM_FS_CASESENSITIVESEARCH) == 0;
         pUser->supportsReadAhead = TRUE;
         pUser->supportsNtErrors = 0 != (clientCapabilities & SMB_CAP_NT_STATUS);
         /* consider Windows NT/95/98 */
         {
             NQ_CHAR osName[12];
-            #define WINNTSIGNATURE "Windows NT "
-            #define WIN9XSIGNATURE "Windows 4.0"
-    
+#define WINNTSIGNATURE "Windows NT "
+#define WIN9XSIGNATURE "Windows 4.0"
+
             if (unicodeRequired)
                 cmUnicodeToAnsiN(osName, (NQ_WCHAR*)pOsName, (NQ_UINT)(syStrlen(WINNTSIGNATURE) * sizeof(NQ_WCHAR)));
             else
@@ -459,38 +451,16 @@ csComSessionSetupAndX(
             /*pUser->supportsNotify =    syStrlen(osName) > 0
                                     && 0!=syStrcmp(osName, WINNTSIGNATURE);*/
         }
-        /* set UID in the header for response and request (for futher AndX commands) */
-        cmPutSUint16(pHeaderOut->uid, cmLtoh16(pUser->uid));
-        cmPutSUint16(setupResponse->action, pUser->isGuest ? cmLtoh16(CS_SESSIONACTION_GUEST) : 0);
-
-#ifdef UD_CS_MESSAGESIGNINGPOLICY
-        /* first "real" user logges in */
-        if (pSession->isBsrspyl && !pUser->isAnonymous && !pUser->isGuest)
-            pSession->isBsrspyl = FALSE;
-#endif /* UD_CS_MESSAGESIGNINGPOLICY */
     }
 
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
-    if (pSession->sequenceNum < 4)
-	{
-	    if (response == NQ_SUCCESS)
-    	{  
-        	if (pSession->sequenceNum == FIRST_REQUEST) 
-        	{
-            	pSession->sequenceNum = FIRST_REQUEST;
-            	pSession->sequenceNumRes = FIRST_RESPONSE;
-	        }
-    	    else
-        	{
-	            pSession->sequenceNum = SUBSEQUENT_REQUEST;
-    	        pSession->sequenceNumRes = SUBSEQUENT_RESPONSE;
-        	}
-    	}
-	    else
-    	{
-        	pSession->sequenceNum = SUBSEQUENT_REQUEST;
-	    }
-	}
+    if (pSession->sequenceNum == 0 && response == NQ_SUCCESS)
+    {
+        pSession->sequenceNumRes = 1;
+        pSession->sequenceNum = pSession->sequenceNumRes + 1;
+    }
+    if (andXCommand)
+    	pSession->sequenceNum -= 2;
 #endif /* UD_CS_MESSAGESIGNINGPOLICY */
 
     TRCE();

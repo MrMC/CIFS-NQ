@@ -23,10 +23,53 @@
 
 /* SMB2 protocol identification bytes */
 extern const NQ_BYTE cmSmb2ProtocolId[4];
+extern const NQ_BYTE cmSmb2TrnsfrmHdrProtocolId[4];
+
+typedef NQ_UINT16 CSDialect;
+/* SMB2 negotiate dialect string */
+#define SMB2GNRL_DIALECTSTRING   "SMB 2.???"
+#define SMB2GNRL_DIALECTREVISION 0x0200
 
 /* SMB2 negotiate dialect string */
 #define SMB2_DIALECTSTRING   "SMB 2.002"
 #define SMB2_DIALECTREVISION 0x0202
+
+#define SMB2_1_DIALECTSTRING   "SMB 2.100"
+#define SMB2_1_DIALECTREVISION 0x0210
+
+/* SMB2 negotiate dialect string */
+#define SMB2ANY_DIALECTSTRING   "SMB 2.???"
+#define SMB2ANY_DIALECTREVISION 0x02ff
+
+#define SMB3_DIALECTSTRING   "SMB 3.0.0"
+#define SMB3_DIALECTREVISION 0x0300
+
+#define SMB3_0_2_DIALECTSTRING   "SMB 3.0.2"
+#define SMB3_0_2_DIALECTREVISION 0x0302
+
+#define SMB3_1_1_DIALECTSTRING   "SMB 3.1.1"
+#define SMB3_1_1_DIALECTREVISION 0x0311
+
+
+/* SMB2 context types */
+#define SMB2_PREAUTH_INTEGRITY_CAPABILITIES 0x0001
+#define SMB2_ENCRYPTION_CAPABILITIES        0x0002
+
+/* SMB2 context lengths */
+#define SMB2_PREAUTH_INTEGRITY_CONTEXT_LEN_BYTES 0x0026
+#define SMB2_ENCRYPTION_CCONTEXT_LEN_BYTES       0x0006
+
+/* Cipher Types */
+#define CIPHER_NO_CIPHER		0x0000
+#define CIPHER_AES128CCM        0x0001
+#define CIPHER_AES128GCM        0x0002
+
+/* Hash algorithms */
+#define SHA_512                 0x0001
+
+/* dialect control functions */
+void csSetSmbDialect(CSDialect smbDialect, NQ_BOOL on);
+NQ_BOOL csGetSmbDialect(CSDialect smbDialect);
 
 /* SMB2 command codes */
 #define SMB2_CMD_NEGOTIATE      0x0000
@@ -48,14 +91,7 @@ extern const NQ_BYTE cmSmb2ProtocolId[4];
 #define SMB2_CMD_QUERYINFO      0x0010
 #define SMB2_CMD_SETINFO        0x0011
 #define SMB2_CMD_OPLOCKBREAK    0x0012
-
-/* max number of credits for client to request (seen in Vista client) */
-#define SMB2_CLIENT_MAX_CREDITS_TO_REQUEST 8
-/* Default number of credits NQ server grants:
- * The bigger number may cause timeout on bulk upload/download operation, 
- * especially when the client is W2k8 Server. Rasing this number above 3 
- * does not really increase the performance */
-#define SMB2_NUMCREDITS 30          
+#define SMB2_CMD_NOCOMMAND	    0xFFFF
 
 /* SMB2 header flags */
 #define SMB2_FLAG_SERVER_TO_REDIR    0x00000001
@@ -63,6 +99,7 @@ extern const NQ_BYTE cmSmb2ProtocolId[4];
 #define SMB2_FLAG_RELATED_OPERATIONS 0x00000004
 #define SMB2_FLAG_SIGNED             0x00000008
 #define SMB2_FLAG_DFS_OPERATIONS     0x10000000
+#define SMB2_FLAG_REPLAY_OPERATIONS  0x20000000
 
 /* Reserved PID */
 #define SMB2_PID_RESERVED 0x0000FEFF
@@ -70,35 +107,66 @@ extern const NQ_BYTE cmSmb2ProtocolId[4];
 /* Security signature */
 #define SMB2_SECURITY_SIGNATURE_SIZE   16
 #define SMB2_SECURITY_SIGNATURE_OFFSET 48
+#define SMB2_PREAUTH_INTEGRITY_SALT_SIZE 32
 
 /* OPLOCK levels for Create */
 #define SMB2_OPLOCK_LEVEL_NONE      0x00
 #define SMB2_OPLOCK_LEVEL_II        0x01
 #define SMB2_OPLOCK_LEVEL_EXCLUSIVE 0x08
 #define SMB2_OPLOCK_LEVEL_BATCH     0x09
+#define SMB2_OPLOCK_LEVEL_LEASE     0xFF
+
+
+/* Encryption Parameters */
+#define SMB2_ENCRYPTION_AES128_CCM	0x0001
+#define SMB2_ENCRYPTION_AES128_GCM	0x0002
+
+/* nonce sizes */
+#define SMB2_ENCRYPTION_HDR_NONCE_SIZE	   16
+#define SMB2_AES128_CCM_NONCE_SIZE		   11
+#define SMB2_AES128_GCM_NONCE_SIZE		   12
+
+/* */
+
+/* Transform header flags */
+#define SMB2_USE_NEGOTIATED_CIPHER 0x0001
 
 /* SMB2 header */
 typedef struct
 {
-    NQ_BYTE *_start;         /* header start address in buffers */
-    NQ_UINT16 size;          /* should be 64 */
-    NQ_UINT16 epoch;         /* should be 0  */
+    NQ_BYTE *_start;        /* header start address in buffers */
+    NQ_UINT16 size;         /* should be 64 */
+    NQ_UINT16 creditCharge; /* number of charged credits */
     NQ_UINT32 status;
     NQ_UINT16 command;
-    NQ_UINT16 credits;
+    NQ_UINT16 credits;		/* number of requested credits */
     NQ_UINT32 flags;
-    NQ_UINT32 next;          /* next header offset aligned 8 bytes relative to 
-                                this header start */
+    NQ_UINT32 next;         /* next header offset aligned 8 bytes relative to this header start */
     NQ_UINT64 mid;
     NQ_UINT64 aid;
     NQ_UINT32 pid;
     NQ_UINT32 tid;
     NQ_UINT64 sid;
     NQ_BYTE signature[SMB2_SECURITY_SIGNATURE_SIZE];
+    NQ_UINT16 structSize;    /* payload size */
 } CMSmb2Header;
 
 /* SMB2 header size (always 64) */
 #define SMB2_HEADERSIZE 64
+
+typedef struct
+{
+	NQ_BYTE 	*_start;         /* header start address in buffers */
+	NQ_BYTE 	signature[SMB2_SECURITY_SIGNATURE_SIZE];
+	NQ_BYTE 	nonce[SMB2_ENCRYPTION_HDR_NONCE_SIZE];
+	NQ_UINT32 	originalMsgSize;
+	NQ_UINT16 	encryptionArgorithm; /* renamed on 3.1.1 to flags. only value is 0x0001
+										which means SMB2_ENCRYPTION_AES128_CCM in 3.0 or "Encrypted" starting 3.1.1 */
+	NQ_UINT64 	sid;
+
+}CMSmb2TransformHeader;
+
+#define SMB2_TRANSFORMHEADER_SIZE 52
 
 /*
  * Initialize SMB2 request header structure 
@@ -131,16 +199,17 @@ NQ_UINT cmSmb2HeaderGetWriterOffset(const CMSmb2Header *header, const CMBufferWr
 /* Align writer relative to the header start address */
 void cmSmb2HeaderAlignWriter(const CMSmb2Header *header, CMBufferWriter *writer, NQ_UINT alignment);
 
-/* UUID (GUID) */
-typedef struct
-{
-    NQ_UINT32 d4;
-    NQ_UINT16 d2[2];
-    NQ_BYTE d8[8];
-} CMUuid;
+/* SMB2 Transform Header Functions*/
+void cmSmb2TransformHeaderRead(CMSmb2TransformHeader *header, CMBufferReader *reader);
+void cmSmb2TransformHeaderWrite(CMSmb2TransformHeader *header, CMBufferWriter *writer);
 
-/* Generate GUID */
+/* UUID (GUID) */
+#define CMUuid NQ_Uuid
+
+/* Generate random GUID */
 void cmGenerateUuid(CMUuid *uuid);
+/* Generate zero GUID */
+void cmZeroUuid(CMUuid *uuid);
 /* Read UUID using buffer reader */
 void cmUuidRead(CMBufferReader *reader, CMUuid *uuid);
 /* Write UUID using buffer writer */
@@ -156,8 +225,10 @@ CMTime;
 
 /* Get current time as CMFileTime */
 void cmGetCurrentTime(CMTime *time);
+
 /* Read SMB2 time */
 void cmTimeRead(CMBufferWriter *reader, CMTime *time);
+
 /* Write SMB2 time value */
 void cmTimeWrite(CMBufferWriter *writer, const CMTime *time);
 
@@ -166,11 +237,22 @@ void cmTimeWrite(CMBufferWriter *writer, const CMTime *time);
 #define SMB2_NEGOTIATE_SIGNINGREQUIRED 0x0002
 
 /* SMB2 capabilities flag */
-#define SMB2_CAPABILITY_DFS 0x00000001
+#define SMB2_CAPABILITY_DFS 				0x00000001
+#define SMB2_CAPABILITY_LEASING 			0x00000002
+#define SMB2_CAPABILITY_LARGE_MTU 			0x00000004
+#define SMB2_CAPABILITY_MULTI_CHANNEL 		0x00000008
+#define SMB2_CAPABILITY_PERSISTENT_HANDLES 	0x00000010
+#define SMB2_CAPABILITY_DIRECTORY_LEASING 	0x00000020
+#define SMB2_CAPABILITY_ENCRYPTION 			0x00000040
 
 /* SMB2 session flags */
-#define SMB2_SESSIONSETUP_GUEST  0x0001
-#define SMB2_SESSIONSETUP_ANONYM 0x0002
+#define SMB2_SESSIONSETUP_GUEST				0x0001
+#define SMB2_SESSIONSETUP_ANONYM			0x0002
+#define SMB2_SESSIONSETUP_ENCRYPT			0x0004
+
+#define SMB2_SESSIONSETUP_FLAGBINDING		0x01
+
+#define SMB2_0_IOCTL_IS_FSCTL				0x00000001
 
 /* Oplock levels */
 #define SMB2_OPLOCK_NONE      0x00
@@ -198,6 +280,7 @@ void cmTimeWrite(CMBufferWriter *writer, const CMTime *time);
 #define SMB2_CREATEDISPOSITION_OVERWRITE_IF 0x00000005
 
 /* Create options */
+#define SMB2_CREATEOPTIONS_NONE                      0x00000000
 #define SMB2_CREATEOPTIONS_DIRECTORY_FILE            0x00000001
 #define SMB2_CREATEOPTIONS_WRITE_THROUGH             0x00000002
 #define SMB2_CREATEOPTIONS_SEQUENTIAL_ONLY           0x00000004
@@ -211,6 +294,8 @@ void cmTimeWrite(CMBufferWriter *writer, const CMTime *time);
 #define SMB2_CREATEOPTIONS_NO_COMPRESSION            0x00008000
 #define SMB2_CREATEOPTIONS_OPEN_REPARSE_POINT        0x00200000
 #define SMB2_CREATEOPTIONS_OPEN_NO_RECALL            0x00400000
+#define SMB2_CREATEOPTIONS_MASK                      0xFF000000
+#define SMB2_CREATEOPTIONS_INVALIDMASK               0x0CE0FE00
 
 /* Access mask bits (file, pipe, printer) */
 #define SMB2_ACCESSMASKFPP_READ_DATA              0x00000001
@@ -254,9 +339,10 @@ void cmTimeWrite(CMBufferWriter *writer, const CMTime *time);
 #define SMB2_ACCESSMASKDIR_GENERIC_EXECUTE        0x20000000
 #define SMB2_ACCESSMASKDIR_GENERIC_WRITE          0x40000000
 #define SMB2_ACCESSMASKDIR_GENERIC_READ           0x80000000
+#define SMB2_ACCESSMASK                           0x0C000000
 
 /* File attributes */
-#define SMB2_FILEATTRIBUTE_READONLY            0x00000001
+#define SMB2_FILEATTRIBUTE_READONLY			   0x00000001
 #define SMB2_FILEATTRIBUTE_HIDDEN              0x00000002
 #define SMB2_FILEATTRIBUTE_SYSTEM              0x00000004
 #define SMB2_FILEATTRIBUTE_DIRECTORY           0x00000010
@@ -269,6 +355,7 @@ void cmTimeWrite(CMBufferWriter *writer, const CMTime *time);
 #define SMB2_FILEATTRIBUTE_OFFLINE             0x00001000
 #define SMB2_FILEATTRIBUTE_NOT_CONTENT_INDEXED 0x00002000
 #define SMB2_FILEATTRIBUTE_ENCRYPTED           0x00004000
+#define SMB2_FILEATTRIBS_MASK                  0xFFFF0048
 
 /* Query/Set Info types */
 #define SMB2_INFO_FILE       0x01    /* The file information is requested. */
@@ -300,6 +387,7 @@ void cmTimeWrite(CMBufferWriter *writer, const CMTime *time);
 #define SMB2_FILEINFO_ALLINFORMATION  18
 #define SMB2_FILEINFO_BASIC           4
 #define SMB2_FILEINFO_STANDARD        5
+#define SMB2_FILEINFO_INTERNAL        6
 #define SMB2_FILEINFO_RENAME          10
 #define SMB2_FILEINFO_LINK
 #define SMB2_FILEINFO_DISPOSITION     13
@@ -312,8 +400,6 @@ void cmTimeWrite(CMBufferWriter *writer, const CMTime *time);
 #define SMB2_FILEINFO_VALIDDATALENGTH
 #define SMB2_FILEINFO_SHORTNAME
 
-#include "sypackon.h"
-
 /* File rename information structure */
 typedef SY_PACK_PREFIX struct
 {
@@ -325,8 +411,6 @@ typedef SY_PACK_PREFIX struct
     NQ_SUINT32    nameLength;       /* file name length */
 }
 SY_PACK_ATTR CMSmb2FileRenameInformation;
-
-#include "sypackof.h"
 
 /* File system information levels */
 #define SMB2_FSINFO_VOLUME     1
@@ -362,6 +446,17 @@ SY_PACK_ATTR CMSmb2FileRenameInformation;
 #define SMB2_SHARE_TYPE_PIPE                            0x02        /* Named pipe share */
 #define SMB2_SHARE_TYPE_PRINT                           0x03        /* Printer share */
 
+/* SMB2 share types for SRVSVC */
+#define SMB2_SHARE_SRV_TYPE_DISK                            		0x00000000        /* Disk share */
+#define SMB2_SHARE_SRV_TYPE_PRINT                           		0x00000001        /* Printer share */
+#define SMB2_SHARE_SRV_TYPE_DEVICE									0x00000002		  /* Device share */
+#define SMB2_SHARE_SRV_TYPE_IPC	                            		0x00000003        /* IPC share */
+#define SMB2_SHARE_SRV_TYPE_CLUSTER                           		0x02000000        /* Cluster share */
+#define SMB2_SHARE_SRV_TYPE_CLUSTER_SCALE                           0x04000000        /* Cluster Scale-Out share */
+#define SMB2_SHARE_SRV_TYPE_CLUSTER_DFS                           	0x08000000        /* Cluster DFS share */
+#define SMB2_SHARE_SRV_TYPE_HIDDEN	                         		0x80000000        /* Hidden share */
+
+
 /* SMB2 share flags */
 #define SMB2_SHARE_FLAG_MANUAL_CACHING                  0x00000000  /* The client MAY cache files that are explicitly selected by the user for offline use. */
 #define SMB2_SHARE_FLAG_AUTO_CACHING                    0x00000010  /* The client MAY automatically cache files that are used by the user for offline access. */
@@ -373,9 +468,14 @@ SY_PACK_ATTR CMSmb2FileRenameInformation;
 #define SMB2_SHARE_FLAG_FORCE_SHARED_DELETE             0x00000200  /* Shared files in the specified share can be forcibly deleted. */
 #define SMB2_SHARE_FLAG_ALLOW_NAMESPACE_CACHING         0x00000400  /* Clients are allowed to cache the namespace of the specified share. */
 #define SMB2_SHARE_FLAG_ACCESS_BASED_DIRECTORY_ENUM     0x00000800  /* The server will filter directory entries based on the access permissions of the client. */
+#define SMB2_SHARE_FLAG_ENCRYPT_DATA					0x00008000  /* The server requires encryption of remote file access messages on this share. Only valid for SMB 3.X dialect family */
 
 /* SMB2 share capabilities */
 #define SMB2_SHARE_CAPS_DFS                             0x00000008  /* The share is in DFS. */
+#define SMB2_SHARE_CAP_SCALEOUT                         0x00000020  /* The share is has faster recovery of durable handles.*/
+
+/* channel info */
+#define SMB2_CHANNEL_INFO_LEN 16 /* V1 */
 
 #endif
 

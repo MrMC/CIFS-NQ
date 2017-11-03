@@ -281,7 +281,7 @@ csNtTransactionQuerySecurityDescriptor(
     }*/
 
     cmPutUint32(descriptor->pParams, cmHtol32(returnValue));
-    if (cmLtoh32(cmGetSUint32(descriptor->requestData->maxDataCount)) < (NQ_INT32)returnValue)
+    if ((NQ_UINT32) cmLtoh32(cmGetSUint32(descriptor->requestData->maxDataCount)) < returnValue)
     {
         descriptor->dataCount = 0;
         TRCERR("Buffer overflow");
@@ -321,7 +321,7 @@ csNtTransactionSetSecurityDescriptor(
     CMCifsNtTransactionSecurityRequest* securityRequest;    /* casted request */
     NQ_UINT32 returnValue;                                  /* various values */
     CSFile* pFile;                  /* pointer to file descriptor */
-    const NQ_TCHAR* pFileName;      /* pointer to file name */
+    const NQ_WCHAR* pFileName;      /* pointer to file name */
     CSFid fid;                      /* required FID */
     NQ_BYTE* pData;                 /* pointer to the security descriptor */
     CSUid uid;                      /* required UID */

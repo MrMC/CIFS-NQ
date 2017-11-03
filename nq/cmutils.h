@@ -124,6 +124,14 @@ typedef NQ_SUINT16 NQ_SWCHAR;
 #define cmHtol16(_v)    (_v)
 #define cmHtol32(_v)    (_v)
 
+/* --- Little to Big Endian Conversion --- */
+#define cmHtob16(_v)    ((((_v) & 0xFF00) >> 8) | (((_v) & 0x00FF) << 8))
+#define cmHtob32(_v)    ((((_v) & 0xFF000000) >> 24) |  \
+                         (((_v) & 0x00FF0000) >> 8)  |  \
+                         (((_v) & 0x0000FF00) << 8)  |  \
+                         (((_v) & 0x000000FF) << 24)    \
+                        )
+
 #else /* SY_LITTLEENDIANHOST */
 
 #ifndef SY_BIGENDIANHOST
@@ -142,7 +150,9 @@ typedef NQ_SUINT16 NQ_SWCHAR;
                          (((_v) & 0x0000FF00) << 8)  |  \
                          (((_v) & 0x000000FF) << 24)    \
                         )
-
+/* --- Little to Big Endian Conversion --- */
+#define cmHtob16(_v)    (_v)
+#define cmHtob32(_v)    (_v)
 #endif /* SY_LITTLEENDIANHOST */
 
 #endif  /* _CMUTILS_H_ */

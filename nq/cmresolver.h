@@ -27,11 +27,18 @@
    A descriptor of one resolver method. */
 typedef struct 
 {
-    NQ_INT type;        /* one of NQ_RESOLVER_NETBIOS or NQ_RESOLVER_DNS */
-    NQ_BOOL isMulticast;/* This value shoudl be <i>TRUE</i> for a multicast method. NQ uses unicast methods first. 
-                           If none of them has suceeded, NQ tries multiccast methods. */
-    NQ_TIME timeout;    /* timeout in seconds to use with this method */
-    NQ_BOOL waitAnyway; /* wait for this method result even if another one has already succeded */
+		/* one of NQ_RESOLVER_NETBIOS or NQ_RESOLVER_DNS or NQ_RESOLVER_EXTERNAL_METHOD */
+    NQ_INT type;
+    	/* This value should be <i>TRUE</i> for a multicast method. NQ uses unicast methods first.*/
+    NQ_BOOL isMulticast;
+    	/* Methods will be activated according to priority, if first priority fails to resolve next priority is activated etc */
+    	/* for all unicast we set priority 2. for all multicast priority 4.
+    	 * this way external method that is registered by user can be priority 1 or 3 or 5. */
+    NQ_UINT activationPriority;
+    	/* timeout in milliseconds to use with this method */
+    NQ_TIME timeout;
+    	/* wait for this method result even if another one has already succeeded */
+    NQ_BOOL waitAnyway;
     /* Routine for composing and sending a name resolution request
        Parameters:
         socket :    Socket handle to use for sending
@@ -39,9 +46,9 @@ typedef struct
         context :   Pointer to a method-specific context. This value may be NULL on the first call.
         serverIp :  Pointer to  the IP of the server to query or NULL for multicast
        Return:
-       NQ_SUCCESS           request sent
-       1-n                  a positive number means that more then one request was sent
-       NQ_ERR_<*>           error
+        NQ_SUCCESS           request sent
+        1-n                  a positive number means that more then one request was sent
+        NQ_ERR_<*>           error
      */
     NQ_STATUS (* requestByName)(SYSocketHandle socket, const NQ_WCHAR * name, void * context, const NQ_IPADDRESS * serverIp);         
     /* Routine for receiving and parsing a name resolution response 
@@ -54,10 +61,10 @@ typedef struct
         pContext :  Double pointer to a method-specific context. Method may dispose 
                     context and create a new one. 
        Return:
-       NQ_SUCCESS           name successfully resolved
-       NQ_ERR_MOREDATA      more exchange expected
-       NQ_ERR_NOACCESS      more comprehensive method with the same code should be used
-       NQ_ERR_<*>           error
+        NQ_SUCCESS           name successfully resolved
+        NQ_ERR_MOREDATA      more exchange expected
+        NQ_ERR_NOACCESS      more comprehensive method with the same code should be used
+        NQ_ERR_<*>           error
      */
     NQ_STATUS (* responseByName)(SYSocketHandle socket, NQ_IPADDRESS ** pAddressArray, NQ_INT * numIps, void ** pContext);
     /* Routine for composing and sending an IP resolution request
@@ -89,6 +96,8 @@ typedef struct
     NQ_STATUS (* responseByIp)(SYSocketHandle socket, const NQ_WCHAR ** pName, void ** pContext);
 } 
 CMResolverMethodDescriptor;
+
+#define RESOLVER_MAX_ACTIVATION_PRIORITY 5
 
 /* -- API Functions */
 
@@ -133,5 +142,16 @@ NQ_BOOL cmResolverRegisterMethod(const CMResolverMethodDescriptor * descriptor, 
    Returns
    None. */
 void cmResolverRemoveMethod(const CMResolverMethodDescriptor * descriptor, const NQ_IPADDRESS * serverIp);
+
+/*  Description
+	This function sets resolver cache state.
+
+	Resolver cache is enabled by default.
+
+	Parameters
+	timeout : timeout/ttl value for entry cache (0 to disable cache)
+	Returns
+	None. */
+void cmResolverCacheSet(NQ_UINT32 timeout);
 
 #endif /* _CMRESOLVER_H_ */

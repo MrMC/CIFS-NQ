@@ -53,7 +53,7 @@ KeyType;
 
 typedef enum {
     VT_SZ                  = 1,
-    VT_EXPAND_SZ           = 2, /* Unicode nul terminated string (with environment variable references) */
+    VT_EXPAND_SZ           = 2, /* Unicode null terminated string (with environment variable references) */
     VT_BINARY              = 3, /* Free form binary */
     VT_DWORD               = 4, /* 32-bit number */
 #if 0
@@ -109,7 +109,7 @@ static struct Key _keys[] = {
 #define P_CURRENTVERSION "5.1"
 #define P_SYSTEMROOT     "C:\\Windows"
 #define P_FILE           "%SystemRoot%\\system32\\config\\AppEvent.Evt"
-#define P_PRODUCTTYPE    "NQ"
+#define P_PRODUCTTYPE    "NQE"
 
 static NQ_COUNT
 localGetHostName(
@@ -187,7 +187,7 @@ localGetDomainName(
 
 static struct Key *findKey2(struct Key *parent, const NQ_CHAR *name, NQ_UINT length)
 {
-    NQ_INT i;
+    NQ_COUNT i;
 
     for (i = 0; i < ARRAY_SIZE(_keys); i++)
     {
@@ -244,7 +244,7 @@ static struct Key *findKey(struct Key *parent, const NQ_CHAR *name)
 
 static struct Key *getKey(struct Key *key, NQ_UINT index)
 {
-    NQ_INT i;
+    NQ_COUNT i;
 
     for (i = 0; i < ARRAY_SIZE(_keys); i++)
     {
@@ -276,7 +276,7 @@ static struct Key *getKey(struct Key *key, NQ_UINT index)
 
 static Pair *findPair(struct Key *key, const NQ_CHAR *name)
 {
-    NQ_INT i;
+    NQ_COUNT i;
 
     for (i = 0; i < ARRAY_SIZE(_pairs); i++)
     {
@@ -507,12 +507,12 @@ initData(
     void
     )
 {
-    NQ_INT i;
+    NQ_COUNT i;
 
      TRCB();
 
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData*)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData*)syMalloc(sizeof(*staticData));
 
     if (staticData == NULL)
     {
@@ -804,6 +804,13 @@ static NQ_UINT32 wrgEnumKey(CMRpcPacketDescriptor* in, CMRpcPacketDescriptor* ou
 
     TRCB();
 
+    if (NULL == h)
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "handle is not available");
+        TRCE();
+    	return 0;
+    }
+
     cmRpcParseUint32(in, &index);
     cmRpcParseSkip(in, 2);
     cmRpcParseUint16(in, &size);
@@ -829,13 +836,15 @@ static NQ_UINT32 wrgEnumKey(CMRpcPacketDescriptor* in, CMRpcPacketDescriptor* ou
         cmRpcPackUint32(out, 0);
         /* pointer to last changed time */
         cmRpcPackUint32(out, refID++);
-        cmRpcPackTimeAsUTC(out, (NQ_TIME)syGetTime());
+        cmRpcPackTimeAsUTC(out, syGetTimeInMsec());
 
         TRCE();
         return 0;
     }
     else
     {
+    	NQ_TIME zero = {0, 0};
+
         /* name: length and size */
         cmRpcPackUint16(out, 0);
         cmRpcPackUint16(out, size);
@@ -851,7 +860,7 @@ static NQ_UINT32 wrgEnumKey(CMRpcPacketDescriptor* in, CMRpcPacketDescriptor* ou
         cmRpcPackUint32(out, 0);
         /* pointer to last changed time */
         cmRpcPackUint32(out, refID++);
-        cmRpcPackTimeAsUTC(out, 0);
+        cmRpcPackTimeAsUTC(out, zero);
 
         TRCE();
         return WINREG_ERROR_NOMOREITEMS;

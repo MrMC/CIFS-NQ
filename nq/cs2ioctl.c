@@ -43,6 +43,7 @@ typedef struct
 
 /* IOCTL method flags */
 #define FL_USEFID   0x1             /* FID is used by the method */
+#define FL_USESID	0x2				/* Session is needed for the method */
 
 /* IOCTL Method descriptor */
 typedef struct 
@@ -60,6 +61,7 @@ static NQ_UINT32 handleGetObjectId(IoctlContext *);
 #ifdef UD_CS_INCLUDERPC 
 static NQ_UINT32 handleTransceive(IoctlContext *); 
 #endif /* UD_CS_INCLUDERPC */   
+static NQ_UINT32 handleVerifyNegot(IoctlContext *);
 IoctlMethodDescriptor ioctlMethods[] = {
     { 0x00060194, 0,            NULL },                   /* FSCTL_DFS_GET_REFERRALS */
     { 0x0011400C, FL_USEFID,    NULL },                   /* FSCTL_PIPE_PEEK */
@@ -72,6 +74,7 @@ IoctlMethodDescriptor ioctlMethods[] = {
     { 0x00144064, 0,            NULL },                   /* FSCTL_SRV_ENUMERATE_SNAPSHOTS */
     { 0x00140078, 0,            NULL },                   /* FSCTL_SRV_REQUEST_RESUME_KEY */
     { 0x000900c0, FL_USEFID,    handleGetObjectId },      /* FSCTL_SRV_GET_OBJECT_ID */
+    { 0x00140204, FL_USESID,	handleVerifyNegot }, 	  /* FSCTL_VALIDATE_NEGOTIATE_INFO */
     };
 
 #ifdef UD_CS_INCLUDERPC
@@ -121,18 +124,18 @@ NQ_UINT32 csSmb2OnIoctl(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
 {
     IoctlContext context;                   /* this command context */
     NQ_UINT32 offset;                       /* input/output offset */
-    NQ_UINT32 maxCount;                     /* avaiable room in the response */
-    NQ_INT i;                               /* just a counter */
+    NQ_UINT32 maxCount;                     /* available room in the response */
+    NQ_COUNT  i;                            /* just a counter */
     NQ_UINT32 status;                       /* returned by methods */
     const NQ_BYTE * savedOutput;            /* pointer to the start of method output */
     const NQ_BYTE * newOutput;              /* pointer to the wnd of method output */
     CSFid fid;                              /* file ID */
-    NQ_UINT32 methodFlags = 0;              /* varous method flags (see above) */ 
+    NQ_UINT32 methodFlags = 0;              /* various method flags (see above) */
 
     LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
 
 #ifdef UD_CS_INCLUDERPC
-    /* save IOCTL context for futher use in saveLateResponse */
+    /* save IOCTL context for further use in saveLateResponse */
     savedContext = &context;
 #endif /* UD_CS_INCLUDERPC */
 
@@ -166,7 +169,10 @@ NQ_UINT32 csSmb2OnIoctl(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
     {
         if (ioctlMethods[i].code == context.ctlCode && ioctlMethods[i].handle != NULL)
         {
+			CSFile fakeFile;
             methodFlags = ioctlMethods[i].flags; 
+           
+
             if (methodFlags & FL_USEFID)
             {
                 context.file = csGetFileByFid(fid, tree->tid, user->uid);
@@ -176,6 +182,11 @@ NQ_UINT32 csSmb2OnIoctl(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
                     LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
                     return SMB_STATUS_INVALID_HANDLE;
                 }
+            }
+            else if (methodFlags & FL_USESID)
+            {
+            	fakeFile.session = connection->key;
+            	context.file = &fakeFile;
             }
             status = ioctlMethods[i].handle(&context);
             break;
@@ -265,7 +276,7 @@ static NQ_UINT32 handleTransceive(IoctlContext * context)
     
     pData = cmBufferWriterGetPosition(&context->writer); 
     context->file->maxFragment = (NQ_UINT16)context->maxOutputResponse;
-    if (0 == context->file->maxFragment) 
+	if (0 == context->file->maxFragment) 
         context->file->maxFragment = 0xFFFF;
     status = csDcerpcRead(
             context->file, 
@@ -328,6 +339,7 @@ lateResponseSave(
     pHeader = cs2DispatchGetCurrentHeader();
     pHeader->aid.low = csSmb2SendInterimResponse(pHeader);
     pHeader->aid.high = 0;
+    pHeader->credits = 0;
     
     /* write request information into the file descriptor */
     csDispatchSaveResponseContext(context);
@@ -407,6 +419,42 @@ lateResponseSend(
 }
 
 #endif /* UD_CS_INCLUDERPC */
+
+static NQ_UINT32 handleVerifyNegot(IoctlContext * context)
+{
+	NQ_UINT16	securityMode = 0;
+	CSSession *	pSession;
+
+#ifdef UD_CS_MESSAGESIGNINGPOLICY
+    securityMode |= (NQ_UINT16)((csIsMessageSigningEnabled() ? SMB2_NEGOTIATE_SIGNINGENABLED : 0) | (csIsMessageSigningRequired() ? SMB2_NEGOTIATE_SIGNINGREQUIRED : 0));
+#endif
+    pSession = csGetSessionById(context->file->session);
+    if (pSession == NULL)
+    {
+    	return SMB_STATUS_INVALID_HANDLE;
+    }
+
+	cmBufferWriteUint32(&context->writer, pSession->dialect >= CS_DIALECT_SMB30 ? SMB2_CAPABILITY_ENCRYPTION : 0x0); /* capabilities*/
+	cmUuidWrite(&context->writer, cs2GetServerUuid());           /* server GUID */
+	cmBufferWriteUint16(&context->writer, securityMode);         /* security mode */
+	switch (pSession->dialect)
+	{
+	case CS_DIALECT_SMB2:
+			cmBufferWriteUint16(&context->writer, SMB2_DIALECTREVISION);       /* dialect revision */
+			break;
+	case CS_DIALECT_SMB210:
+			cmBufferWriteUint16(&context->writer, SMB2_1_DIALECTREVISION);     /* dialect revision */
+			break;
+	case CS_DIALECT_SMB30:
+			cmBufferWriteUint16(&context->writer, SMB3_DIALECTREVISION);     /* dialect revision */
+			break;
+	case CS_DIALECT_SMB311:
+			cmBufferWriteUint16(&context->writer, SMB3_1_1_DIALECTREVISION);   /* dialect revision */
+			break;
+	}
+
+	return NQ_SUCCESS;
+}
 
 #endif /* defined(UD_NQ_INCLUDECIFSSERVER) && defined(UD_NQ_INCLUDESMB2) */
 

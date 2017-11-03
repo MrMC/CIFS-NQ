@@ -1,5 +1,4 @@
-/*********************************************************************
- *
+ /*******************************************************************
  *           Copyright (c) 2003 by Visuality Systems, Ltd.
  *
  *********************************************************************
@@ -393,14 +392,14 @@ apiNetShareEnum(
         pShare = csGetShareByIndex(i);
 
          /* skip if share name is longer than 12 characters */
-        if (cmTStrlen(pShare->name) > 12)
+        if (syWStrlen(pShare->name) > 12)
         {
             numSkipped++;
             continue;
         }
 
         dataLength += (NQ_UINT)sizeof(ShareInformation);
-        dataLength += (NQ_UINT)cmTStrlen(pShare->description) + 1;
+        dataLength += (NQ_UINT)syWStrlen(pShare->description) + 1;
         if (dataLength > availableLength)
             break;
     }
@@ -433,12 +432,12 @@ apiNetShareEnum(
 
          /* skip entry if share name is longer than 12 characters */
 
-        if (cmTStrlen(pShare->name) > 12)
+        if (syWStrlen(pShare->name) > 12)
             continue;
 
         /* copy share name and truncate it if it has more then 12 characters */
 
-        cmTcharToAnsiN(name, pShare->name, 12);
+        syUnicodeToAnsiN(name, pShare->name, 12);
         name[12] = 0;
 
         /* calculate offset to the name and share type */
@@ -467,14 +466,14 @@ apiNetShareEnum(
 
         /* write name */
 
-        if (type == SMB_SHARETYPE_IPC || pShare->description == NULL)
+        if (type == SMB_SHARETYPE_IPC)
         {
             syStrcpy(pName, "");
             pName += syStrlen("") + 1;
         }
         else
         {
-            cmTcharToAnsi(pName, pShare->description);
+            syUnicodeToAnsi(pName, pShare->description);
             pName += syStrlen(pName) + 1;
         }
     }
@@ -520,7 +519,7 @@ apiNetServerGetInfo(
     NQ_UINT16 detailLevel;          /* level of details */
     const NQ_CHAR* paramSignature;     /* "sliding" pointer to parameter signature */
     const NQ_CHAR* dataSignature;      /* "sliding" pointer to data signature */
-    NQ_STATIC NQ_TCHAR serverComment[CM_BUFFERLENGTH(NQ_TCHAR, 100)]; /* server comment buffer */
+    NQ_STATIC NQ_WCHAR serverComment[CM_BUFFERLENGTH(NQ_WCHAR, 100)]; /* server comment buffer */
     NQ_STATIC NQ_CHAR asciiComment[CM_BUFFERLENGTH(NQ_CHAR, 100)];    /* server comment buffer */
 
     TRCB();
@@ -554,7 +553,7 @@ apiNetServerGetInfo(
 
         /* read server comment from UD */
         udGetServerComment(serverComment);
-        cmTcharToAnsi(asciiComment, serverComment);
+        syUnicodeToAnsi(asciiComment, serverComment);
         dataLength = (NQ_UINT16)(dataLength + syStrlen(asciiComment) + sizeof(NQ_CHAR));
     }
 
@@ -645,7 +644,7 @@ apiNetShareGetInfo(
     const NQ_CHAR* dataSignature;      /* "sliding" pointer to data signature */
     NQ_CHAR* pName;                    /* pointer to the required share name */
     NQ_BYTE* dataStart;             /* pointer to the beginning of the data buffer */
-    NQ_TCHAR shareNameT[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXSHARELEN)]; /* share name in TCHAR */
+    NQ_WCHAR shareNameW[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXSHARELEN)]; /* share name in TCHAR */
 
     TRCB();
 
@@ -666,8 +665,8 @@ apiNetShareGetInfo(
 
     /* find share */
 
-    cmAnsiToTchar(shareNameT, pName);
-    if ((pShare = csGetShareByName(shareNameT)) == NULL)
+    syAnsiToUnicode(shareNameW, pName);
+    if ((pShare = csGetShareByName(shareNameW)) == NULL)
     {
         dataLength = 0;
         writeResponseParameter(&paramSignature, outData, &dataLength);
@@ -694,7 +693,7 @@ apiNetShareGetInfo(
     pName = (NQ_CHAR*)(dataStart + dataLength - *extraParameters);  /* place for description */
 
     if (detailLevel > 0)
-        dataLength += (NQ_UINT)cmTStrlen(pShare->description) + 1;
+        dataLength += (NQ_UINT)syWStrlen(pShare->description) + 1;
 
     writeResponseParameter(&paramSignature, outData, &dataLength);
 
@@ -717,20 +716,20 @@ apiNetShareGetInfo(
         NQ_UINT16 maxUsers;            /* maximum number of users on share */
         NQ_UINT16 currentUsers;        /* connected users */
         NQ_UINT i;                     /* just a counter */
-        NQ_TCHAR adminNameT[7];        /* for convering predefined shares into TCHAR */
-        NQ_TCHAR ipcNameT[5];          /* for convering predefined shares into TCHAR */
+        NQ_WCHAR adminNameT[7];        /* for convering predefined shares into TCHAR */
+        NQ_WCHAR ipcNameT[5];          /* for convering predefined shares into TCHAR */
 
         /* copy share name and truncate it if it has more then 12 characters */
 
-        cmTcharToAnsiN(name, pShare->name, 12);
+        syUnicodeToAnsiN(name, pShare->name, 12);
         name[12] = 0;
 
         /* calculate offset to the name */
 
-        cmAnsiToTchar(adminNameT, "ADMIN$");
-        cmAnsiToTchar(ipcNameT, "IPC$");
-        if (    cmTStrcmp(adminNameT, pShare->name) == 0
-             || cmTStrcmp(ipcNameT, pShare->name) == 0
+        syAnsiToUnicode(adminNameT, "ADMIN$");
+        syAnsiToUnicode(ipcNameT, "IPC$");
+        if (    syWStrcmp(adminNameT, pShare->name) == 0
+             || syWStrcmp(ipcNameT, pShare->name) == 0
            )
         {
             offset = 0L;
@@ -759,7 +758,7 @@ apiNetShareGetInfo(
 
             if (offset != 0)
             {
-                cmTcharToAnsi(pName, pShare->description);
+                syUnicodeToAnsi(pName, pShare->description);
                 pName += syStrlen(pName) + 1;
             }
             if (detailLevel > 1)
@@ -783,7 +782,7 @@ apiNetShareGetInfo(
 
                 /* write path name */
 
-                cmTcharToAnsi(pName, pShare->map);
+                syUnicodeToAnsi(pName, pShare->map);
                 pName += syStrlen(pName) + 1;
             }
         }
@@ -951,6 +950,9 @@ parseParameter(
     void* parameter
     )
 {
+    NQ_UINT32 *p32;
+    NQ_UINT16 *p16;
+
     switch (syToupper(**signature))
     {
     case '\0':
@@ -958,11 +960,13 @@ parseParameter(
     case 'T':
     case 'L':
     case 'W':
-        *(NQ_UINT16*)parameter = cmLtoh16(cmGetUint16(*paramList));
+        p16 = (NQ_UINT16 *)parameter;
+        *p16 = cmLtoh16(cmGetUint16(*paramList));
         *paramList += 2;
         break;
     case 'D':
-        *(NQ_UINT32*)parameter = cmLtoh32(cmGetUint32(*paramList));
+        p32 = (NQ_UINT32 *)parameter;
+        *p32 = cmLtoh32(cmGetUint32(*paramList));
         *paramList += 4;
         break;
     case 'B':

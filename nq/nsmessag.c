@@ -108,7 +108,7 @@ ndNotifyConfigurationChange(
     NQ_INDEX idx;              /* index in the list of adapters */
     const CMSelfIp * nextIp;   /* next host IP */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     syMutexTake(&staticData->adapterGuard);
 
@@ -133,12 +133,12 @@ ndNotifyConfigurationChange(
         staticData->adapters[idx].typeB = (CM_IPADDR_EQUAL4(staticData->adapters[idx].wins, 0));
         staticData->adapters[idx].empty = FALSE;
         idx++;
-        TRC3P("Adapter found, ip=0x%08lx bcast=0x%08lx wins=0x%08lx", staticData->adapters[idx].ip, staticData->adapters[idx].bcast, staticData->adapters[idx].wins);
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Adapter found, ip=0x%08lx bcast=0x%08lx wins=0x%08lx", staticData->adapters[idx].ip, staticData->adapters[idx].bcast, staticData->adapters[idx].wins);
     }
     cmSelfipTerminate();
     syMutexGive(&staticData->adapterGuard);
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 #endif /* UD_ND_INCLUDENBDAEMON */
@@ -161,20 +161,30 @@ nsInitMessage(
     void
     )
 {
+    NQ_STATUS result = NQ_SUCCESS;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
     if (NULL == staticData)
     {
-        TRCERR("Unable to allocate adapter information in nsMessage");
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate adapter information in nsMessage");
+        result = NQ_FAIL;
+        sySetLastError(NQ_ERR_NOMEM);
+        goto Exit;
     }
 #endif /* SY_FORCEALLOCATION */
+
 #ifndef UD_ND_INCLUDENBDAEMON
     syMutexCreate(&staticData->adapterGuard);
     ndNotifyConfigurationChange();
 #endif /* UD_ND_INCLUDENBDAEMON */
-    return NQ_SUCCESS;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -200,7 +210,7 @@ nsExitMessage(
     /* release memory */
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
-        syFree(staticData);
+        cmMemoryFree(staticData);
     staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
 }
@@ -236,23 +246,24 @@ nsRecv(
     NQ_INT bytesRead;           /* number of bytes received */
     NQ_INT resultLen;           /* number of bytes transferred to user */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "socketHandle:%p buf:%p bufLen:%u", socketHandle, buf, bufLen);
 
+    receiveBuf = nsGetRecvDatagramBuffer();    /* allocate a buffer */
     pSock = (SocketSlot*)socketHandle;
 
 #if SY_DEBUGMODE
     if (pSock==NULL || !syIsValidSocket(pSock->socket))
     {
         sySetLastError(CM_NBERR_INVALIDPARAMETER);
-        TRCERR("Illefgal socket descriptor");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illefgal socket descriptor");
+        resultLen = NQ_FAIL;
+        goto Exit;
     }
 #endif
 
     if (!pSock->isNetBios) /* socket is not NetBIOS */
     {
-        TRC("Not a NetBIOS socket");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Not a NetBIOS socket");
 
         resultLen = syRecvSocket(
             pSock->socket,
@@ -260,11 +271,8 @@ nsRecv(
             bufLen
             );
 
-        TRCE();
-        return resultLen;
+        goto Exit;
     }
-
-    receiveBuf = nsGetRecvDatagramBuffer();    /* allocate a buffer */
 
     if (pSock->type == NS_SOCKET_STREAM)    /* a TCP (stream) socket */
     {
@@ -284,20 +292,16 @@ nsRecv(
 
         if (bytesRead == 0)
         {
-            nsPutRecvDatagramBuffer();
-
-            TRC("Abnormal termination - data truncated");
-            TRCE();
-            return  (NQ_INT)bufLen;
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Abnormal termination - data truncated");
+            resultLen = (NQ_INT)bufLen;
+            goto Exit;
         }
         else if (bytesRead < 0)
         {
-            nsPutRecvDatagramBuffer();
-
-            TRCERR("Read error on socket");
-            TRC1P(" error code - %d", syGetLastError());
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Read error on socket");
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " error code - %d", syGetLastError());
+            resultLen = NQ_FAIL;
+            goto Exit;
         }
 
         /* extract the session message data length from the header */
@@ -305,7 +309,14 @@ nsRecv(
         sessionHeader = (CMNetBiosSessionMessage*) receiveBuf;
         packetLen = syHton16(cmGetSUint16(sessionHeader->length)) & 0xFFFF;
             /* add extension (E) flag from the byte of flags */
-        packetLen |= (((NQ_UINT32) sessionHeader->flags) & CM_NB_SESSIONLENGTHEXTENSION) << 16;
+        if (pSock->isNetBios)
+        {
+        	packetLen |= (((NQ_UINT32) sessionHeader->flags) & CM_NB_SESSIONLENGTHEXTENSION) << 16;
+        }
+        else
+        {
+        	packetLen += ((NQ_UINT32) sessionHeader->flags) * 0x10000;
+        }
 
         /* receive the rest of the message
          *
@@ -332,20 +343,16 @@ nsRecv(
 
         if (bytesRead == 0)
         {
-            nsPutRecvDatagramBuffer();
-
-            TRC("Abnormal termination - data truncated");
-            TRCE();
-            return  (NQ_INT)bufLen;
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Abnormal termination - data truncated");
+            resultLen = (NQ_INT)bufLen;
+            goto Exit;
         }
         else if (bytesRead < 0)
         {
-            nsPutRecvDatagramBuffer();
-
-            TRCERR("Read error on socket");
-            TRC1P(" error code - %d", syGetLastError());
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Read error on socket");
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " error code - %d", syGetLastError());
+            resultLen = NQ_FAIL;
+            goto Exit;
         }
     }
     else        /* a UDP socket */
@@ -366,12 +373,10 @@ nsRecv(
             );
         if (bytesRead <= 0)
         {
-            nsPutRecvDatagramBuffer();
-
-            TRCERR("Read error on socket");
-            TRC1P(" error code - %d", syGetLastError());
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Read error on socket");
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " error code - %d", syGetLastError());
+            resultLen = NQ_FAIL;
+            goto Exit;
         }
 
         /* parse the message */
@@ -387,9 +392,9 @@ nsRecv(
 
     }/* end if/else */
 
+Exit:
     nsPutRecvDatagramBuffer();
-    TRCE();
-
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", resultLen);
     return resultLen;
 }
 
@@ -420,32 +425,29 @@ nsRecvFromName(
     SocketSlot* pSock;          /* actual pointer to a socket slot */
     NQ_BYTE* receiveBuf;        /* receive buffer */
     NQ_INT bytesRead;           /* number of bytes received */
-    NQ_INT resultLen;           /* number of bytes transferred to user */
+    NQ_INT resultLen = NQ_FAIL; /* number of bytes transferred to user */
     NQ_UINT16 port;             /* dummy value get from syRecvFromSocket */
     NQ_IPADDRESS ip;            /* dummy value get from syRecvFromSocket */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "socketHandle:%p buf:%p bufLen:%u sourceName:%p", socketHandle, buf, bufLen, sourceName);
 
+    receiveBuf = nsGetRecvDatagramBuffer();    /* allocate a buffer */
     pSock = (SocketSlot*)socketHandle;
 
 #if SY_DEBUGMODE
     if (pSock==NULL || !syIsValidSocket(pSock->socket))
     {
         sySetLastError(CM_NBERR_INVALIDPARAMETER);
-        TRCERR("Illefgal socket descriptor");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illefgal socket descriptor");
+        goto Exit;
     }
     if (pSock->type!=NS_SOCKET_DATAGRAM)        /* not a stream socket - error */
     {
         sySetLastError(CM_NBERR_INVALIDPARAMETER);
-        TRCERR("Not a stream socket passed");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Not a stream socket passed");
+        goto Exit;
     }
 #endif
-
-    receiveBuf = nsGetRecvDatagramBuffer();    /* allocate a buffer */
 
     bytesRead = syRecvFromSocket(
             pSock->socket,
@@ -456,11 +458,8 @@ nsRecvFromName(
             );
     if (bytesRead <= 0) /*error*/
     {
-        nsPutRecvDatagramBuffer();
-
-        TRCERR("Error during receive");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error during receive");
+        goto Exit;
     }
 
     resultLen = frameParseDatagram(
@@ -474,10 +473,10 @@ nsRecvFromName(
 
     /* resolve the calling IP and port */
 
+Exit:
     nsPutRecvDatagramBuffer();
-
-    TRCE();
-    return  resultLen;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", resultLen);
+    return resultLen;
 }
 
 /*
@@ -515,7 +514,7 @@ nsSendTo(
     NQ_INT msgLen;                  /* number of bytes to send (the entire message) */
     NQ_INT resultLen;               /* number of user bytes sent */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "socketHandle:%p data:%p dataLen:%u calledName:%p ip:%p", socketHandle, data, dataLen, calledName, ip);
 
     pSock = (SocketSlot*)socketHandle;
 
@@ -523,22 +522,22 @@ nsSendTo(
     if (dataLen <= 0)
     {
         sySetLastError(CM_NBERR_INVALIDPARAMETER);
-        TRCERR("Invalid data length");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Invalid data length");
+        resultLen = NQ_FAIL;
+        goto Exit;
     }
     if (pSock==NULL || !syIsValidSocket(pSock->socket))
     {
         sySetLastError(CM_NBERR_INVALIDPARAMETER);
-        TRCERR("Illefgal socket descriptor");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illefgal socket descriptor");
+        resultLen = NQ_FAIL;
+        goto Exit;
     }
 #endif
 
     if (!pSock->isNetBios)/* socket is not NetBIOS */
     {
-        TRC("Not a NetBIOS socket");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Not a NetBIOS socket");
 
         resultLen = sySendToSocket(
             pSock->socket,
@@ -548,8 +547,7 @@ nsSendTo(
             syHton16(CM_NB_SESSIONSERVICEPORT)
             );
 
-        TRCE();
-        return resultLen;
+        goto Exit;
     }
 
     /* inspect the called name */
@@ -557,9 +555,9 @@ nsSendTo(
     if (!cmNetBiosCheckName(calledName))       /* valid NetBIOS name? */
     {
         sySetLastError(CM_NBERR_NOTNETBIOSNAME);
-        TRCERR("Unable to send to a broacast name");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to send to a broacast name");
+        resultLen = NQ_FAIL;
+        goto Exit;
     }
 
     msgBuf = staticData->sendBuffer;    /* allocate a buffer */
@@ -567,9 +565,10 @@ nsSendTo(
     if (ip == 0L)
     {
         sySetLastError(CM_NBERR_HOSTNAMENOTRESOLVED);
-        TRCERR("Unable to resolve called name");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to resolve called name");
+        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+        resultLen = NQ_FAIL;
+        goto Exit;
     }
 
     msgLen = frameComposeDatagram(
@@ -585,9 +584,9 @@ nsSendTo(
     if (msgLen <= 0)
     {
         sySetLastError(CM_NBERR_INTERNALERROR);
-        TRCERR("Unable to compose a Datagram Message");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to compose a Datagram Message");
+        resultLen = NQ_FAIL;
+        goto Exit;
     }
 
     resultLen = sySendToSocket(
@@ -600,12 +599,13 @@ nsSendTo(
 
     if (resultLen <= 0)
     {
-        TRCERR("Unable to send a datagram");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to send a datagram");
+        resultLen = NQ_FAIL;
+        goto Exit;
     }
 
-    TRCE();
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", resultLen);
     return resultLen;
 }
 
@@ -649,7 +649,7 @@ nsSendToName(
     NQ_INT msgLen;                  /* number of bytes to send (the entire message) */
     NQ_INT resultLen = 0;           /* number of user bytes sent */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "socketHandle:%p data:%p dataLen:%u calledName:%p", socketHandle, data, dataLen, calledName);
 
     pSock = (SocketSlot*)socketHandle;
 
@@ -657,25 +657,24 @@ nsSendToName(
     if (dataLen <= 0)
     {
         sySetLastError(CM_NBERR_INVALIDPARAMETER);
-        TRCERR("Invalid data length");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Invalid data length");
+        resultLen = NQ_FAIL;
+        goto Exit;
     }
     if (pSock==NULL || !syIsValidSocket(pSock->socket))
     {
         sySetLastError(CM_NBERR_INVALIDPARAMETER);
-        TRCERR("Illegal socket descriptor");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal socket descriptor");
+        resultLen = NQ_FAIL;
+        goto Exit;
     }
 #endif
 
     if (!pSock->isNetBios)/* socket is not NetBIOS */
     {
-        TRCERR("Not a NetBIOS socket");
-
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Not a NetBIOS socket");
+        resultLen = NQ_FAIL;
+        goto Exit;
     }
 
     /* inspect the called name */
@@ -683,9 +682,9 @@ nsSendToName(
     if (!cmNetBiosCheckName(calledName))       /* valid NetBIOS name? */
     {
         sySetLastError(CM_NBERR_NOTNETBIOSNAME);
-        TRCERR("Unable to send to a broacast name");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to send to a broadcast name");
+        resultLen = NQ_FAIL;
+        goto Exit;
     }
 
     if (calledName->isGroup)    /*  group name - broadcasts are handled by DD */
@@ -705,9 +704,9 @@ nsSendToName(
         if (msgLen <= 0)
         {
             sySetLastError(CM_NBERR_INTERNALERROR);
-            TRCERR("Unable to compose a Datagram Message");
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to compose a Datagram Message");
+            resultLen = NQ_FAIL;
+            goto Exit;
         }
 
 #ifdef UD_ND_INCLUDENBDAEMON
@@ -717,10 +716,10 @@ nsSendToName(
 
         if (internalSock == NULL)
         {
-          sySetLastError(CM_NBERR_INTERNALERROR);
-          TRCERR("Unable to get an internal socket to DD");
-          TRCE();
-          return NQ_FAIL;
+            sySetLastError(CM_NBERR_INTERNALERROR);
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to get an internal socket to DD");
+            resultLen = NQ_FAIL;
+            goto Exit;
         }
 
         resultLen = sySendToSocket(
@@ -736,9 +735,9 @@ nsSendToName(
         if (resultLen < 0)
         {
             sySetLastError(CM_NBERR_DDCOMMUNICATIONERROR);
-            TRCERR("Unable to send a message to DD");
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to send a message to DD");
+            resultLen = NQ_FAIL;
+            goto Exit;
         }
 
 #else /* UD_ND_INCLUDENBDAEMON */
@@ -754,7 +753,7 @@ nsSendToName(
                     break;
                 }
 
-                TRC3P("Adapter found on %d ip=0x%08lx bcast=0x%08lx", idx, CM_IPADDR_GET4(staticData->adapters[idx].ip), CM_IPADDR_GET4(staticData->adapters[idx].bcast));
+                LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Adapter found on %d ip=0x%08lx bcast=0x%08lx", idx, CM_IPADDR_GET4(staticData->adapters[idx].ip), CM_IPADDR_GET4(staticData->adapters[idx].bcast));
                 /* regardless of the node type, datagram is broadcasted since a
                    host is treated as a NBDD for itself */
 
@@ -772,9 +771,9 @@ nsSendToName(
                     );
                 if (resultLen < 0)
                 {
-                    TRCERR("Unable to broadcast message");
-                    TRCE();
-                    return NQ_FAIL;
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Unable to broadcast message");
+                    resultLen = NQ_FAIL;
+                    goto Exit;
                 }
             }
         }
@@ -789,17 +788,16 @@ nsSendToName(
         if (nsGetHostByName(&ip, calledName) == NQ_FAIL)
         {
             sySetLastError(CM_NBERR_HOSTNAMENOTRESOLVED);
-            TRCERR("Unable to resolve called name");
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to resolve called name");
+            resultLen = NQ_FAIL;
+            goto Exit;
         }
 
         resultLen = nsSendTo(socketHandle, data, dataLen, calledName, &ip);
     }
 
-    TRCE();
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", resultLen);
     return resultLen;
 }
-
 #endif /* UD_NQ_USETRANSPORTNETBIOS */
-

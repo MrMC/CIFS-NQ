@@ -34,15 +34,17 @@ typedef struct                  /* descriptor of a file name with possible wildc
     NQ_BOOL useOldName;                     /* descriptor was "rolled back" one name */
     NQ_BOOL hasWildcards;                   /* wildcards flag */
     NQ_BOOL hasDirectory;                   /* TRUE when the name has directory path */
-    NQ_TCHAR name[UD_FS_FILENAMELEN];       /* pointer to the full name */
-    NQ_TCHAR* path;                         /* pointer to the path */
-    NQ_TCHAR* file;                         /* pointer to the file name in the full name */
+    NQ_WCHAR name[UD_FS_FILENAMELEN];       /* pointer to the full name */
+    NQ_WCHAR* path;                         /* pointer to the path */
+    NQ_WCHAR* file;                         /* pointer to the file name in the full name */
     SYDirectory directory;                  /* opened directory */
-    NQ_TCHAR* nextName;                     /* next filename */
-    NQ_TCHAR nextPath[UD_FS_FILENAMELEN];   /* full path for the next file */
-    NQ_TCHAR* nextFile;                     /* pointer to the file name in this path */
+    NQ_WCHAR* nextName;                     /* next filename */
+    NQ_WCHAR nextPath[UD_FS_FILENAMELEN];   /* full path for the next file */
+    NQ_WCHAR* nextFile;                     /* pointer to the file name in this path */
     NQ_BOOL preservesCase;                  /* whether the client's file system preserves case */
     NQ_BOOL bringLinks;                     /* TRUE to consider ./ and ../ entries */
+    NQ_BOOL isCurrDirReported;              /* TRUE when ./ entry was reported */
+    NQ_BOOL isParentDirReported;            /* TRUE when ../ entry was reported */
 } CSFileEnumeration;
 
 /* initilize this module */
@@ -64,13 +66,13 @@ csFnamesExit(
 void
 csEnumerateSourceName(
     CSFileEnumeration* enumerator,  /* enumeration descriptor */
-    NQ_TCHAR* srcName,              /* source file name */
+    NQ_WCHAR* srcName,              /* source file name */
     NQ_BOOL preservesCase           /* whether the client's file system preserves case */
     );
 
 /* get next source name matching the pattern */
 
-NQ_TCHAR*                           /* filename or NULL if no more files */
+NQ_WCHAR*                           /* filename or NULL if no more files */
 csNextSourceName(
     CSFileEnumeration* enumerator   /* enumeration descriptor */
     );
@@ -91,8 +93,8 @@ csCancelEnumeration(
 
 void
 csEnumerateSourceAndDestinationName(
-    NQ_TCHAR* srcName,               /* source file name */
-    NQ_TCHAR* dstName,               /* destination file name */
+    NQ_WCHAR* srcName,               /* source file name */
+    NQ_WCHAR* dstName,               /* destination file name */
     NQ_BOOL preservesCase           /* whether the client's file system preserves case */
     );
 
@@ -100,8 +102,8 @@ csEnumerateSourceAndDestinationName(
 
 NQ_BOOL                             /* TRUE if done and FALSE if no more names */
 csNextSourceAndDestinationName(
-    NQ_TCHAR** srcName,              /* buffer for source name pointer */
-    NQ_TCHAR** dstName               /* buffer for destination name pointer */
+    NQ_WCHAR** srcName,              /* buffer for source name pointer */
+    NQ_WCHAR** dstName               /* buffer for destination name pointer */
     );
 
 /* close sourcename enumeration for the pair of source and destination */

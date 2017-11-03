@@ -34,17 +34,17 @@
 
 /* This code implements the command dispatcher.
    Server calls dispatcher when it accepts an incoming CIFS command. Dispatcher reads this
-   command, analyses the command code and calls an appropriate processor.
-   If the message contains AndX commands, dispather performs each of AndX commands
-   separatelly.
+   command, analyzes the command code and calls an appropriate processor.
+   If the message contains AndX commands, dispatcher performs each of AndX commands
+   separately.
 
-   NOTE: Dipatcher analyses CIFS-level commands only. TRANSACTION and TRANSACTION2
-         subcommands are dispatched by appropriate command processors.
+   NOTE: Dispatcher analyzes CIFS-level commands only. TRANSACTION and TRANSACTION2
+         sub commands are dispatched by appropriate command processors.
 
    Dispatcher uses two static message buffers - one for an incoming request and another
    one for the response.
 
-   Dispather assumes that calls are synchronous - no reenterant processing. Each message
+   Dispatcher assumes that calls are synchronous - no reentrant processing. Each message
    has an appropriate source socket. This socket may be used as an additional session ID.
  */
 
@@ -63,7 +63,7 @@ releaseCallback(
 
 typedef struct
 {
-    NQ_BYTE responseBuffer[CM_NB_DATAGRAMBUFFERSIZE];/* buffer for late reponse */
+    NQ_BYTE responseBuffer[CM_NB_DATAGRAMBUFFERSIZE];/* buffer for late response */
     NSSocketHandle currentSocket;       /* handle of the socket over which the current
                                            command was accepted */
     CMCifsHeader* currentPacket;        /* handle of the socket over which the current */
@@ -74,13 +74,13 @@ typedef struct
     NQ_BOOL isSmb2;                     /* TRUE when the current package is SMB2 */
 #endif /* UD_NQ_INCLUDESMB2 */
 #ifdef UD_CS_INCLUDEDIRECTTRANSFER    
-    SYFile savedDtFile;         /* file for Direct Transfer */
-    NQ_COUNT savedDtCount;        /* number of bytes to transfer */
-    NSRecvDescr * savedRecvDescr;   /* saved receive descriptor */
-    NQ_BYTE * savedBuf;         /* saved pointer in the buffer for discarded DT */
-    NQ_BOOL dtIn;           /* incoming Data Transfer flag */
-    NQ_BOOL dtOut;            /* outgoing Data Transfer flag */
-#endif
+    SYFile savedDtFile;                 /* file for Direct Transfer */
+    NQ_COUNT savedDtCount;              /* number of bytes to transfer */
+    NSRecvDescr * savedRecvDescr;       /* saved receive descriptor */
+    NQ_BYTE * savedBuf;                 /* saved pointer in the buffer for discarded DT */
+    NQ_BOOL dtIn;                       /* incoming Data Transfer flag */
+    NQ_BOOL dtOut;                      /* outgoing Data Transfer flag */
+#endif /* UD_CS_INCLUDEDIRECTTRANSFER */
 }
 StaticData;
 
@@ -111,7 +111,7 @@ const static CodeTable codeTable[] =
 
 
 /* The command set defines commands that we support and also defines those of the above
-   that may be bacth (AndX) processed. The set is a table of CommandDescriptor structures
+   that may be batch (AndX) processed. The set is a table of CommandDescriptor structures
    indexed by the command code. */
 
 /* command flags */
@@ -414,19 +414,26 @@ void csDispatchDtSet(
   NQ_COUNT count      
   )
 {
-  staticData->savedDtFile = file;
-  staticData->savedDtCount = count;
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "file:%d count:%d", file, count);
+    staticData->savedDtFile = file;
+    staticData->savedDtCount = count;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 void csDispatchDtDiscard(
   )
 {
-  nsRecvIntoBuffer(
-    staticData->savedRecvDescr, 
-    staticData->savedBuf, 
-    staticData->savedRecvDescr->remaining
-    );
-  staticData->dtIn = FALSE;
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    if (staticData->dtIn)
+    {
+        nsRecvIntoBuffer(
+            staticData->savedRecvDescr,
+            staticData->savedBuf,
+            staticData->savedRecvDescr->remaining
+            );
+        staticData->dtIn = FALSE;
+    }
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 NQ_BOOL 
@@ -444,17 +451,19 @@ csDispatchIsDtOut(
 }
 
 void
-csDispatchSetDtIn(
-  )
+csDispatchSetDtIn(NQ_BOOL isOn)
 {
-  staticData->dtIn = TRUE;
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "%s", isOn ? "on" : "off");
+    staticData->dtIn = isOn;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 void
-csDispatchSetDtOut(
-  )
+csDispatchSetDtOut(NQ_BOOL isOn)
 {
-  staticData->dtOut = TRUE;
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "%s", isOn ? "on" : "off");
+    staticData->dtOut = isOn;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 NQ_BOOL 
@@ -463,24 +472,28 @@ csDispatchDtFromSocket(
   NQ_COUNT required
   )
 {
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "recvDescr:%p required:%d", recvDescr, required);
+
     if (syIsValidFile(staticData->savedDtFile))
     {
-      NQ_STATUS returnValue;
-      /* Transfer bytes from socket to file */
-      returnValue = syDtFromSocket(
-        ((SocketSlot*)recvDescr->socket)->socket, 
-        staticData->savedDtFile, 
-        &staticData->savedDtCount
-        );
-      if (returnValue != NQ_SUCCESS || staticData->savedDtCount != required)
-      {
-        TRC2P("Direct Transfer IN, required: %d, written: %d", required, staticData->savedDtCount);
-        TRCERR("Error performing incoming Direct Transfer");
+        NQ_STATUS returnValue;
 
+        /* Transfer bytes from socket to file */
+        returnValue = syDtFromSocket(
+            ((SocketSlot*)recvDescr->socket)->socket, 
+            staticData->savedDtFile, 
+            &staticData->savedDtCount
+            );
+        if (returnValue != NQ_SUCCESS || staticData->savedDtCount != required)
+        {
+            TRC2P("DT IN: required: %d, written: %d", required, staticData->savedDtCount);
+            TRCERR("DT IN: Error performing incoming Direct Transfer");
+            LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "FALSE");
             return FALSE;
-      }
-      recvDescr->remaining -= staticData->savedDtCount;
+        }
+        recvDescr->remaining -= staticData->savedDtCount;
     }
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "TRUE");
     return TRUE;
 }
 
@@ -489,23 +502,26 @@ csDispatchDtToSocket(
     NSRecvDescr * recvDescr
   )
 {
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "recvDescr:%p", recvDescr);
+
     if (syIsValidFile(staticData->savedDtFile))
     {
-      NQ_STATUS returnValue;
-      /* Transfer bytes from file to socket */
-      returnValue = syDtToSocket(
-          ((SocketSlot*)recvDescr->socket)->socket, 
-        staticData->savedDtFile, 
-        &staticData->savedDtCount
-        );
-      if (returnValue != NQ_SUCCESS)
-      {
-            TRCERR("Error performing outgoing Direct Transfer");
-
+        NQ_STATUS returnValue;
+        /* Transfer bytes from file to socket */
+        returnValue = syDtToSocket(
+            ((SocketSlot*)recvDescr->socket)->socket, 
+            staticData->savedDtFile, 
+            &staticData->savedDtCount
+            );
+        if (returnValue != NQ_SUCCESS)
+        {
+            TRCERR("DT OUT: Error performing outgoing Direct Transfer");
+            LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "FALSE");
             return FALSE;
-      }
+        }
     }
-  return TRUE;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "TRUE");
+    return TRUE;
 }
 
 NQ_BOOL
@@ -520,15 +536,19 @@ csDispatchDtSaveParameters(
   NSRecvDescr * recvDescr
   )
 {
-  staticData->savedBuf = buf;
-  staticData->savedRecvDescr = recvDescr;
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buf:%p recvDescr:%p", buf, recvDescr);
+    staticData->savedBuf = buf;
+    staticData->savedRecvDescr = recvDescr;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 NQ_COUNT 
 csDispatchDtGetCount(
   )
 {
-  return staticData->savedDtCount;
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "%d", staticData->savedDtCount);
+    return staticData->savedDtCount;
 }
 
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
@@ -553,7 +573,7 @@ csDispatchInit(
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(*staticData));
     if (NULL == staticData)
     {
         TRCE();
@@ -666,7 +686,7 @@ csDispatchGetSocketIp(
  * RETURNS: Size of the error response or zero if the SMB command was not truncated
  *
  * NOTES:   - error code is accepted in the NT format
- *          - we assume that the output message alfeady contains a header,
+ *          - we assume that the output message already contains a header,
  *            copied from the incoming header (with the same PID, TID and UID)
  *          - the outgoing message will contain a header followed by three zero
  *            bytes (word count and byte count)
@@ -684,12 +704,14 @@ dispatchError(
 {
     NQ_BYTE* pBlock;       /* pointer to the word and byte blocks */
 
-    /* fill in the error code */
-
+    /* 
     outMsg->flags = CS_SMBFLAGS;
     cmPutSUint16(outMsg->flags2, CS_SMBFLAGS2);
-    cmPutSUint32(outMsg->status, cmHtol32(error));
+    */
 
+    /* fill in the error code */
+
+    cmPutSUint32(outMsg->status, cmHtol32(error));
     if (staticData->ntErrorCode)    /* NT error */
     {
         cmPutSUint16(outMsg->flags2, cmGetSUint16(outMsg->flags2) | cmHtol16(SMB_FLAGS2_32_BIT_ERROR_CODES));
@@ -713,7 +735,7 @@ dispatchError(
  *
  * RETURNS: NQ_FAIL or NQ_SUCCESS
  *
- * NOTES:   No session is created, error message is returned immediatelly
+ * NOTES:   No session is created, error message is returned immediately
  *====================================================================
  */
 
@@ -759,16 +781,22 @@ csDispatchErrorNoResources(
     
     nsEndRecvIntoBuffer(&recvDescr);
 
-    /* compose and send the error messsage */
+    /* compose and send the error message */
 
     error = csErrorReturn(SMB_STATUS_INSUFFICIENT_RESOURCES, SRV_ERRnoresource);
 
     msgLen = dispatchError(socket, (CMCifsHeader*)buffer, error);
 
     /* send the response - this will also release the buffer */
+    msgLen = (NQ_INT)nsPrepareNBBuffer(buffer, (NQ_UINT)msgLen, (NQ_UINT)msgLen);
+    if(0 == msgLen)
+    {
+        TRCERR("Error prepare buffer for response");
+        TRCE();
+        return NQ_FAIL;
+    }
 
     sndLen = nsSendFromBuffer(socket, buffer, (NQ_UINT)msgLen, (NQ_UINT)msgLen, &releaseCallback);
-
     if (sndLen != msgLen)
     {
         TRCERR("Error sending response");
@@ -790,10 +818,10 @@ csDispatchErrorNoResources(
  * RETURNS: NQ_FAIL or NQ_SUCCESS
  *
  * NOTES:   This function proceeds a request, dispatching it to an
- *          appropriate praser function. BATCH (AndX) requests are
+ *          appropriate parser function. BATCH (AndX) requests are
  *          chained inside this function.
  *          Even on error response we return NQ_SUCCESS. NQ_FAIL is returned on
- *          internal error or dead socket (coomunication problem)
+ *          internal error or dead socket (communication problem)
  *====================================================================
  */
 
@@ -821,16 +849,13 @@ csDispatchRequest(
     NQ_BYTE* response;                  /* auxiliary pointer */                              
     NQ_UINT32 returnValue;              /* return value from command processing */
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
+    CSSession * pSession;               /* session pointer */
     NQ_COUNT signLen;                   /* length of the signed packet (may be the entire packet for AndX chain) */
-    NQ_COUNT checkSignature = TRUE;     /* check it once for the entire chained packet */
-#endif
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */
     NSRecvDescr recvDescr;              /* receive descriptor */
     NQ_INT expected;                    /* expected number of bytes in NBT packet */
     NQ_BYTE * pBuf;                     /* pointer into the receive buffer */
     CSUser* pUser;                      /* user pointer */
-#ifdef UD_CS_MESSAGESIGNINGPOLICY            
-    CSSession * pSession;               /* session pointer */
-#endif /* UD_CS_MESSAGESIGNINGPOLICY */            
 #ifdef UD_CS_INCLUDEDIRECTTRANSFER
     NQ_BYTE wordCount;                  /* word count */
     NQ_BYTE andX;                       /* andx command */
@@ -845,6 +870,9 @@ csDispatchRequest(
     /* allocate receive buffer and read data */
     rcvBuf = nsGetBuffer();
     expected = nsStartRecvIntoBuffer(sockDescr->socket, &recvDescr);
+#ifdef UD_CS_MESSAGESIGNINGPOLICY
+    signLen = (NQ_COUNT)expected;
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */
     if (NQ_FAIL == expected)
     {
         TRCERR("Error reading NBT header");
@@ -852,24 +880,46 @@ csDispatchRequest(
         TRCE();
         return NQ_FAIL;
     }
-#ifdef UD_CS_MESSAGESIGNINGPOLICY
-    signLen = (NQ_COUNT)expected;
-#endif /* UD_CS_MESSAGESIGNINGPOLICY */
     if (expected == 0)
     {
         nsPutBuffer(rcvBuf);
+        TRCE();
         return NQ_SUCCESS;     /* this is a SESSION_KEEP_ALIVE packet - do nothing */
     }
-        
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+	{
+		SocketSlot * pSock = (SocketSlot *) recvDescr.socket;
+		sockDescr->captureHdr.receiving = TRUE;
+		syGetSocketPortAndIP(pSock->socket, &pSock->ip, &pSock->port);
+		sockDescr->captureHdr.srcIP = pSock->ip;
+		sockDescr->captureHdr.srcPort = pSock->transport == NS_TRANSPORT_NETBIOS ? 139 : 445;
+	}
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+
     pBuf = rcvBuf;
     msgLen = nsRecvIntoBuffer(&recvDescr, pBuf, 4); /* read SMB signature */
     if (msgLen == NQ_FAIL)
     {
         TRCERR("Error reading from socket");
         nsPutBuffer(rcvBuf);
-        TRCE();                                 /* fail connection */
+        TRCE();
         return NQ_FAIL;
     }
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+#ifdef UD_NQ_INCLUDESMB3
+    if (syMemcmp(rcvBuf , cmSmb2TrnsfrmHdrProtocolId , sizeof(cmSmb2TrnsfrmHdrProtocolId)) != 0)
+#endif /* UD_NQ_INCLUDESMB3  */
+    {
+    	cmCapturePacketWriteStart(&sockDescr->captureHdr , recvDescr.remaining + 4);
+    	cmCapturePacketWritePacket(pBuf, 4);
+    }
+#ifdef UD_NQ_INCLUDESMB3
+    else
+    {
+    	cmCapturePacketWriteStart(&sockDescr->captureHdr , recvDescr.remaining  - (SMB2_TRANSFORMHEADER_SIZE - 4)  /*expected*/);
+    }
+#endif /* UD_NQ_INCLUDESMB3  */
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
     expected -= 4;
     pBuf += 4;
 
@@ -883,7 +933,8 @@ csDispatchRequest(
 #ifdef UD_NQ_INCLUDESMB2    
     /* check for SMB2 signature */
     staticData->isSmb2 = FALSE;
-    if (syMemcmp(rcvBuf, cmSmb2ProtocolId, sizeof(cmSmb2ProtocolId)) == 0)
+    if (syMemcmp(rcvBuf, cmSmb2ProtocolId, sizeof(cmSmb2ProtocolId)) == 0
+	 || syMemcmp(rcvBuf , cmSmb2TrnsfrmHdrProtocolId , sizeof(cmSmb2TrnsfrmHdrProtocolId)) == 0)
     {
         /* handle SMB2 request, then release request buffer */
         NQ_BOOL result;
@@ -899,6 +950,15 @@ csDispatchRequest(
     /* check for SMB1 protocol identificator */
     if (syMemcmp(rcvBuf, cmSmb1ProtocolId, sizeof(cmSmb1ProtocolId)) != 0)
     {
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    	NQ_BYTE *	fakeBuf;
+
+    	fakeBuf = (NQ_BYTE *)cmMemoryAllocate(recvDescr.remaining);
+    	syMemset(fakeBuf , 0 , recvDescr.remaining);
+    	cmCapturePacketWritePacket(fakeBuf, recvDescr.remaining);
+    	cmCapturePacketWriteEnd();
+    	cmMemoryFree(fakeBuf);
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
         /* disconnect client, release request buffer */
         nsPutBuffer(rcvBuf);
         TRCERR("No SMB protocol identificator in the packet");
@@ -910,11 +970,13 @@ csDispatchRequest(
     if (msgLen == NQ_FAIL)
     {
         TRCERR("Error reading from socket");
-
         nsPutBuffer(rcvBuf);
-        TRCE();                                 /* fail connection */
+        TRCE();
         return NQ_FAIL;
     }
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    cmCapturePacketWritePacket(pBuf, 30);
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
     expected -= 30;
     pBuf += 30;
 
@@ -952,10 +1014,12 @@ csDispatchRequest(
     pUser = csGetUserByUid(cmHtol16(cmGetSUint16(pHeaderInp->uid)));
 #ifdef UD_CS_MESSAGESIGNINGPOLICY            
     pSession = csGetSessionBySocket();
-#endif /* UD_CS_MESSAGESIGNINGPOLICY */            
-        
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */
+
 #ifdef UD_CS_INCLUDEDIRECTTRANSFER
-    staticData->dtIn = staticData->dtOut = FALSE;
+    csDispatchSetDtOut(FALSE);
+    csDispatchSetDtIn(FALSE);
+
     syInvalidateFile(&staticData->savedDtFile);
     wordCount = *(rcvBuf + 32); /* word count */
     andX = *(rcvBuf + 33);      /* andx command */
@@ -969,8 +1033,8 @@ csDispatchRequest(
     )
     {
         /* use DirectTransfer - read according to word count */
-        staticData->dtIn = TRUE;
-        msgLen = nsRecvIntoBuffer(&recvDescr, pBuf, wordCount * 2 + 2); /* read remaining words + byte count + padding */
+        csDispatchSetDtIn(TRUE);
+        msgLen = nsRecvIntoBuffer(&recvDescr, pBuf, (NQ_COUNT)(wordCount * 2 + 2)); /* read remaining words + byte count + padding */
         csDispatchDtSaveParameters(pBuf + (wordCount * 2) + 2, &recvDescr);
     }
     else
@@ -981,11 +1045,46 @@ csDispatchRequest(
     if (msgLen == NQ_FAIL)
     {
         TRCERR("Error reading from socket");
-
         nsPutBuffer(rcvBuf);
-        TRCE();                                 /* fail connection */
+        TRCE();
         return NQ_FAIL;
     }
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+#ifdef UD_CS_INCLUDEDIRECTTRANSFER
+    if ((!(commandSet[currentCommand].flags & BATCH) || andX == 0xFF) &&
+    	      (commandSet[currentCommand].flags & DTIN) && pSession == NULL && !pSession->signingOn)
+    {
+    	NQ_BYTE *	tempBuf;
+    	NQ_UINT16	dataLen;
+    	NQ_UINT16	offset;
+    	CMBufferReader	reader;
+
+    	cmBufferReaderInit(&reader , pBuf , (NQ_COUNT)msgLen);
+    	cmBufferReaderSkip(&reader , 19);
+    	cmBufferReadUint16(&reader , &dataLen);
+    	cmBufferReadUint16(&reader , &offset);
+
+    	if (offset > (32 +  msgLen ) )
+    	{
+    		dataLen = (NQ_UINT16)(dataLen + (offset - ( 32 + msgLen )));
+    	}
+
+    	tempBuf = (NQ_BYTE *)cmMemoryAllocate(dataLen);
+    	syMemset(tempBuf , 0 , dataLen);
+
+    	cmCapturePacketWritePacket(pBuf, (NQ_UINT)msgLen);
+    	cmCapturePacketWritePacket(tempBuf, (NQ_UINT)dataLen);
+		cmCapturePacketWriteEnd();
+
+    	cmMemoryFree(tempBuf);
+    }
+    else
+#endif /* UD_CS_INCLUDEDIRECTTRANSFER */
+    {
+    	cmCapturePacketWritePacket(pBuf, (NQ_UINT)msgLen);
+    }
+	cmCapturePacketWriteEnd();
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
     
 #ifdef UD_CS_INCLUDEDIRECTTRANSFER
   if ((!(commandSet[currentCommand].flags & BATCH) || andX == 0xFF) && 
@@ -997,7 +1096,7 @@ csDispatchRequest(
     { 
           /* use DirectTransfer - prepare socket */
           syDtStartPacket(((SocketSlot*)sockDescr->socket)->socket);
-          staticData->dtOut = TRUE;
+          csDispatchSetDtOut(TRUE);
     }
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
   
@@ -1006,7 +1105,7 @@ csDispatchRequest(
     {
         pRequest = (CMCifsSessionSetupAndXRequest*)((NQ_BYTE*)pHeaderInp + offset);
 
-        /* calcluate next command's (if any) code and offset */
+        /* calculate next command's (if any) code and offset */
 
         if (isBatchCommand(currentCommand))
         {
@@ -1025,8 +1124,7 @@ csDispatchRequest(
         {
             CMCifsStatus error;     /* CIFS error format */
 
-            TRC1P("Command %x is not supported", currentCommand);
-
+            TRC("Command %x is not supported", currentCommand);
             error = csErrorReturn(SMB_STATUS_NOT_SUPPORTED, (NQ_UINT32)SRV_ERRnosupport);
             msgLen = dispatchError(sockDescr->socket, pHeaderOut, error);
             break;
@@ -1042,26 +1140,20 @@ csDispatchRequest(
                     staticData->ntErrorCode = pUser->supportsNtErrors;
                 }
             }
+            
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Request: command=0x%x, mid=0/%u, pid=0x%08x, sid=%lu, tid=0x%08x", pHeaderInp->command, cmGetSUint16(pHeaderInp->mid), cmGetSUint16(pHeaderInp->pid), cmGetSUint16(pHeaderInp->uid), cmGetSUint16(pHeaderInp->tid));
 
 #ifdef UD_CS_MESSAGESIGNINGPOLICY            
             /* check incoming message signature */
-            if (checkSignature)
-            {
-                if (!csCheckMessageSignatureSMB(pSession, pUser, (NQ_BYTE*)pHeaderInp, signLen))                                                 
-                {
-                    TRCERR("Bad incoming signature");
-                    returnValue = csErrorReturn(SMB_STATUS_ACCESS_DENIED, NQ_ERR_ACCESS);
-                    msgLen = dispatchError(sockDescr->socket, pHeaderOut, returnValue);
-                    break;
-                }
-            }
-            else
-            {
-                    pSession->sequenceNumRes = pSession->sequenceNum + 1;
-                    pSession->sequenceNum += 2;
-            }
+			if (!csCheckMessageSignatureSMB(pSession, pUser, (NQ_BYTE*)pHeaderInp, signLen))
+			{
+				TRCERR("Bad incoming signature");
+				returnValue = csErrorReturn(SMB_STATUS_ACCESS_DENIED, NQ_ERR_ACCESS);
+				msgLen = dispatchError(sockDescr->socket, pHeaderOut, returnValue);
+				break;
+			}
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */
 
-#endif
             /* call command processor - it will advance the response pointer */
             response = (NQ_BYTE *)pResponse;
             returnValue = (*commandSet[currentCommand].function)(
@@ -1069,7 +1161,7 @@ csDispatchRequest(
                 pHeaderOut,
                 &response
                 );
-
+				
             pResponse = (CMCifsSessionSetupAndXResponse*)response;
            
             if (cmCifsIsError(returnValue) && returnValue != csErrorReturn(SMB_STATUS_MORE_PROCESSING_REQUIRED, NQ_ERR_MOREDATA))
@@ -1101,7 +1193,7 @@ csDispatchRequest(
                     /* convert internal codes */
                     if (0 != returnValue)
                     {
-                        NQ_INT i;
+                        NQ_COUNT i;
                         for (i = 0; i < sizeof(codeTable)/sizeof(codeTable[0]); i++)
                         {
                             if (codeTable[i].internal == returnValue)
@@ -1124,7 +1216,7 @@ csDispatchRequest(
     }
 
 #ifdef UD_CS_INCLUDEDIRECTTRANSFER
-    if (staticData->dtIn)
+    if (csDispatchIsDtIn())
     {
         if (!csDispatchDtFromSocket(&recvDescr, staticData->savedDtCount))
         {
@@ -1136,7 +1228,7 @@ csDispatchRequest(
         }
     }   
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
-  
+
     nsEndRecvIntoBuffer(&recvDescr);
 
     if (msgLen == 0)        /* no errors so far */
@@ -1150,23 +1242,58 @@ csDispatchRequest(
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
     /* sign outgoing message */ 
     csCreateMessageSignatureSMB(pSession, csGetUserByUid(cmHtol16(cmGetSUint16(pHeaderOut->uid))), (NQ_BYTE*)pHeaderOut, (NQ_COUNT)msgLen);
-#endif
+#endif /* UD_CS_MESSAGESIGNINGPOLICY */
 
     /* release the request buffer */
 
     nsPutBuffer(rcvBuf);
 
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Response: command=0x%x, mid=0/%u, pid=0x%08x, sid=%lu, tid=0x%08x, status=0x%x", pHeaderOut->command, cmGetSUint16(pHeaderOut->mid), cmGetSUint16(pHeaderOut->pid), cmGetSUint16(pHeaderOut->uid), cmGetSUint16(pHeaderOut->tid), cmGetSUint32(pHeaderOut->status));
+
     /* send the response */
 
     sndLen = msgLen;
 #ifdef UD_CS_INCLUDEDIRECTTRANSFER
-    if (staticData->dtOut && syIsValidFile(staticData->savedDtFile))
+    if (csDispatchIsDtOut() && syIsValidFile(staticData->savedDtFile))
     {
-        sndLen += csDispatchDtGetCount();
+        sndLen += (NQ_INT)csDispatchDtGetCount();
     }
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    sockDescr->captureHdr.receiving = FALSE;
+    cmCapturePacketWriteStart(&sockDescr->captureHdr, (NQ_UINT)sndLen);
+#ifdef UD_CS_INCLUDEDIRECTTRANSFER
+    if (csDispatchIsDtOut() && csDispatchDtAvailable())
+    {
+    	NQ_BYTE *	tempBuf;
+    	NQ_COUNT	len;
 
+    	len = csDispatchDtGetCount();
+    	tempBuf = (NQ_BYTE *)cmMemoryAllocate(len);
+    	syMemset(tempBuf , 0 , len);
+
+    	cmCapturePacketWritePacket(response + 4 , (NQ_UINT)msgLen );
+    	cmCapturePacketWritePacket(tempBuf , len);
+
+    	cmMemoryFree(tempBuf);
+    }
+    else
+#endif /* UD_CS_INCLUDEDIRECTTRANSFER */
+    {
+    	cmCapturePacketWritePacket(sndBuf + 4, (NQ_UINT)sndLen);
+    }
+	cmCapturePacketWriteEnd();
+
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
     /* send and release buffer */
+	msgLen = (NQ_INT)nsPrepareNBBuffer(sndBuf, (NQ_UINT)sndLen, (NQ_UINT)msgLen);
+    if(0 == msgLen)
+    {
+        TRCERR("Error prepare buffer for response");
+        TRCE();
+        return NQ_FAIL;
+    }
+
     sndLen = nsSendFromBuffer(
         sockDescr->socket, 
         sndBuf, 
@@ -1186,7 +1313,7 @@ csDispatchRequest(
     }
 
 #ifdef UD_CS_INCLUDEDIRECTTRANSFER
-    if (staticData->dtOut)
+    if (csDispatchIsDtOut())
     {
         /* Transfer bytes from file to socket */
         if (!csDispatchDtToSocket(&recvDescr))
@@ -1194,9 +1321,8 @@ csDispatchRequest(
             TRCE();
             return NQ_SUCCESS;
         }
-    }
-    if (staticData->dtOut)
         syDtEndPacket(((SocketSlot*)sockDescr->socket)->socket);
+    }
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
 
     TRCE();
@@ -1328,6 +1454,9 @@ csDispatchSendLateResponse(
 {
     CMCifsHeader* pHdr;        /* casted pointer */
     NQ_COUNT packetLen;        /* actual packet length */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    CSSocketDescriptor *	sockDescr;
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
 
     TRCB();
 
@@ -1362,6 +1491,24 @@ csDispatchSendLateResponse(
             pSession->sequenceNumRes = savedSequenceNum;
         }
 #endif /* UD_CS_MESSAGESIGNINGPOLICY */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+		sockDescr = csGetClientSocketDescriptorBySocket(context->socket);
+		if (sockDescr != NULL)
+		{
+			sockDescr->captureHdr.receiving = FALSE;
+			cmCapturePacketWriteStart(&sockDescr->captureHdr , packetLen);
+			cmCapturePacketWritePacket(staticData->responseBuffer + 4 , packetLen);
+			cmCapturePacketWriteEnd();
+		}
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+		packetLen = nsPrepareNBBuffer(staticData->responseBuffer, packetLen, packetLen);
+	    if(0 == packetLen)
+	    {
+            TRCERR("Error prepare buffer for late response");
+            TRCE();
+            return FALSE;
+	    }
+
         if (packetLen != (NQ_COUNT)nsSendFromBuffer(
             context->socket, 
             staticData->responseBuffer, 
@@ -1410,7 +1557,7 @@ csDispatchCheckSpace(
 
     error = 0L;
 
-    /* check space and compose the error messsage */
+    /* check space and compose the error message */
 
     if (((NQ_UINT)(pResponse - (NQ_BYTE*)header) + size) > CS_MAXBUFFERSIZE)
     {

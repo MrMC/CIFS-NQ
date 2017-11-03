@@ -22,6 +22,7 @@
 
 #include "cmapi.h"
 #include "ndadaptr.h"
+#include "ndapi.h"
 
 /* initalize internal data */
 

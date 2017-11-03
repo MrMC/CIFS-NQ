@@ -24,6 +24,7 @@
 #include "csfnames.h"
 #include "csutils.h"
 #include "cssearch.h"
+#include "cmstring.h"
 
 #ifdef UD_NQ_INCLUDECIFSSERVER
 
@@ -34,12 +35,13 @@
     Static functions and data
     -------------------------
  */
+static NQ_WCHAR fileNameBuff[CM_MAXFILENAMELEN];
 
 /* get file information and fill a directory entry for Search */
 
 static NQ_UINT32                            /* SMB error or 0 */
 fillSearchEntry(
-    const NQ_TCHAR* pFileName,              /* filename */
+    const NQ_WCHAR* pFileName,              /* filename */
     CMCifsSearchDirectoryEntry* entry       /* entry to fill */
     );
 
@@ -79,19 +81,19 @@ csComSearch(
     NQ_BOOL unicodeRequired;                /* whether client requires UNICODE */
     NQ_UINT32 returnValue;                  /* error code in NT format or 0 for no error */
     const CSShare* pShare;                  /* pointer to the share */
-    NQ_TCHAR* pFileName;                    /* filename to search */
+    NQ_WCHAR* pFileName;                    /* filename to search */
     CSTid tid;                              /* required tree ID */
     CSUid uid;                              /* required user ID */
     CMCifsSearchRequestExtension*
         searchRequestExtension;             /* the second component of the request */
     NQ_UINT16 attributes;                   /* required file attributes */
-    static const NQ_TCHAR noName[] = {cmTChar(0)}; /* empty name for volume information */
+    static const NQ_WCHAR noName[] = {cmWChar(0)}; /* empty name for volume information */
     CMCifsSearchDirectoryEntry* pEntry;     /* directory entry pointer */
     NQ_UINT entryCount = 0;                 /* number of entries in the response */
     CSTree* pTree;                          /* pointer to the tree descriptor */
     CSUser* pUser;                          /* pointer to the user descriptor */
     CSSearch* pSearch = NULL;               /* pointer to the search descriptor */
-    NQ_STATIC NQ_TCHAR tFileName[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN)];   /* for converting search name to ANSI */
+    NQ_STATIC NQ_WCHAR tFileName[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];   /* for converting search name to ANSI */
     NQ_STATIC NQ_CHAR fileName[CM_BUFFERLENGTH(NQ_CHAR, UD_FS_FILENAMELEN)];     /* for converting search name to ANSI */
     NQ_UINT nameLen;                        /* source name lenth */
     NQ_CHAR *name;
@@ -175,9 +177,11 @@ csComSearch(
         TRC("volume label required");
 
         if ((pFileName = cmCifsNtohFilename(
+        					fileNameBuff,
                             pShare->map,
                             noName,
-                            FALSE
+                            FALSE,
+							TRUE
                             )
             ) == NULL
            )
@@ -228,20 +232,20 @@ csComSearch(
                         (  tmpPtr
                          + (cmWStrlen((NQ_WCHAR*)tmpPtr) + 1) * sizeof(NQ_WCHAR)
                         );
-                cmUnicodeToTchar(tFileName, (NQ_WCHAR*)(tmpPtr));
+                syWStrcpy(tFileName, (NQ_WCHAR*)(tmpPtr));
             }
             else
             {
                 tmpPtr = (NQ_BYTE*)(searchRequest + 1);
                 searchRequestExtension =
                     (CMCifsSearchRequestExtension*)(tmpPtr + syStrlen((NQ_CHAR*)tmpPtr) + 1);
-                cmAnsiToTchar(tFileName, (NQ_CHAR*)(searchRequest + 1));
+                syAnsiToUnicode(tFileName, (NQ_CHAR*)(searchRequest + 1));
             }
 
             {
-                NQ_TCHAR *pName;
+                NQ_WCHAR *pName;
 
-                pName = cmTStrrchr(tFileName, cmTChar('\\'));
+                pName = syWStrrchr(tFileName, cmWChar('\\'));
                 if (pName == NULL)
                 {
                     pName = tFileName;
@@ -250,7 +254,7 @@ csComSearch(
                 {
                     pName++;
                 }
-                cmTcharToAnsi(fileName, pName);
+                syUnicodeToAnsi(fileName, pName);
             }
 
             TRC1P("fileName = %s", fileName);
@@ -284,9 +288,11 @@ csComSearch(
             /* convert filename to host filename */
 
             if ((pFileName = cmCifsNtohFilename(
+            					fileNameBuff,
                                 pShare->map,
-                                (NQ_TCHAR*)(searchRequest + 1),
-                                unicodeRequired
+                                (NQ_WCHAR*)(searchRequest + 1),
+                                unicodeRequired,
+								TRUE
                                 )
                 ) == NULL
                )
@@ -296,10 +302,10 @@ csComSearch(
                 return csErrorReturn(SMB_STATUS_OBJECT_NAME_INVALID, DOS_ERRinvalidname);
             }
 
-            if (!csCheckPath(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+            if (!csCheckPath(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
             {
                 TRCERR("Path does not exists");
-                TRC1P(" path: %s", cmTDump(pFileName));
+                TRC1P(" path: %s", cmWDump(pFileName));
                 return csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath);
             }
 
@@ -322,15 +328,15 @@ csComSearch(
             CMCifsSearchResumeKey* pResumeKey;  /* pointer to resume key in request */
             CSSid sid;
 
+
             /* on a subsequent call: continue searching the directory from the
                index in the request's ResumeKey and use the saved attributes */
 
             pResumeKey = (CMCifsSearchResumeKey*)(searchRequestExtension + 1);
-            serverCookie = pResumeKey->serverCookie;
-            {
-                sid = cmGetUint16(serverCookie);
-                entryIndex = cmGetUint16(pResumeKey->serverCookie + sizeof(CSSid));
-            }
+            serverCookie = (NQ_BYTE *)pResumeKey->serverCookie;
+            sid = cmGetUint16(serverCookie);
+            serverCookie = serverCookie + sizeof(CSSid);
+            entryIndex = (NQ_UINT)cmGetUint16(serverCookie);
             if ((pSearch = csGetSearchBySid(sid)) == NULL)
             {
                 TRCERR("Illegal SID");
@@ -350,12 +356,12 @@ csComSearch(
                 /* file candidate found - compare attributes */
          
                 /* skip "." and ".." entries */
-                if (*(pFileName + cmTStrlen(pFileName) - 1) == '.')
+                if (*(pFileName + syWStrlen(pFileName) - 1) == '.')
                     continue;
 
                 if (syGetFileInformationByName(pFileName, &fileInfo) != NQ_SUCCESS)
                 {
-                    /* set default info details for corruped file */
+                    /* set default info details for corrupted file */
                     syMemset(&fileInfo, 0, sizeof(fileInfo));
                 }
                 
@@ -404,8 +410,9 @@ csComSearch(
                         serverCookie,
                         pSearch->sid
                         );
+                    serverCookie = serverCookie + sizeof(CSSid);
                     cmPutUint16(
-                        pEntry->resumeKey.serverCookie + sizeof(CSSid),
+                    	serverCookie,
                         (NQ_UINT16)entryIndex);
 
                     /* continue */
@@ -492,6 +499,8 @@ csComFindClose2(
 #ifdef UD_NQ_INCLUDEEVENTLOG
 	UDFileAccessEvent   eventInfo;
 	CSUser *			pUser = NULL;
+	NQ_WCHAR noName[] = CM_WCHAR_NULL_STRING;  /* empty name for file */;
+	NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
 
@@ -544,8 +553,8 @@ csComFindClose2(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
 		UD_LOG_FILE_CLOSE,
-		pUser->name,
-		pUser->ip,
+		pUser? pUser->name : noName,
+		pUser? pUser->ip : &noIP,
 		0,
 		(const NQ_BYTE *)&eventInfo
 		);
@@ -558,8 +567,8 @@ csComFindClose2(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
 		UD_LOG_FILE_CLOSE,
-		pUser->name,
-		pUser->ip,
+		pUser? pUser->name : noName,
+		pUser? pUser->ip : &noIP,
 		0,
 		(const NQ_BYTE *)&eventInfo
 		);
@@ -607,7 +616,7 @@ csTransaction2FindFirst(
     NQ_BOOL unicodeRequired;                /* whether client requires UNICODE */
     CMCifsStatus error;                     /* for composing DOS-style error */
     const CSShare* pShare;                  /* pointer to the share */
-    NQ_TCHAR* pFileName;                    /* filename to search */
+    NQ_WCHAR* pFileName;                    /* filename to search */
     CSTid tid;                              /* required tree ID */
     CSUid uid;                              /* required user ID */
     NQ_UINT16 attributes;                   /* required file attributes */
@@ -626,6 +635,7 @@ csTransaction2FindFirst(
     CSUser* pUser;                          /* pointer to the user descriptor */
     NQ_UINT maxLength;                      /* max response length */
     NQ_UINT32 returnValue;                  /* error code in NT format or 0 for no error */
+    NQ_UINT length;                         /* entry length */
 #ifdef UD_NQ_INCLUDEEVENTLOG
 	UDFileAccessEvent eventInfo;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
@@ -704,9 +714,11 @@ csTransaction2FindFirst(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+    						fileNameBuff,
                             pShare->map,
-                            (const NQ_TCHAR*)pPattern,
-                            unicodeRequired
+                            (const NQ_WCHAR*)pPattern,
+                            unicodeRequired,
+							TRUE
                             )
         ) == NULL
        )
@@ -735,7 +747,7 @@ csTransaction2FindFirst(
 	eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
 
-    if (!csCheckPath(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPath(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 		udEventLog(
@@ -749,7 +761,7 @@ csTransaction2FindFirst(
 			);
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
         TRCERR("Path does not exists");
-        TRC1P(" path: %s", cmTDump(pFileName));
+        TRC1P(" path: %s", cmWDump(pFileName));
         return csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath);
     }
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
@@ -813,7 +825,7 @@ csTransaction2FindFirst(
 
     /* start searching files */
 
-    TRC1P("Find operation on %s", cmTDump(pFileName));
+    TRC1P("Find operation on %s", cmWDump(pFileName));
 
     csEnumerateSourceName(&pSearch->enumeration, pFileName, pUser->preservesCase);
 #ifdef UD_NQ_INCLUDEEVENTLOG
@@ -902,6 +914,7 @@ csTransaction2FindFirst(
             /* fill file information */
 
             pLastEntryCandidate = pEntry;
+            length = maxLength;
 
             error = csFillFindEntry(
                                 pFileName,
@@ -911,7 +924,7 @@ csTransaction2FindFirst(
                                 entryCount,
                                 unicodeRequired,
                                 (NQ_BYTE*)descriptor->pData,
-                                maxLength,
+                                &length,
                                 pSearch->resumeKey,
                                 &pNextEntryOffset
                                 );
@@ -1123,11 +1136,14 @@ csTransaction2FindNext(
     NQ_UINT16 level;                        /* required detalization - information level */
     CSSearch* pSearch;                      /* search operation descriptor */
     NQ_UINT16 flags;                        /* request flags */
-    NQ_TCHAR* pFileName;                    /* filename to search */
+    NQ_WCHAR* pFileName;                    /* filename to search */
     NQ_UINT maxLength;                      /* max response length */
+    NQ_UINT length;                         /* entry length */
 #ifdef UD_NQ_INCLUDEEVENTLOG
 	UDFileAccessEvent eventInfo;
 	CSUser	* 	pUser;
+	NQ_WCHAR noName[] = CM_WCHAR_NULL_STRING;
+	NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     TRCB();
@@ -1228,8 +1244,8 @@ csTransaction2FindNext(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_QUERYDIRECTORY,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE *)&eventInfo
 			);
@@ -1244,8 +1260,8 @@ csTransaction2FindNext(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_QUERYDIRECTORY,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				0,
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1259,8 +1275,8 @@ csTransaction2FindNext(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				0,
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1273,8 +1289,8 @@ csTransaction2FindNext(
 					UD_LOG_MODULE_CS,
 					UD_LOG_CLASS_FILE,
 					UD_LOG_FILE_ATTRIBGET,
-					pUser->name,
-					pUser->ip,
+					pUser? pUser->name : noName,
+					pUser? pUser->ip : &noIP,
 					csErrorGetLast(),
 					(const NQ_BYTE *)&eventInfo
 					);
@@ -1289,8 +1305,8 @@ csTransaction2FindNext(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				0,
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1303,6 +1319,8 @@ csTransaction2FindNext(
             /* fill file information */
 
             pLastEntryCandidate = pEntry;
+            length = maxLength;
+
             error = csFillFindEntry(
                                 pFileName,
                                 &fileInfo,
@@ -1311,7 +1329,7 @@ csTransaction2FindNext(
                                 entryCount,
                                 unicodeRequired,
                                 (NQ_BYTE*)descriptor->pData,
-                                maxLength,
+                                &length,
                                 pSearch->resumeKey,
                                 &pNextEntryOffset
                                 );
@@ -1329,8 +1347,8 @@ csTransaction2FindNext(
 					UD_LOG_MODULE_CS,
 					UD_LOG_CLASS_FILE,
 					UD_LOG_FILE_CLOSE,
-					pUser->name,
-					pUser->ip,
+					pUser? pUser->name : noName,
+					pUser? pUser->ip : &noIP,
 					0,
 					(const NQ_BYTE *)&eventInfo
 					);
@@ -1342,8 +1360,8 @@ csTransaction2FindNext(
 					UD_LOG_MODULE_CS,
 					UD_LOG_CLASS_FILE,
 					UD_LOG_FILE_CLOSE,
-					pUser->name,
-					pUser->ip,
+					pUser? pUser->name : noName,
+					pUser? pUser->ip : &noIP,
 					0,
 					(const NQ_BYTE *)&eventInfo
 					);
@@ -1365,8 +1383,8 @@ csTransaction2FindNext(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_QUERYDIRECTORY,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				0,
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1395,8 +1413,8 @@ csTransaction2FindNext(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_CLOSE,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE *)&eventInfo
 			);
@@ -1408,8 +1426,8 @@ csTransaction2FindNext(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_CLOSE,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE *)&eventInfo
 			);
@@ -1452,7 +1470,7 @@ csTransaction2FindNext(
 
 static NQ_UINT32
 fillSearchEntry(
-    const NQ_TCHAR* pFileName,
+    const NQ_WCHAR* pFileName,
     CMCifsSearchDirectoryEntry* entry
     )
 {
@@ -1492,7 +1510,7 @@ fillSearchEntry(
     /* convert name to ANSII uppercase and place into the entry, padding by spaces */
 
     syMemset(fileName, ' ', sizeof(entry->fileName));
-    cmTcharToAnsi(fileName, cmCifsExtractFilenameFromFullName(pFileName));
+    syUnicodeToAnsi(fileName, cmCifsExtractFilenameFromFullName(pFileName));
     syMemcpy(entry->fileName, fileName, sizeof(entry->fileName));
     
     TRCE();
@@ -1511,7 +1529,8 @@ fillSearchEntry(
  *          IN file index in search
  *          IN whether UNICODE names ought to be returned
  *          IN pointer to the beginning of the SMB message
- *          IN max response length
+ *          IN/OUT IN: max response length
+ *                 OUT: entry length without alignment
  *          IN whether to return resume key for particular levels
  *          IN/OUT double pointer to nextEntryOffset field in the entry
  *
@@ -1523,22 +1542,23 @@ fillSearchEntry(
 
 NQ_UINT32
 csFillFindEntry(
-    const NQ_TCHAR* pFileName,
+    const NQ_WCHAR* pFileName,
     SYFileInformation* fileInfo,
     NQ_BYTE** pEntry,
     NQ_UINT16 level,
     NQ_UINT32 fileIndex,
     NQ_BOOL unicodeRequired,
     const NQ_BYTE* messageStart,
-    NQ_UINT maxLength,
+    NQ_UINT* length,
     NQ_BOOL resumeKey,
     NQ_BYTE** pNextEntryOffset
     )
 {
-    NQ_UINT32 nameLength;           /* file name length in bytes */
+    NQ_UINT32 nameLength = 0;       /* file name length in bytes */
     NQ_BYTE* pData;                 /* pointer to various data fragments */
     NQ_UINT32 entryLength;          /* the entire length of the entry */
     NQ_BOOL isNt;                   /* TRUE when the detail level is NT-style ( > 0x100) */
+    NQ_UINT maxLength = *length;    /* max length for response */
 
     TRCB();
 
@@ -1562,14 +1582,14 @@ csFillFindEntry(
         isNt = FALSE;
         break;
     case SMB_FINDFIRST2_INFOSTANDARD:
-        entryLength = sizeof(CMCifsFileInformationStandard) + ((unicodeRequired)? 2:1);      /* 1 for file name length + 1 allignment*/
+        entryLength = sizeof(CMCifsFileInformationStandard) + ((unicodeRequired)? 2:1);      /* 1 for file name length + 1 alignment*/
         if (resumeKey)
             entryLength += 4;
         isNt = FALSE;
         break;
     case SMB_PASSTHRU_FILE_BOTH_DIR_INFO:    
     case SMB_FINDFIRST2_FINDFILEBOTHDIRECTORYINFO:
-        entryLength = sizeof(CMCifsFileBothDirectoryInformation) + 1; /* 1 for file name length */
+        entryLength = sizeof(CMCifsFileBothDirectoryInformation);
         isNt = TRUE;
         break;
     case SMB_PASSTHRU_FILE_DIR_FULL_INFO:    
@@ -1579,7 +1599,7 @@ csFillFindEntry(
         break;
     case SMB_PASSTHRU_FILE_ID_BOTH_DIR_INFO:    
     case SMB_FINDFIRST2_FINDIDBOTHDIRECTORYINFO:
-        entryLength = sizeof(CMCifsIdBothDirectoryInformation) + 1; /* 1 for file name length */
+        entryLength = sizeof(CMCifsIdBothDirectoryInformation);
         isNt = TRUE;
         break;
     case SMB_PASSTHRU_FILE_ID_FULL_DIR_INFO:    
@@ -1605,28 +1625,6 @@ csFillFindEntry(
 
     pFileName = cmCifsExtractFilenameFromFullName(pFileName);
 
-    if (unicodeRequired)
-    {
-        /* temporary convert to unicode */
-
-        if ((*pEntry + cmTStrlen(pFileName) + sizeof(NQ_WCHAR)) > (messageStart + maxLength))
-        {
-            /* name does not fit into the message - this not an error but an indication for
-               the calee */
-
-            return INTERNAL_ERROR;
-        }
-        cmTcharToUnicode((NQ_WCHAR*)*pEntry, pFileName);
-        nameLength = (NQ_UINT32)(cmWStrlen((NQ_WCHAR*)*pEntry) * sizeof(NQ_WCHAR));
-        entryLength += (NQ_UINT32)(nameLength + sizeof(NQ_WCHAR));
-    }
-    else
-    {
-        nameLength = (NQ_UINT32)cmTStrlen(pFileName);
-        entryLength += nameLength + 1;
-    }
-
-
     if (isNt)
     {
         /* NT formats include the terminating zero */
@@ -1634,11 +1632,32 @@ csFillFindEntry(
             nameLength += (NQ_UINT32)sizeof(NQ_CHAR);
     }
 
+    if (unicodeRequired)
+    {
+        /* temporary convert to unicode */
+
+        if ((*pEntry + syWStrlen(pFileName) + sizeof(NQ_WCHAR)) > (messageStart + maxLength))
+        {
+            /* name does not fit into the message - this not an error but an indication for
+               the caller*/
+            return INTERNAL_ERROR;
+        }
+        syWStrcpy((NQ_WCHAR*)*pEntry, pFileName);
+        nameLength += (NQ_UINT32)(cmWStrlen((NQ_WCHAR*)*pEntry) * sizeof(NQ_WCHAR));
+        entryLength += (NQ_UINT32)nameLength;
+    }
+    else
+    {
+        nameLength += (NQ_UINT32)syWStrlen(pFileName);
+        entryLength += nameLength + 1;
+    }
+
     /* calculate entry length aligning it to 8 byte boundary (smb2 requires)*/
     
     {
         NQ_UINT padd;
 
+        *length = (NQ_UINT)entryLength;
         padd = (8 - (entryLength % 8)) % 8;
         entryLength += padd;
     }
@@ -1646,8 +1665,7 @@ csFillFindEntry(
     if ((*pEntry + entryLength + sizeof(NQ_WCHAR)) > (messageStart + maxLength))
     {
         /* entry does not fit into the message - this not an error but an indication for
-           the calee */
-
+           the caller */
         return INTERNAL_ERROR;
     }
 
@@ -1659,7 +1677,7 @@ csFillFindEntry(
     switch (level)
     {
 
-    /* the following three cases are cummulative: each one adds some information */
+    /* the following three cases are cumulative: each one adds some information */
 
     case SMB_FINDFIRST2_INFOQUERYEASFROMLIST:
     case SMB_FINDFIRST2_INFOQUERYEASIZE:
@@ -1703,11 +1721,11 @@ csFillFindEntry(
             pData += sizeof(CMCifsFileInformationStandard);
             *pData++ = (NQ_BYTE)nameLength;
             if (unicodeRequired)
-                pData++;    /* allignment */
+                pData++;    /* alignment */
         }
         break;
 
-    /* the following three cases are cummulative: each one adds some information */
+    /* the following three cases are cumulative: each one adds some information */
     case SMB_PASSTHRU_FILE_BOTH_DIR_INFO:
     case SMB_PASSTHRU_FILE_ID_BOTH_DIR_INFO:
     case SMB_FINDFIRST2_FINDFILEBOTHDIRECTORYINFO:
@@ -1723,8 +1741,8 @@ csFillFindEntry(
             {
                 CMCifsIdBothDirectoryInformation* pResponse;
                 pResponse = (CMCifsIdBothDirectoryInformation*) *pEntry;
-                cmPutSUint32(pResponse->fileIndex.low, 0);
-                cmPutSUint32(pResponse->fileIndex.high, 0);
+                cmPutSUint32(pResponse->fileIndex.low, cmHtol32(fileInfo->fileIdLow));
+                cmPutSUint32(pResponse->fileIndex.high, cmHtol32(fileInfo->fileIdHigh));
                 cmPutSUint16(pResponse->reserved0, 0);
             }
 
@@ -1748,8 +1766,8 @@ csFillFindEntry(
             {
                 CMCifsIdFullDirectoryInformation* pResponse;
                 pResponse = (CMCifsIdFullDirectoryInformation*) *pEntry;
-                cmPutSUint32(pResponse->fileIndex.low, 0);
-                cmPutSUint32(pResponse->fileIndex.high, 0);
+                cmPutSUint32(pResponse->fileIndex.low, cmHtol32(fileInfo->fileIdLow));
+                cmPutSUint32(pResponse->fileIndex.high, cmHtol32(fileInfo->fileIdHigh));
                 cmPutSUint32(pResponse->reserved0, 0);
             }
 
@@ -1768,7 +1786,7 @@ csFillFindEntry(
             CMCifsFileDirectoryInformation* pResponse;
 
             pResponse = (CMCifsFileDirectoryInformation*) *pEntry;
-            cmPutSUint32(pResponse->fileIndex, cmHtol32(fileIndex));
+            cmPutSUint32(pResponse->fileIndex, 0);
             cmCifsTimeToUTC(
                 fileInfo->creationTime,
                 &timeLow,
@@ -1819,7 +1837,7 @@ csFillFindEntry(
             pResponse = (CMCifsFileNamesInformation*) *pEntry;
             cmPutSUint32(pResponse->nextEntryOffset, cmHtol32(entryLength));
             *pNextEntryOffset = (NQ_BYTE *)&pResponse->nextEntryOffset;
-            cmPutSUint32(pResponse->fileIndex, cmHtol32(fileIndex));
+            cmPutSUint32(pResponse->fileIndex, 0);
             cmPutSUint32(pResponse->fileNameLength, cmHtol32(nameLength));
             pData += sizeof(CMCifsFileNamesInformation);
         }
@@ -1832,11 +1850,11 @@ csFillFindEntry(
 
     if (unicodeRequired)
     {
-        cmTcharToUnicode((NQ_WCHAR*)pData, pFileName);
+        syWStrcpy((NQ_WCHAR*)pData, pFileName);
     }
     else
     {
-        cmTcharToAnsi((NQ_CHAR*)pData, pFileName);
+        syUnicodeToAnsi((NQ_CHAR*)pData, pFileName);
     }
 
     /* calculate next entry address */

@@ -23,9 +23,23 @@
 #include "ccdcerpc.h"
 #include "cmlist.h"
 
+typedef struct
+{
+	NQ_UINT32	type;
+	NQ_BYTE   * name;
+	NQ_BYTE   * comment;
+}ShareEnumItem;
+
+typedef struct
+{
+	void * 	params;
+	NQ_UINT32	type;
+	NQ_BYTE *	comment;
+}ShareCallbackItem;
+
 /* callback function for storing different names during enumeration */
 
-typedef void
+typedef NQ_STATUS
 (*CCSrvsvcEnumerateCallback)(
     const NQ_WCHAR* shareName,  /* name of the next share (null terminated) */
     void * params               /* abstract parameters */
@@ -40,19 +54,19 @@ ccSrvsvcGetPipe(
 
 /* initialize this module */
 
-NQ_BOOL ccSrvsvcStart(void);
+NQ_BOOL ccSrvsvcStart();
 
 /* stp using this module */
 
-void ccSrvsvcShutdown(void);
+void ccSrvsvcShutdown();
 
 /* start enumerating list of shares over a previously opened pipe */
 
-void ccSrvsvcLock(void);
+void ccSrvsvcLock();
 
 /* start enumerating list of shares over a previously opened pipe */
 
-void ccSrvsvcUnlock(void);
+void ccSrvsvcUnlock();
 
 /* enumerate list of shares over a previously opened pipe */
 

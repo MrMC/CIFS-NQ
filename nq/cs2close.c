@@ -44,7 +44,7 @@ NQ_UINT32 csSmb2OnClose(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
     CSFile* pFile;                          /* pointer to file descriptor */
     CSFid fid;                              /* fid of the file to close */
     NQ_UINT16 flags;                        /* close flags */
-    const NQ_TCHAR *pFileName;              /* file name pointer */
+    const NQ_WCHAR *pFileName;              /* file name pointer */
     const CSShare* pShare;                  /* pointer to share descriptor */
     SYFileInformation fileInfo;             /* buffer for file information */
 #ifdef UD_NQ_INCLUDEEVENTLOG
@@ -89,7 +89,7 @@ NQ_UINT32 csSmb2OnClose(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
     eventInfo.access = 0;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
-    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "File name: %s", cmTDump(pFileName));   
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "File name: %s", cmWDump(pFileName));   
 
 #ifdef UD_CS_INCLUDERPC_SPOOLSS
     if (pFile->isPrint)
@@ -102,22 +102,7 @@ NQ_UINT32 csSmb2OnClose(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
         if (pFile->options & SMB_NTCREATEANDX_DELETEONCLOSE)
         {
             CSName* pName;          /* pointer to the file name descriptor */
-#ifdef UD_CS_FORCEINTERIMRESPONSES
-            NQ_UINT32 asyncId = 0;                  /* generated Async ID */
-#endif /* UD_CS_FORCEINTERIMRESPONSES */
-    
-#ifdef UD_CS_FORCEINTERIMRESPONSES
-            asyncId = csSmb2SendInterimResponse(in);
-            if (0 == asyncId)
-            {
-                LOGERR(CM_TRC_LEVEL_ERROR, "error sending interim write response");
-                LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-                return SMB_STATUS_INVALID;
-            }
-            out->flags |= SMB2_FLAG_ASYNC_COMMAND;
-            out->aid.low = asyncId;
-            out->aid.high = 0;
-#endif /* UD_CS_FORCEINTERIMRESPONSES */
+
             pName = csGetNameByNid(pFile->nid);
             if (pName == NULL)
             {
@@ -234,16 +219,16 @@ NQ_UINT32 csSmb2OnClose(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *rea
 
     /* complete oplock break operation (send late response) if required */
 
-    if (pFile->oplockGranted && pFile->pFileOplockBreaker)
+    if (pFile->oplockGranted && pFile->isBreakingOpLock)
     {
         CMBufferWriter packet;
 
         out->status = 0;
         cmBufferWriterInit(&packet, cmBufferWriterGetStart(writer) - SMB2_HEADERSIZE , 124);
         cmSmb2HeaderWrite(out, &packet);
-        csBreakComplete(&pFile->pFileOplockBreaker->breakContext, cmBufferWriterGetStart(&packet));
+        csBreakComplete(pFile, cmBufferWriterGetStart(&packet), in->flags);
         csReleaseFile(pFile->fid);
-        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Oplock break completed");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Oplock break completed. fid: %d", pFile->fid);
         LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
         return SMB_STATUS_NORESPONSE;
     }

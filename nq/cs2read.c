@@ -68,7 +68,7 @@ NQ_UINT32 csSmb2OnRead(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *read
     LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
 
     /* parse request */
-    cmBufferReaderSkip(reader, 2);  /* paddding + reserved */
+    cmBufferReaderSkip(reader, 2);  /* padding + reserved */
     cmBufferReadUint32(reader, &dataCount);
     cmBufferReadUint64(reader, &offset);
     cmBufferReadUint16(reader, &fid);
@@ -91,6 +91,8 @@ NQ_UINT32 csSmb2OnRead(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *read
         LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
         return SMB_STATUS_INVALID_HANDLE;
     }
+
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "pFile:%p file:%d dataCount:%d offset:%d", pFile, pFile->file, dataCount, offset);
 
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
     eventInfo.fileName = csGetFileName(pFile->fid);
@@ -141,6 +143,7 @@ NQ_UINT32 csSmb2OnRead(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *read
         out->flags |= SMB2_FLAG_ASYNC_COMMAND;
         out->aid.low = asyncId;
         out->aid.high = 0;
+        out->credits = 0;
 #endif /* UD_CS_FORCEINTERIMRESPONSES */
 
         /* position to the offset */
@@ -215,8 +218,13 @@ NQ_UINT32 csSmb2OnRead(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *read
             }
             else
             {
-                remaining.high -= 1;
-                remaining.low = (NQ_UINT32)(-1) - (offset.low - remaining.low);
+            	if (offset.high < remaining.high)
+            	{
+					remaining.high -= 1;
+					remaining.low = (NQ_UINT32)(-1) - (offset.low - remaining.low);
+            	}
+            	else
+            		remaining.low = 0;
             }
             if (remaining.low == 0)
             {

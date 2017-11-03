@@ -21,7 +21,7 @@
 #include "cmsdescr.h"
 #include "cmfinddc.h"
 
-#include "ccconfig.h"
+#include "ccparams.h"
 #include "cclsarpc.h"
 #include "ccsamrpc.h"
 #include "ccnetlgn.h"
@@ -53,8 +53,83 @@ static void generateNetlogonCredentials(CCNetlogonCredential *credential, NQ_BYT
 static NQ_BOOL domainLogon(const NQ_WCHAR *domain, const NQ_WCHAR *computer, const AMCredentialsW *admin, NQ_BYTE secret[16]);
 static NQ_BOOL domainJoin(const NQ_WCHAR *domain, const NQ_WCHAR *computer, const AMCredentialsW *admin, NQ_BYTE secret[16]);
 static NQ_BOOL domainLeave(const NQ_WCHAR *domain, const NQ_WCHAR *computer, const AMCredentialsW *admin);
+static NQ_HANDLE getNetlogonHandle(const NQ_WCHAR *dc);
+
+typedef struct
+{
+	NQ_HANDLE netlogonHandle;
+	SYMutex netlogonGuard;
+}
+StaticData;
+
+#ifdef SY_FORCEALLOCATION
+static StaticData* staticData = NULL;
+#else  /* SY_FORCEALLOCATION */
+static StaticData staticDataSrc;
+static StaticData* staticData = &staticDataSrc;
+#endif /* SY_FORCEALLOCATION */
+
+NQ_BOOL ccDomainStart()
+{
+	NQ_BOOL result = TRUE;
+
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+
+	/* allocate memory */
+#ifdef SY_FORCEALLOCATION
+	staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
+	if (NULL == staticData)
+	{
+		LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+        sySetLastError(NQ_ERR_OUTOFMEMORY);
+		goto Exit;
+	}
+#endif /* SY_FORCEALLOCATION */
+
+	staticData->netlogonHandle = NULL;
+	syMutexCreate(&staticData->netlogonGuard);
+
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+	return result;
+}
+
+void ccDomainShutdown()
+{
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+
+#ifdef SY_FORCEALLOCATION
+	if (NULL == staticData)
+		goto Exit;
+#endif
+
+	if (NULL != staticData->netlogonHandle)
+		ccDcerpcDisconnect(staticData->netlogonHandle);
+	syMutexDelete(&staticData->netlogonGuard);
+
+	/* release memory */
+#ifdef SY_FORCEALLOCATION
+	if (NULL != staticData)
+		cmMemoryFree(staticData);
+	staticData = NULL;
+#endif /* SY_FORCEALLOCATION */
+
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+}
+
+
 
 /* --- Static functions --- */
+
+static NQ_HANDLE getNetlogonHandle(const NQ_WCHAR *dc)
+{
+	if (NULL == staticData->netlogonHandle)
+	{
+		staticData->netlogonHandle = ccDcerpcConnect(dc, ccUserGetAdministratorCredentials(), ccNetlogonGetPipe(), FALSE);
+	}
+	return staticData->netlogonHandle;
+}
 
 static NQ_UINT32 createComputerAccount(
     const NQ_WCHAR * server,
@@ -65,20 +140,20 @@ static NQ_UINT32 createComputerAccount(
 {
     NQ_BYTE password[COMP_ACCOUNT_PASSWORD_LENGTH + 1]; /* random computer account password */
     NQ_WCHAR * name = NULL;                             /* computer name with $ postfix */
-    const NQ_WCHAR dollarSign[] = {cmWChar('$'), cmWChar(0)};  /* computer name postfix */
+    const NQ_WCHAR dollarSign[] = {cmWChar('$'), cmWChar('\0')};  /* computer name postfix */
     NQ_WCHAR * passwordW = NULL;                        /* Unicode password */
     NQ_HANDLE samr;                                     /* SAMR file handle */
-    NQ_UINT32 status;                                   /* generic result */
+    NQ_UINT32 status = NQ_ERR_GENERAL;                  /* generic result */
     NQ_UINT16 len;                                      /* RPC length */
     NQ_UINT32 type;                                     /* RPC value */
     NQ_UINT32 access;                                   /* rpc value */
-   
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    CMRpcPolicyHandle c, d, u;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%s domain:%p computer:%s secret:%p", cmWDump(server), domain, cmWDump(computer), &secret);
 
     /* connect to SAMR */
     if ((samr = ccDcerpcConnect(server, ccUserGetAdministratorCredentials(), ccSamGetPipe(), FALSE)) != NULL)
     {
-        CMRpcPolicyHandle c, d, u;
         NQ_UINT32 rid;
 
         /* SAMR::Connect2 */
@@ -87,14 +162,14 @@ static NQ_UINT32 createComputerAccount(
             /* SAMR::OpenDomain */
             if ((status = ccSamrOpenDomain(samr, &c, domain, SAMR_AM_MAXIMUMALLOWED, &d)) == NQ_SUCCESS)
             {
-                /* append '$' to computer name */                
-                name = cmMemoryAllocate((NQ_UINT)(sizeof(NQ_WCHAR) * (cmWStrlen(computer) + 2)));
+                /* append '$' to computer name */
+                name = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)(sizeof(NQ_WCHAR) * (cmWStrlen(computer) + 2)));
                 if (NULL == name)
                 {
                     status = NQ_ERR_NOMEM;
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
                     sySetLastError(status);
-                    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
-                    return status;
+                    goto Error1;
                 }
                 cmWStrcpy(name, computer);
                 cmWStrcat(name, dollarSign);
@@ -117,13 +192,20 @@ static NQ_UINT32 createComputerAccount(
                             /* create random computer account password */
                             cmCreateRandomByteSequence(password, COMP_ACCOUNT_PASSWORD_LENGTH);
                             password[COMP_ACCOUNT_PASSWORD_LENGTH] = '\0';
-                            
+
                             /* create hashed computer account password  - secret used in domain logons */
                             passwordW = cmMemoryCloneAString((const NQ_CHAR *)password);
+                            if (NULL == passwordW)
+                            {
+                                LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+                                status = NQ_ERR_NOMEM;
+                                sySetLastError(NQ_ERR_OUTOFMEMORY);
+                                goto Error2;
+                            }
                             len = (NQ_UINT16)(cmWStrlen(passwordW) * sizeof(NQ_WCHAR));
                             cmMD4(secret, (NQ_BYTE*)passwordW, len);
-                            TRCDUMP("secret", secret, 16);
-                            
+                            LOGDUMP("secret", secret, 16);
+
                             /* SAMR::SetUserInfo2 */
                             if ((status = ccSamrSetUserPassword(samr, &u, password, COMP_ACCOUNT_PASSWORD_LENGTH)) == NQ_SUCCESS)
                             {
@@ -132,13 +214,13 @@ static NQ_UINT32 createComputerAccount(
                                 /* set flags */
                                 /* SAMR::SetUserInfo */
                                 params.flags = SAMR_ACB_WSTRUST;
-                                ccSamrSetUserInfo2(samr, &u, 16, (NQ_BYTE *)&params);                               
+                                ccSamrSetUserInfo2(samr, &u, 16, (NQ_BYTE *)&params);
                             }
 
                             /* SAMR::Close(user) */
                             ccSamrClose(samr, &u);
                         }
-                    }                   
+                    }
                 }
 
                 /* SAMR::Close(domain) */
@@ -155,11 +237,20 @@ static NQ_UINT32 createComputerAccount(
     else
         status = (NQ_UINT32)syGetLastError();
 
+Exit:
     cmMemoryFree(name);
     cmMemoryFree(passwordW);
-
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%u", status);
     return status;
+
+Error2:
+    ccSamrClose(samr, &u);
+
+Error1:
+    ccSamrClose(samr, &d);
+    ccSamrClose(samr, &c);
+    ccDcerpcDisconnect(samr);
+    goto Exit;
 }
 
 static NQ_UINT32 removeComputerAccount(
@@ -171,14 +262,14 @@ static NQ_UINT32 removeComputerAccount(
     NQ_WCHAR * compName = NULL;                                     /* computer name with a postfix */
     const NQ_WCHAR dollarSign[] = {cmWChar('$'), cmWChar('\0')};    /* postfix */
     NQ_HANDLE samr;                                                 /* SAMR file handle */
-    NQ_UINT32 status;                                               /* generic result */
+    NQ_UINT32 status = NQ_ERR_GENERAL;                              /* generic result */
+    CMRpcPolicyHandle c, d, u;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%s domain:%p computer:%s", cmWDump(server), domain, cmWDump(computer));
 
     /* connect to SAMR */
     if ((samr = ccDcerpcConnect(server, ccUserGetAdministratorCredentials(), ccSamGetPipe(), FALSE)) != NULL)
     {
-        CMRpcPolicyHandle c, d, u;
         NQ_UINT32 rid, type;
 
         /* SAMR::Connect2 */
@@ -187,28 +278,27 @@ static NQ_UINT32 removeComputerAccount(
             /* SAMR::OpenDomain */
             if ((status = ccSamrOpenDomain(samr, &c, domain, SAMR_AM_MAXIMUMALLOWED, &d)) == NQ_SUCCESS)
             {
-                compName = cmMemoryAllocate((NQ_UINT)(sizeof(NQ_WCHAR) * (cmWStrlen(computer) + 2)));
+                compName = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)(sizeof(NQ_WCHAR) * (cmWStrlen(computer) + 2)));
                 if (NULL == compName)
                 {
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
                     status = NQ_ERR_NOMEM;
                     sySetLastError(status);
-                    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
-                    return status;
+                    goto Error;
                 }
                 cmWStrcpy(compName, computer);
                 cmWStrcat(compName, dollarSign);
 
                 /* SAMR::LookupNames */
                 if ((status = ccSamrLookupNames(samr, &d, compName, &rid, &type)) == NQ_SUCCESS)
-                {                  
+                {
                     /* SAMR::OpenUser */
                     if ((status = ccSamrOpenUser(samr, &d, &rid, SAMR_AM_MAXIMUMALLOWED, &u)) == NQ_SUCCESS)
                     {
                         /* SAMR::DeleteUser */
                         status = ccSamrDeleteUser(samr, &u);
                     }
-                 }
-
+                }
                 /* SAMR::Close(domain) */
                 ccSamrClose(samr, &d);
             }
@@ -223,10 +313,18 @@ static NQ_UINT32 removeComputerAccount(
     else
         status = (NQ_UINT32)syGetLastError();
 
-    cmMemoryFree(compName);
+    goto Exit;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+Error:
+    ccSamrClose(samr, &d);
+    ccSamrClose(samr, &c);
+    ccDcerpcDisconnect(samr);
+
+Exit:
+    cmMemoryFree(compName);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%u", status);
     return status;
+
 }
 
 static void generateNetlogonCredentials(
@@ -234,7 +332,7 @@ static void generateNetlogonCredentials(
     NQ_BYTE secret[16]
     )
 {
-    CCNetlogonCredential tmp;
+    CCNetlogonCredential tmp = {{0}};
     NQ_BYTE sessKey[16];
 
     cmGenerateNetlogonCredentials((const NQ_BYTE*)credential->client, (const NQ_BYTE*)credential->server, secret, tmp.client, tmp.server, sessKey);
@@ -251,97 +349,88 @@ static NQ_BOOL domainLogon(
     const NQ_WCHAR * dc = NULL;             /* DC name in Unicode */
     NQ_CHAR * dcA = NULL;                   /* DC name in ASCII */
     const NQ_CHAR * domainA = NULL;         /* domain name in ASCII */
-    NQ_HANDLE netlogon;                     /* NetLogon file handle */
     NQ_UINT32 status = NQ_SUCCESS;          /* generic result */
+    NQ_BOOL result = FALSE;                 /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "domain:%s computer:%s admin:%p, secret:%p", cmWDump(domain), cmWDump(computer), admin, &secret);
 
     if (secret == NULL)
     {
         sySetLastError((NQ_UINT32)NQ_ERR_BADPARAM);
         LOGERR(CM_TRC_LEVEL_ERROR, "null secret");
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;
+        goto Exit;
     }
 
     if (cmWStrlen(computer) > 15)
     {
         sySetLastError((NQ_UINT32)NQ_ERR_BADPARAM);
         LOGERR(CM_TRC_LEVEL_ERROR, "computer name exceeds 15 characters");
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;
+        goto Exit;
     }
 
     /* find domain controller by domain name */
     domainA = cmMemoryCloneWStringAsAscii(domain);
-    dcA = cmMemoryAllocate(sizeof(NQ_BYTE) * CM_DNS_NAMELEN);
+    dcA = (NQ_CHAR *)cmMemoryAllocate(sizeof(NQ_BYTE) * CM_DNS_NAMELEN);
     if (NULL == domainA || NULL == dcA)
     {
-        cmMemoryFree(domainA);
-        cmMemoryFree(dcA);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_NOMEM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;        
+        goto Exit;
     }
-    if (cmGetDCNameByDomain(domainA, dcA) != NQ_SUCCESS)
+    if ((status = (NQ_UINT32)cmGetDCNameByDomain(domainA, dcA)) != NQ_SUCCESS)
     {
-        cmMemoryFree(domainA);
-        cmMemoryFree(dcA);
-        sySetLastError((NQ_UINT32)NQ_ERR_BADPARAM);
         LOGERR(CM_TRC_LEVEL_ERROR, "failed to get dc for domain %s", domainA);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;        
+        sySetLastError((NQ_UINT32)syGetLastError());
+        goto Exit;
     }
     dc = cmMemoryCloneAString(dcA);
     if (NULL == dc)
     {
-        cmMemoryFree(domainA);
-        cmMemoryFree(dcA);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_NOMEM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;        
+        goto Exit;
     }
 
     /* replace default credentials with domain administrator ones */
     cmWStrupr((NQ_WCHAR *)admin->domain.name); /* capitalize credentials domain name */
     ccUserSetAdministratorCredentials(admin);
-    
-    /* connect to NETLOGON */
-    if ((netlogon = ccDcerpcConnect(dc, ccUserGetAdministratorCredentials(), ccNetlogonGetPipe(), FALSE)) != NULL)
+
+    /* connect to NETLOGON */	
     {
         CCNetlogonCredential credentials;
+
+		syMutexTake(&staticData->netlogonGuard);
 
         /* generate client random challenge */
         cmCreateRandomByteSequence(credentials.client, sizeof(credentials.client));
 
         /* send client challenge and get server random challenge */
-        if ((status = ccNetrServerReqChallenge(netlogon, dc, computer, &credentials)) == NQ_SUCCESS)
+        if ((status = ccNetrServerReqChallenge(getNetlogonHandle(dc), dc, computer, &credentials)) == NQ_SUCCESS)
         {
             /* calculate new client challenge and new server challenge */
             generateNetlogonCredentials(&credentials, secret);
 
             /* send new client challenge */
-            status = ccNetrServerAuthenticate2(netlogon, dc, computer, &credentials, NULL);
+			status = ccNetrServerAuthenticate2(getNetlogonHandle(dc), dc, computer, &credentials, NULL);
         }
-
-        /* close NETLOGON */
-        ccDcerpcDisconnect(netlogon);
+		syMutexGive(&staticData->netlogonGuard);
     }
-    else
-        status = (NQ_UINT32)syGetLastError();
+
 
     LOGMSG(CM_TRC_LEVEL_MESS_ALWAYS, "status = 0x%x", status);
 
     /* restore previous user credentials */
     ccUserSetAdministratorCredentials(NULL);
 
+    sySetLastError((NQ_UINT32)status);
+    result = (status == NQ_SUCCESS);
+
+Exit:
     cmMemoryFree(domainA);
     cmMemoryFree(dcA);
     cmMemoryFree(dc);
-
-    sySetLastError((NQ_UINT32)status);
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);   
-    return status == NQ_SUCCESS;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+    return result;
 }
 
 /*
@@ -353,7 +442,7 @@ static NQ_BOOL domainLogon(
  *          IN  domain administrator credentials
  *          IN/OUT domain secret
  *
- * RETURNS: TRUE if succeded, FAIL otherwise
+ * RETURNS: TRUE if succeeded, FAIL otherwise
  *
  * NOTES:
  *====================================================================
@@ -365,58 +454,50 @@ static NQ_BOOL domainJoin(
     NQ_BYTE secret[16]
     )
 {
-    NQ_UINT32 status;                       /* generic result */                 
+    NQ_UINT32 status;                       /* generic result */
     const NQ_CHAR * domainA = NULL;         /* domain name in ASCII */
     NQ_CHAR * dcA = NULL;                   /* DC name in ASCII */
     const NQ_WCHAR * dc = NULL;             /* DC name in Unicode */
     CCLsaPolicyInfoDomain info;             /* domain info */
+    NQ_BOOL result = FALSE;                 /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "domain:%s computer:%s admin:%p, secret:%p", cmWDump(domain), cmWDump(computer), admin, &secret);
 
     if (secret == NULL)
     {
         sySetLastError((NQ_UINT32)NQ_ERR_BADPARAM);
         LOGERR(CM_TRC_LEVEL_ERROR, "null secret");
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;
+        goto Exit;
     }
 
     if (cmWStrlen(computer) > 15)
     {
         sySetLastError((NQ_UINT32)NQ_ERR_BADPARAM);
-        LOGERR(CM_TRC_LEVEL_ERROR, "computer name exceeds 15 characters: %s", cmTDump(computer));
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "computer name exceeds 15 characters: %s", cmWDump(computer));
+        goto Exit;
     }
 
     /* find domain controller by domain name */
     domainA = cmMemoryCloneWStringAsAscii(domain);
-    dcA = cmMemoryAllocate(CM_BUFFERLENGTH(NQ_CHAR, CM_DNS_NAMELEN) * sizeof(NQ_CHAR));
+    dcA = (NQ_CHAR *)cmMemoryAllocate(CM_BUFFERLENGTH(NQ_CHAR, CM_DNS_NAMELEN) * sizeof(NQ_CHAR));
     if (NULL == domainA || NULL == dcA)
     {
-        cmMemoryFree(domainA);
-        cmMemoryFree(dcA);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_NOMEM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;        
+        goto Exit;
     }
-    if (cmGetDCNameByDomain(domainA, dcA) != NQ_SUCCESS)
+    if ((status = (NQ_UINT32)cmGetDCNameByDomain(domainA, dcA)) != NQ_SUCCESS)
     {
-        cmMemoryFree(domainA);
-        cmMemoryFree(dcA);
-        sySetLastError((NQ_UINT32)NQ_ERR_BADPARAM);
         LOGERR(CM_TRC_LEVEL_ERROR, "failed to get dc for domain %s", domainA);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;
+        sySetLastError((NQ_UINT32)syGetLastError());
+        goto Exit;
     }
     dc = cmMemoryCloneAString(dcA);
-    if (NULL == dcA)
+    if (NULL == dc)
     {
-        cmMemoryFree(domainA);
-        cmMemoryFree(dcA);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_NOMEM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;        
+        goto Exit;
     }
 
     /* replace default credentials with domain administrator ones */
@@ -434,13 +515,15 @@ static NQ_BOOL domainJoin(
     /* restore previous user credentials */
     ccUserSetAdministratorCredentials(NULL);
 
+    sySetLastError((NQ_UINT32)status);
+    result = (status == NQ_SUCCESS);
+
+Exit:
     cmMemoryFree(domainA);
     cmMemoryFree(dcA);
     cmMemoryFree(dc);
-
-    sySetLastError((NQ_UINT32)status);
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-    return status == NQ_SUCCESS;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+    return result;
 }
 
 typedef struct
@@ -457,6 +540,8 @@ typedef struct
     const CCNetlogonCredential *credential;
     NQ_BYTE *userSessionKey;
     NQ_BOOL extendedSecurity;
+	NQ_UINT32 * userRid;
+	NQ_UINT32 * groupRid;
     NQ_UINT32 status;
 }
 ParamsNetrLogonSamLogon;
@@ -474,7 +559,7 @@ composeNetrLogonSamLogon (
     NQ_UINT32 ref = 0;          /* ref id */
     NQ_UINT32 sz;               /* rpc string size */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     cmBufferWriterInit(&w, buffer, size);
     cmBufferWriteUint16(&w, 2);                    /* opcode: NetrLogonSamLogon*/
@@ -488,7 +573,7 @@ composeNetrLogonSamLogon (
     cmBufferWriteAsciiAsUnicodeN(&w, "\\\\", 2, CM_BSF_NOFLAGS);
     cmWStrupr(p->server); /* capitalize server name */
     cmBufferWriteUnicode(&w, p->server);
- 
+
     /* workstation name */
     cmBufferWriterAlign(&w, buffer + 2, 4);        /* 4 byte alignment */
     sz = 1 + (NQ_UINT32)cmWStrlen(p->workstation);
@@ -503,16 +588,16 @@ composeNetrLogonSamLogon (
     cmBufferWriterAlign(&w, buffer + 2, 4);        /* 4 byte alignment */
     cmBufferWriteUint32(&w, ++ref);                /* ref ID */
     cmBufferWriteBytes(&w, p->credential->client, sizeof(p->credential->client));
-    cmBufferWriteUint32(&w, p->credential->sequence/*syGetTime()*/);
+    cmBufferWriteUint32(&w, p->credential->sequence/*syGetTimeInSec()*/);
 
     /* Return authenticator */
     cmBufferWriteUint32(&w, ++ref);                /* ref ID */
     /*cmBufferWriteBytes(&w, p->credential->server, sizeof(p->credential->server));*/
-    cmBufferWriteZeroes(&w, 8); 
-    cmBufferWriteUint32(&w, 0/*syGetTime()*/);
+    cmBufferWriteZeroes(&w, 8);
+    cmBufferWriteUint32(&w, 0/*syGetTimeInSec()*/);
 
-    cmBufferWriteUint16(&w, 2);                    /* logon level */ 
-    cmBufferWriteUint16(&w, 2);                    /* logon level */ 
+    cmBufferWriteUint16(&w, 2);                    /* logon level */
+    cmBufferWriteUint16(&w, 2);                    /* logon level */
     cmBufferWriteUint32(&w, ++ref);                /* ref ID */
 
     /* Logon information */
@@ -532,7 +617,7 @@ composeNetrLogonSamLogon (
     /* cmBufferWriteUint32(&w, 0x00000AE0);  */        /* parameter control */
     /* cmBufferWriteUint32(&w, 0x00002a42);  */        /* parameter control */
     /* cmBufferWriteUint32(&w, 0x00010000);  */        /* parameter control */
-    cmBufferWriteUint32(&w, 0);                    /* logon id low*/
+    cmBufferWriteUint32(&w, 0);                    /* logon id low */
     cmBufferWriteUint32(&w, 0);                    /* logon id high */
 
     /* username */
@@ -605,10 +690,10 @@ composeNetrLogonSamLogon (
     cmBufferWriteUint16(&w, 3/*6*/);               /* validation level */
     /* cmBufferWriteUint16(&w, 0); */
     /* cmBufferWriteUint32(&w, 0); */              /* flags */
-    
+
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
     return cmBufferWriterGetDataCount(&w);
 }
 
@@ -623,7 +708,7 @@ processNetrLogonSamLogon (
     CMBufferReader r;
     ParamsNetrLogonSamLogon *p = (ParamsNetrLogonSamLogon *)params;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
 
     cmBufferReaderInit(&r, data, size);
     cmBufferReaderSetOffset(&r, size - 4);
@@ -631,11 +716,14 @@ processNetrLogonSamLogon (
     if (p->status == 0)
     {
         cmBufferReaderSetPosition(&r, cmBufferReaderGetStart(&r));
-        cmBufferReaderSkip(&r, 144);
+		cmBufferReaderSkip(&r, 124);
+		cmBufferReadUint32(&r, p->userRid);
+		cmBufferReadUint32(&r, p->groupRid);
+        cmBufferReaderSkip(&r, 12);
         cmBufferReadBytes(&r, p->userSessionKey, 16);
-    }    
+    }
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", p->status);
     return (NQ_STATUS)p->status;
 }
 
@@ -654,12 +742,14 @@ ccNetrLogonSamLogon(
     NQ_UINT16 ntlmPasswdLen,
     const CCNetlogonCredential *    credential,
     NQ_BOOL isExtendedSecurity,
-    NQ_BYTE userSessionKey[16]
+    NQ_BYTE userSessionKey[16],
+	NQ_UINT32 * userRid,
+	NQ_UINT32 * groupRid
     )
 {
     ParamsNetrLogonSamLogon p;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "hetlogon:%p domain:%s server:%s user:%s workstation:%s", netlogon, cmWDump(domain), cmWDump(server), cmWDump(username), cmWDump(workstation));
 
     p.domain = domain;
     p.server = server;
@@ -668,50 +758,52 @@ ccNetrLogonSamLogon(
     p.serverChallenge = serverChallenge;
     p.lmPasswdLen = lmPasswdLen;
     p.lmPasswd = lmPasswd;
-    p.ntlmPasswdLen = ntlmPasswdLen; 
+    p.ntlmPasswdLen = ntlmPasswdLen;
     p.ntlmPasswd = ntlmPasswd;
     p.credential = credential;
     p.userSessionKey = userSessionKey;
     p.extendedSecurity = isExtendedSecurity;
+	p.userRid = userRid;
+	p.groupRid = groupRid;
 
     /* call NETLOGON::NetrLogonSamLogon */
     if (ccDcerpcCall(netlogon, composeNetrLogonSamLogon, processNetrLogonSamLogon, &p) == 0)
     {
         p.status = (p.status == 0) ? (NQ_UINT32)syGetLastError() : (NQ_UINT32)ccErrorsStatusToNq(p.status, TRUE);
-        TRCERR("NETLOGON::NetrLogonSamLogon");
+        LOGERR(CM_TRC_LEVEL_ERROR, "NETLOGON::NetrLogonSamLogon");
     }
-    
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:0x%x", p.status);
     return p.status;
 }
 
 static
-void 
+void
 initNetlogonCredentials(
     CCNetlogonCredential* creds,
     const NQ_BYTE secret[16]
     )
 {
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "creds:%p, secret:%p", creds, &secret);
 
-    creds->sequence = (NQ_UINT32)syGetTime();
+    creds->sequence = (NQ_UINT32)syGetTimeInSec();
     cmGenerateNetlogonCredentials((const NQ_BYTE*)creds->client, (const NQ_BYTE*)creds->server, secret, creds->client, creds->server, creds->sessionKey);
     syMemcpy(creds->seed, creds->client, sizeof(creds->seed));
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 static
 void
 nextNetlogonCredentials(
-    CCNetlogonCredential* creds 
+    CCNetlogonCredential* creds
     )
 {
     NQ_BYTE data[8];
     NQ_UINT32 *p;
     NQ_UINT32 temp;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "creds:%p", creds);
 
     creds->sequence += 2;
     syMemcpy(data, creds->seed, sizeof(data));
@@ -722,7 +814,7 @@ nextNetlogonCredentials(
 
     cmDES112(creds->client, data, creds->sessionKey);
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 /*
@@ -741,8 +833,10 @@ nextNetlogonCredentials(
  *          IN  domain secret
  *          IN  whether extended security is used
  *          OUT user session key
+ *          OUT user rid
+ *          OUT group rid
  *
- * RETURNS: TRUE if succeded, FAIL otherwise
+ * RETURNS: TRUE if succeeded, FAIL otherwise
  *
  * NOTES:
  *====================================================================
@@ -760,101 +854,94 @@ netLogon(
     NQ_UINT16 ntlmPasswdLen,
     const AMCredentialsW * admin,
     const NQ_BYTE secret[16],
-    NQ_BOOL isExtendedSecurity,    
-    NQ_BYTE userSessionKey[16]
+    NQ_BOOL isExtendedSecurity,
+    NQ_BYTE userSessionKey[16],
+	NQ_UINT32 * userRid,
+	NQ_UINT32 * groupRid
     )
 {
-    NQ_WCHAR * dc;                      /* DC name in Unicode */
-    NQ_CHAR * dcA;                      /* DC name in ASCII */
-    const NQ_CHAR * domainA;            /* Domain name in ASCII */
-    NQ_HANDLE netlogon;                 /* Netlogon file handle */ 
+    NQ_WCHAR * dc = NULL;               /* DC name in Unicode */
+    NQ_CHAR * dcA = NULL;               /* DC name in ASCII */
+    const NQ_CHAR * domainA = NULL;     /* Domain name in ASCII */
     NQ_UINT32 status = NQ_SUCCESS;      /* generic result */
+    NQ_BOOL result = FALSE;             /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "domain:%s user:%s workstation:%s", cmWDump(domain), cmWDump(username), cmWDump(workstation));
 
     if (secret == NULL)
     {
         sySetLastError((NQ_UINT32)NQ_ERR_BADPARAM);
         LOGERR(CM_TRC_LEVEL_ERROR, "null secret");
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;
+        goto Exit;
     }
 
     if (cmWStrlen(workstation) > 15)
     {
         sySetLastError((NQ_UINT32)NQ_ERR_BADPARAM);
         LOGERR(CM_TRC_LEVEL_ERROR, "workstation name exceeds 15 characters");
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;
+        goto Exit;
     }
 
     /* find domain controller by domain name */
     domainA = cmMemoryCloneWStringAsAscii(domain);
-    dcA = cmMemoryAllocate(sizeof(NQ_BYTE) * CM_DNS_NAMELEN);
+    dcA = (NQ_CHAR *)cmMemoryAllocate(sizeof(NQ_BYTE) * CM_DNS_NAMELEN);
     if (NULL == domainA || NULL == dcA)
     {
-        cmMemoryFree(domainA);
-        cmMemoryFree(dcA);
         sySetLastError(NQ_ERR_NOMEM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;        
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+        goto Exit;
     }
-    if (cmGetDCNameByDomain(domainA, dcA) != NQ_SUCCESS)
+    if ((status = (NQ_UINT32)cmGetDCNameByDomain(domainA, dcA)) != NQ_SUCCESS)
     {
-        cmMemoryFree(domainA);
-        cmMemoryFree(dcA);
-        sySetLastError((NQ_UINT32)NQ_ERR_BADPARAM);
+        sySetLastError((NQ_UINT32)syGetLastError());
         LOGERR(CM_TRC_LEVEL_ERROR, "failed to get dc for domain %s", domainA);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;        
+        goto Exit;
     }
 
-	if (NULL == cmAStrchr(dcA, '.') && syStrlen(dcA) > 15)
-	{
-		dcA[15] = '\0';
-	}
+    if (NULL == cmAStrchr(dcA, '.') && syStrlen(dcA) > 15)
+    {
+        dcA[15] = '\0';
+    }
 
     dc = cmMemoryCloneAString(dcA);
     if (NULL == dc)
     {
-        cmMemoryFree(domainA);
-        cmMemoryFree(dcA);
         sySetLastError(NQ_ERR_NOMEM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;        
+        goto Exit;
     }
 
     /* replace default credentials with domain administrator ones */
     ccUserSetAdministratorCredentials(admin);
 
     /* connect to NETLOGON (as admin) */
-    if ((netlogon = ccDcerpcConnect(dc, ccUserGetAdministratorCredentials(), ccNetlogonGetPipe(), FALSE)))
     {
         CCNetlogonCredential credentials;
+
+		syMutexTake(&staticData->netlogonGuard);
 
         /* generate client random challenge */
         cmCreateRandomByteSequence(credentials.client, sizeof(credentials.client));
 
         /* send client challenge and get server random challenge */
-        if ((status = ccNetrServerReqChallenge(netlogon, dc, workstation, &credentials)) == NQ_SUCCESS)
+        if ((status = ccNetrServerReqChallenge(getNetlogonHandle(dc), dc, workstation, &credentials)) == NQ_SUCCESS)
         {
             NQ_UINT32 flags;
 
             /* init and generate next netlogon credentials */
             initNetlogonCredentials(&credentials, secret);
-            
+
             /* send new client challenge, get server's challenge */
-            if ((status = ccNetrServerAuthenticate2(netlogon, dc, workstation, &credentials, &flags)) == NQ_SUCCESS)
-            {               
-                nextNetlogonCredentials(&credentials);         
-                
+			if ((status = ccNetrServerAuthenticate2(getNetlogonHandle(dc), dc, workstation, &credentials, &flags)) == NQ_SUCCESS)
+            {
+                nextNetlogonCredentials(&credentials);
+
                 /* send new client challenge */
                 status = ccNetrLogonSamLogon(
-                                            netlogon, 
-                                            domain, 
-                                            dc, 
+					                        getNetlogonHandle(dc),
+                                            domain,
+                                            dc,
                                             username,
-                                            workstation, 
+                                            workstation,
                                             serverChallenge,
                                             lmPasswd,
                                             lmPasswdLen,
@@ -862,25 +949,25 @@ netLogon(
                                             ntlmPasswdLen,
                                             &credentials,
                                             isExtendedSecurity,
-                                            userSessionKey);
+                                            userSessionKey,
+											userRid,
+											groupRid
+											);
                 if (status == NQ_SUCCESS)
                 {
-                    TRCDUMP("userSessionKey", userSessionKey, 16);
+                    LOGDUMP("userSessionKey", userSessionKey, 16);
                     /* decrypt user session key (RC4) */
                     if (flags & 0x00000004)
                     {
                         cmArcfourCrypt(userSessionKey, 16, credentials.sessionKey, 16);
-                        TRCDUMP("userSessionKey (after rc4)", userSessionKey, 16);
+                        LOGDUMP("userSessionKey (after rc4)", userSessionKey, 16);
                     }
                 }
             }
         }
 
-        /* close NETLOGON */
-        ccDcerpcDisconnect(netlogon);
-    }
-    else
-        status = (NQ_UINT32)syGetLastError();
+		syMutexGive(&staticData->netlogonGuard);
+	}
 
     LOGMSG(CM_TRC_LEVEL_MESS_ALWAYS, "status = 0x%x", status);
 
@@ -888,13 +975,15 @@ netLogon(
     if (admin)
         ccUserSetAdministratorCredentials(NULL);
 
+    sySetLastError((NQ_UINT32)status);
+    result = (status == NQ_SUCCESS);
+
+Exit:
     cmMemoryFree(domainA);
     cmMemoryFree(dcA);
     cmMemoryFree(dc);
-
-    sySetLastError((NQ_UINT32)status);
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);   
-    return status == NQ_SUCCESS;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+    return result;
 }
 
 /*
@@ -911,7 +1000,7 @@ netLogon(
  *====================================================================
  */
 static
-NQ_BOOL 
+NQ_BOOL
 domainLeave(
     const NQ_WCHAR * domain,
     const NQ_WCHAR * computer,
@@ -919,55 +1008,48 @@ domainLeave(
     )
 {
     NQ_UINT32 status;               /* generic result */
-    NQ_WCHAR * dc;                  /* DC anme in Unicode */
-    NQ_CHAR * dcA;                  /* DC name in ASCII */
-    NQ_CHAR * domainA;              /* domain name in ASCII */
+    NQ_WCHAR * dc = NULL;           /* DC name in Unicode */
+    NQ_CHAR * dcA = NULL;           /* DC name in ASCII */
+    NQ_CHAR * domainA = NULL;       /* domain name in ASCII */
     CCLsaPolicyInfoDomain info;
+    NQ_BOOL result = FALSE;         /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "domain:%s computer:%s admin:%p", cmWDump(domain), cmWDump(computer), admin);
 
     if (cmWStrlen(computer) > 15)
     {
         sySetLastError((NQ_UINT32)NQ_ERR_BADPARAM);
         LOGERR(CM_TRC_LEVEL_ERROR, "workstation name exceeds 15 characters");
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;
+        goto Exit;
     }
 
     /* find domain controller by domain name */
     domainA = cmMemoryCloneWStringAsAscii(domain);
-    dcA = cmMemoryAllocate(sizeof(NQ_BYTE) * CM_DNS_NAMELEN);
+    dcA = (NQ_CHAR *)cmMemoryAllocate(sizeof(NQ_BYTE) * CM_DNS_NAMELEN);
     if (NULL == domainA || NULL == dcA)
     {
-        cmMemoryFree(domainA);
-        cmMemoryFree(dcA);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_NOMEM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;        
+        goto Exit;
     }
-    if (cmGetDCNameByDomain(domainA, dcA) != NQ_SUCCESS)
+    if ((status = (NQ_UINT32)cmGetDCNameByDomain(domainA, dcA)) != NQ_SUCCESS)
     {
-        cmMemoryFree(domainA);
-        cmMemoryFree(dcA);
-        sySetLastError((NQ_UINT32)NQ_ERR_BADPARAM);
         LOGERR(CM_TRC_LEVEL_ERROR, "failed to get dc for domain %s", domainA);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;        
+        sySetLastError((NQ_UINT32)syGetLastError());
+        goto Exit;
     }
     dc = cmMemoryCloneAString(dcA);
     if (NULL == dc)
     {
-        cmMemoryFree(domainA);
-        cmMemoryFree(dcA);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_NOMEM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;        
+        goto Exit;
     }
 
     /* replace default credentials with domain administrator ones */
     cmWStrupr((NQ_WCHAR *)admin->domain.name); /* capitalize credentials domain name */
     ccUserSetAdministratorCredentials(admin);
-    
+
     /* get domain SID */
     if ((status = ccLsaPolicyQueryInfoDomain(dc, &info)) == NQ_SUCCESS)
     {
@@ -979,13 +1061,15 @@ domainLeave(
     /* restore previous user credentials */
     ccUserSetAdministratorCredentials(NULL);
 
+    sySetLastError((NQ_UINT32)status);
+    result = (status == NQ_SUCCESS);
+
+Exit:
     cmMemoryFree(domainA);
     cmMemoryFree(dcA);
     cmMemoryFree(dc);
-
-    sySetLastError((NQ_UINT32)status);
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-    return status == NQ_SUCCESS;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+    return result;
 }
 
 /*
@@ -997,12 +1081,12 @@ domainLeave(
  *          IN  domain administrator credentials
  *          IN/OUT domain secret
  *
- * RETURNS: TRUE if succeded, FAIL otherwise
+ * RETURNS: TRUE if succeeded, FAIL otherwise
  *
  * NOTES:
  *====================================================================
  */
-NQ_BOOL 
+NQ_BOOL
 ccDomainJoinA(
     const NQ_CHAR * domain,
     const NQ_CHAR * computer,
@@ -1013,6 +1097,8 @@ ccDomainJoinA(
     NQ_WCHAR * domainW;     /* domain name in Unicode */
     NQ_WCHAR * computerW;   /* computer name in Unicode */
     NQ_BOOL result;         /* operation result */
+
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "domain:%s computer:%s admin:%p secret:%p", domain ? domain : "", computer ? computer : "" , admin, &secret);
 
     domainW = cmMemoryCloneAString(domain);
     computerW = cmMemoryCloneAString(computer);
@@ -1032,6 +1118,8 @@ ccDomainJoinA(
 
     cmMemoryFree(domainW);
     cmMemoryFree(computerW);
+
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%s", result ? "TRUE" : "FALSE");
     return result;
 }
 
@@ -1044,12 +1132,12 @@ ccDomainJoinA(
  *          IN  domain administrator credentials
  *          IN/OUT domain secret
  *
- * RETURNS: TRUE if succeded, FAIL otherwise
+ * RETURNS: TRUE if succeeded, FAIL otherwise
  *
  * NOTES:
  *====================================================================
  */
-NQ_BOOL 
+NQ_BOOL
 ccDomainJoinW(
     const NQ_WCHAR * domain,
     const NQ_WCHAR * computer,
@@ -1059,6 +1147,8 @@ ccDomainJoinW(
 {
     NQ_WCHAR * computerW;   /* computer name in Unicode */
     NQ_BOOL result;         /* operation result */
+
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "domain:%s computer:%s admin:%p secret:%p", cmWDump(domain), cmWDump(computer), admin, &secret);
 
     computerW = cmMemoryCloneWString(computer);
     if (NULL != computerW)
@@ -1074,6 +1164,7 @@ ccDomainJoinW(
 
     cmMemoryFree(computerW);
 
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%s", result ? "TRUE" : "FALSE");
     return result;
 }
 
@@ -1085,7 +1176,7 @@ ccDomainJoinW(
  *          IN  computer name
  *          IN  domain administrator credentials
  *
- * RETURNS: TRUE if succeded, FAIL otherwise
+ * RETURNS: TRUE if succeeded, FAIL otherwise
  *
  * NOTES:
  *====================================================================
@@ -1095,10 +1186,12 @@ NQ_BOOL ccDomainLeaveA(
     const NQ_CHAR * computer,
     const AMCredentialsA * admin
     )
-{   
+{
     NQ_WCHAR * domainW;     /* domain name in Unicode */
     NQ_WCHAR * computerW;   /* computer name in Unicode */
     NQ_BOOL result;         /* operation result */
+
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "domain:%s computer:%s admin:%p", domain ? domain : "", computer ? computer : "" , admin);
 
     domainW = cmMemoryCloneAString(domain);
     computerW = cmMemoryCloneAString(computer);
@@ -1118,6 +1211,8 @@ NQ_BOOL ccDomainLeaveA(
 
     cmMemoryFree(domainW);
     cmMemoryFree(computerW);
+
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%s", result ? "TRUE" : "FALSE");
     return result;
 }
 
@@ -1129,7 +1224,7 @@ NQ_BOOL ccDomainLeaveA(
  *          IN  computer name
  *          IN  domain administrator credentials
  *
- * RETURNS: TRUE if succeded, FAIL otherwise
+ * RETURNS: TRUE if succeeded, FAIL otherwise
  *
  * NOTES:
  *====================================================================
@@ -1139,9 +1234,11 @@ NQ_BOOL ccDomainLeaveW(
     const NQ_WCHAR * computer,
     const AMCredentialsW  *admin
     )
-{   
+{
     NQ_WCHAR * computerW;   /* computer name in Unicode */
     NQ_BOOL result;         /* operation result */
+
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "domain:%s computer:%s admin:%p", cmWDump(domain), cmWDump(computer), admin);
 
     computerW = cmMemoryCloneWString(computer);
     if (NULL != computerW)
@@ -1157,6 +1254,7 @@ NQ_BOOL ccDomainLeaveW(
 
     cmMemoryFree(computerW);
 
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%s", result ? "TRUE" : "FALSE");
     return result;
 }
 
@@ -1169,7 +1267,7 @@ NQ_BOOL ccDomainLeaveW(
  *          IN  computer name
  *          IN  domain secret
  *
- * RETURNS: TRUE if succeded, FAIL otherwise
+ * RETURNS: TRUE if succeeded, FAIL otherwise
  *
  * NOTES:
  *====================================================================
@@ -1184,6 +1282,8 @@ NQ_BOOL ccDomainLogonA(
     NQ_WCHAR * domainW;     /* domain name in Unicode */
     NQ_WCHAR * computerW;   /* computer name in Unicode */
     NQ_BOOL result;         /* operation result */
+
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "domain:%s computer:%s admin:%p secret:%p", domain ? domain : "", computer ? computer : "" , admin, &secret);
 
     domainW = cmMemoryCloneAString(domain);
     computerW = cmMemoryCloneAString(computer);
@@ -1203,6 +1303,8 @@ NQ_BOOL ccDomainLogonA(
 
     cmMemoryFree(domainW);
     cmMemoryFree(computerW);
+
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%s", result ? "TRUE" : "FALSE");
     return result;
 }
 
@@ -1216,7 +1318,7 @@ NQ_BOOL ccDomainLogonA(
  *          IN  computer name
  *          IN  domain secret
  *
- * RETURNS: TRUE if succeded, FAIL otherwise
+ * RETURNS: TRUE if succeeded, FAIL otherwise
  *
  * NOTES:
  *====================================================================
@@ -1230,6 +1332,8 @@ NQ_BOOL ccDomainLogonW(
 {
     NQ_WCHAR * computerW;   /* computer name in Unicode */
     NQ_BOOL result;         /* operation result */
+
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "domain:%s computer:%s admin:%p secret:%p", cmWDump(domain), cmWDump(computer), admin, &secret);
 
     computerW = cmMemoryCloneWString(computer);
     if (NULL != computerW)
@@ -1245,6 +1349,7 @@ NQ_BOOL ccDomainLogonW(
 
     cmMemoryFree(computerW);
 
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%s", result ? "TRUE" : "FALSE");
     return result;
 }
 
@@ -1264,31 +1369,37 @@ NQ_BOOL ccDomainLogonW(
  *          IN  domain secret
  *          IN  whether extended security is used
  *          OUT user session key
+ *          OUT user rid
+ *          OUT group rid
  *
- * RETURNS: TRUE if succeded, FAIL otherwise
+ * RETURNS: TRUE if succeeded, FAIL otherwise
  *
  * NOTES:
  *====================================================================
  */
 NQ_BOOL ccNetLogonA(
-    const NQ_CHAR * domain,                    
-    const NQ_CHAR * username,                  
-    const NQ_CHAR * workstation,               
-    const NQ_BYTE serverChallenge[8],        
-    const NQ_BYTE * lmPasswd,               
-    NQ_UINT16 lmPasswdLen,                 
-    const NQ_BYTE * ntlmPasswd,               
-    NQ_UINT16 ntlmPasswdLen,                 
-    const AMCredentialsA * admin,            
-    const NQ_BYTE secret[16], 
-    NQ_BOOL isExtendedSecurity,                   
-    NQ_BYTE userSessionKey[16]      
+    const NQ_CHAR * domain,
+    const NQ_CHAR * username,
+    const NQ_CHAR * workstation,
+    const NQ_BYTE serverChallenge[8],
+    const NQ_BYTE * lmPasswd,
+    NQ_UINT16 lmPasswdLen,
+    const NQ_BYTE * ntlmPasswd,
+    NQ_UINT16 ntlmPasswdLen,
+    const AMCredentialsA * admin,
+    const NQ_BYTE secret[16],
+    NQ_BOOL isExtendedSecurity,
+    NQ_BYTE userSessionKey[16],
+	NQ_UINT32 * userRid,
+	NQ_UINT32 * groupRid
     )
 {
     NQ_WCHAR * domainW;         /* domain name in Unicode */
     NQ_WCHAR * userW;           /* user name in Unicode */
     NQ_WCHAR * workstationW;    /* computer name in Unicode */
     NQ_BOOL result;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "domain:%s user:%s workstation:%s", domain ? domain : "", username ? username : "", workstation ? workstation : "");
 
     domainW = cmMemoryCloneAString(domain);
     userW = cmMemoryCloneAString(username);
@@ -1305,17 +1416,18 @@ NQ_BOOL ccNetLogonA(
         result = netLogon(
                         domainW,
                         userW,
-                        workstationW, 
-                        serverChallenge, 
-                        lmPasswd, 
+                        workstationW,
+                        serverChallenge,
+                        lmPasswd,
                         lmPasswdLen,
-                        ntlmPasswd, 
+                        ntlmPasswd,
                         ntlmPasswdLen,
-                        admin ? &adminW : NULL, 
+                        admin ? &adminW : NULL,
                         secret,
-                        isExtendedSecurity,    
-                        userSessionKey
-                        );
+                        isExtendedSecurity,
+                        userSessionKey,
+						userRid,
+						groupRid);
     }
     else
     {
@@ -1327,6 +1439,7 @@ NQ_BOOL ccNetLogonA(
     cmMemoryFree(userW);
     cmMemoryFree(workstationW);
 
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%s", result ? "TRUE" : "FALSE");
     return result;
 }
 
@@ -1347,43 +1460,52 @@ NQ_BOOL ccNetLogonA(
  *          IN  domain secret
  *          IN  whether extended security is used
  *          OUT user session key
+ *          OUT user rid
+ *          OUT group rid
  *
- * RETURNS: TRUE if succeded, FAIL otherwise
+ * RETURNS: TRUE if succeeded, FAIL otherwise
  *
  * NOTES:
  *====================================================================
  */
 NQ_BOOL ccNetLogonW(
-    const NQ_WCHAR * domain,                   
-    const NQ_WCHAR * username,                
-    const NQ_WCHAR * workstation,              
-    const NQ_BYTE serverChallenge[8],        
-    const NQ_BYTE * lmPasswd,                  
-    NQ_UINT16 lmPasswdLen,                    
-    const NQ_BYTE * ntlmPasswd,               
-    NQ_UINT16 ntlmPasswdLen,                  
-    const AMCredentialsW * admin,              
-    const NQ_BYTE secret[16], 
-    NQ_BOOL isExtendedSecurity,                       
-    NQ_BYTE userSessionKey[16]                
+    const NQ_WCHAR * domain,
+    const NQ_WCHAR * username,
+    const NQ_WCHAR * workstation,
+    const NQ_BYTE serverChallenge[8],
+    const NQ_BYTE * lmPasswd,
+    NQ_UINT16 lmPasswdLen,
+    const NQ_BYTE * ntlmPasswd,
+    NQ_UINT16 ntlmPasswdLen,
+    const AMCredentialsW * admin,
+    const NQ_BYTE secret[16],
+    NQ_BOOL isExtendedSecurity,
+    NQ_BYTE userSessionKey[16],
+	NQ_UINT32 * userRid,
+	NQ_UINT32 * groupRid
     )
 {
     NQ_BOOL result;
 
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "domain:%s user:%s workstation:%s", cmWDump(domain), cmWDump(username), cmWDump(workstation));
+
     result = netLogon(
-        (NQ_WCHAR *)domain, 
-        (NQ_WCHAR *)username, 
-        (NQ_WCHAR *)workstation, 
-        serverChallenge, 
-        lmPasswd, 
+        (NQ_WCHAR *)domain,
+        (NQ_WCHAR *)username,
+        (NQ_WCHAR *)workstation,
+        serverChallenge,
+        lmPasswd,
         lmPasswdLen,
-        ntlmPasswd, 
+        ntlmPasswd,
         ntlmPasswdLen,
-        admin, 
-        secret, 
-        isExtendedSecurity,    
-        userSessionKey);
-    
+        admin,
+        secret,
+        isExtendedSecurity,
+        userSessionKey,
+		userRid,
+		groupRid);
+
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%s", result ? "TRUE" : "FALSE");
     return result;
 }
 

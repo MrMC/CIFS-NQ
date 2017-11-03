@@ -58,7 +58,8 @@ NQ_STATUS ccTransReceiveFrom(
     NQ_BYTE ** rspParameters,
     NQ_UINT * dataCount,
     NQ_BYTE ** rspData,
-    NQ_BYTE ** buffer
+    NQ_BYTE ** buffer,
+	NQ_UINT timeoutSec
     );
 
 #endif /* UD_NQ_USETRANSPORTNETBIOS */

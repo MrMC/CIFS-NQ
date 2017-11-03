@@ -54,9 +54,12 @@
 
 /* special names: ".." and "." */
 
-static const NQ_TCHAR currentDirectory[] = { cmTChar('.'), cmTChar(0) };
-static const NQ_TCHAR parentDirectory[] = { cmTChar('.'), cmTChar('.'), cmTChar(0) };
+static const NQ_WCHAR currentDirectory[] = { cmWChar('.'), cmWChar(0) };
+static const NQ_WCHAR parentDirectory[] = { cmWChar('.'), cmWChar('.'), cmWChar(0) };
 
+static const NQ_WCHAR anyFile[] = { cmWChar('*'), cmWChar(0) };
+static const NQ_WCHAR anyFile1[] = { cmWChar('*'), cmWChar('.'), cmWChar(0) };
+static const NQ_WCHAR anyFile2[] = { cmWChar('*'), cmWChar('.'), cmWChar('*'), cmWChar(0) };
 /* descriptors used for file pairs (in Rename) */
 
 typedef struct
@@ -77,18 +80,18 @@ static StaticData* staticData = &staticDataSrc;
 
 static NQ_BOOL                         /* TRUE on success, FALSE when substitution is impossible */
 substituteName(
-    const NQ_TCHAR* srcPattern,      /* source pattern */
-    const NQ_TCHAR* source,          /* source file name */
-    const NQ_TCHAR* dstPattern,      /* destination pattern */
-    NQ_TCHAR* destination            /* buffer for destinatio name */
+    const NQ_WCHAR* srcPattern,      /* source pattern */
+    const NQ_WCHAR* source,          /* source file name */
+    const NQ_WCHAR* dstPattern,      /* destination pattern */
+    NQ_WCHAR* destination            /* buffer for destinatio name */
     );
 
 /* wildcard pattern match */
 
 static NQ_BOOL
 nameMatch(
-    const NQ_TCHAR *pattern,
-    const NQ_TCHAR *name
+    const NQ_WCHAR *pattern,
+    const NQ_WCHAR *name
     );
 
 /* decompose name into directory name and file name, find wildcards in a file name */
@@ -96,7 +99,7 @@ nameMatch(
 static void
 decomposeName(
     CSFileEnumeration* descriptor,          /* name enumerator */
-    const NQ_TCHAR* name                     /* source name or pattern */
+    const NQ_WCHAR* name                     /* source name or pattern */
     );
 
 /* recreate a full name from a decomposed name */
@@ -125,7 +128,7 @@ csFnamesInit(
 {
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(*staticData));
     if (NULL == staticData)
        return NQ_FAIL;
 #endif /* SY_FORCEALLOCATION */
@@ -175,18 +178,17 @@ csFnamesExit(
 void
 csEnumerateSourceName(
     CSFileEnumeration* enumerator,
-    NQ_TCHAR* srcName,
+    NQ_WCHAR* srcName,
     NQ_BOOL preservesCase
     )
 {
     syInvalidateDirectory(&enumerator->directory);
-
     decomposeName(enumerator, srcName);
     if (enumerator->hasWildcards)
     {
-        cmTStrncpy(enumerator->nextPath, enumerator->path, sizeof(enumerator->nextPath));
-        enumerator->nextFile = enumerator->nextPath + cmTStrlen(enumerator->nextPath);
-        *enumerator->nextFile++ = cmTChar(SY_PATHSEPARATOR);
+        syWStrncpy(enumerator->nextPath, enumerator->path, sizeof(enumerator->nextPath));
+        enumerator->nextFile = enumerator->nextPath + syWStrlen(enumerator->nextPath);
+        *enumerator->nextFile++ = cmWChar(SY_PATHSEPARATOR);
     }
     else
     {
@@ -195,7 +197,9 @@ csEnumerateSourceName(
     enumerator->isReady = TRUE;
     enumerator->useOldName = FALSE;
     enumerator->preservesCase = preservesCase;
-    enumerator->bringLinks = TRUE;
+    enumerator->bringLinks = FALSE;
+    enumerator->isCurrDirReported = FALSE;
+    enumerator->isParentDirReported = FALSE;
 }
 
 /*
@@ -212,13 +216,13 @@ csEnumerateSourceName(
  *====================================================================
  */
 
-NQ_TCHAR*
+NQ_WCHAR*
 csNextSourceName(
     CSFileEnumeration* enumerator
     )
 {
     NQ_STATUS status;           /* result of directory operation */
-    const NQ_TCHAR* nextName;    /* next directory entry */
+    const NQ_WCHAR* nextName = NULL;    /* next directory entry */
 
     if (!enumerator->isReady)
         return NULL;
@@ -232,6 +236,26 @@ csNextSourceName(
     {
         while (TRUE)
         {
+        	if (cmWStrlen(enumerator->file) <= 3 &&
+				(cmWStrcmp(enumerator->file , anyFile) == 0  ||
+				 cmWStrcmp(enumerator->file , anyFile1) == 0 ||
+				 cmWStrcmp(enumerator->file , anyFile2) == 0)
+        		)
+        	{
+				if (!enumerator->isCurrDirReported)
+				{
+					syWStrncpy(enumerator->nextFile, currentDirectory, UD_FS_FILENAMELEN - syWStrlen(enumerator->path) - 1);
+					enumerator->isCurrDirReported = TRUE;
+					return enumerator->nextPath;
+				}
+				if (!enumerator->isParentDirReported)
+				{
+					syWStrncpy(enumerator->nextFile, parentDirectory, UD_FS_FILENAMELEN - syWStrlen(enumerator->path) - 1);
+					enumerator->isParentDirReported = TRUE;
+					return enumerator->nextPath;
+				}
+        	}
+
             if (!syIsValidDirectory(enumerator->directory))
             {
                 status = syFirstDirectoryFile(
@@ -253,9 +277,9 @@ csNextSourceName(
                 csCancelEnumeration(enumerator);
                 return NULL;
             }
-
-            if ((   cmTStrcmp(nextName, currentDirectory) == 0
-                 || cmTStrcmp(nextName, parentDirectory) == 0
+             
+            if ((   syWStrcmp(nextName, currentDirectory) == 0
+                 || syWStrcmp(nextName, parentDirectory) == 0
                 ) && !enumerator->bringLinks
                )
             {
@@ -264,7 +288,7 @@ csNextSourceName(
 
             if (nameMatch(enumerator->file, nextName))
             {
-                cmTStrncpy(enumerator->nextFile, nextName, UD_FS_FILENAMELEN - cmTStrlen(enumerator->path) - 1);
+                syWStrncpy(enumerator->nextFile, nextName, UD_FS_FILENAMELEN - syWStrlen(enumerator->path) - 1);
                 return enumerator->nextPath;
             }
         }
@@ -272,7 +296,7 @@ csNextSourceName(
     else
     {
         enumerator->isReady = FALSE;
-        return csCheckFile(NULL, enumerator->name, enumerator->preservesCase)? enumerator->name: NULL;
+        return csCheckFile(NULL, enumerator->name, enumerator->preservesCase) ? enumerator->name : NULL;
     }
 }
 
@@ -298,7 +322,7 @@ csCancelEnumeration(
         if (syCloseDirectory(enumerator->directory) != NQ_SUCCESS)
         {
             TRCERR("Close operation failed");
-            TRC1P("File name %s", cmTDump(enumerator->path));
+            TRC1P("File name %s", cmWDump(enumerator->path));
         }
         syInvalidateDirectory(&enumerator->directory);
     }
@@ -329,8 +353,8 @@ csCancelEnumeration(
 
 void
 csEnumerateSourceAndDestinationName(
-    NQ_TCHAR* srcName,
-    NQ_TCHAR* dstName,
+    NQ_WCHAR* srcName,
+    NQ_WCHAR* dstName,
     NQ_BOOL preservesCase
     )
 {
@@ -338,10 +362,10 @@ csEnumerateSourceAndDestinationName(
     decomposeName(&staticData->dstEnumerator, dstName);
     if (staticData->dstEnumerator.hasWildcards)
     {
-        cmTStrncpy(staticData->dstEnumerator.nextPath, staticData->dstEnumerator.path, sizeof(staticData->dstEnumerator.nextPath) - 1);
-        staticData->dstEnumerator.nextFile = staticData->dstEnumerator.nextPath + cmTStrlen(staticData->dstEnumerator.nextPath);
-        *staticData->dstEnumerator.nextFile++ = cmTChar(SY_PATHSEPARATOR);
-        *staticData->dstEnumerator.nextFile = cmTChar(0);
+        syWStrncpy(staticData->dstEnumerator.nextPath, staticData->dstEnumerator.path, sizeof(staticData->dstEnumerator.nextPath) - 1);
+        staticData->dstEnumerator.nextFile = staticData->dstEnumerator.nextPath + syWStrlen(staticData->dstEnumerator.nextPath);
+        *staticData->dstEnumerator.nextFile++ = cmWChar(SY_PATHSEPARATOR);
+        *staticData->dstEnumerator.nextFile = cmWChar(0);
     }
     else
     {
@@ -387,11 +411,11 @@ csCancelDefaultEnumeration(
 
 NQ_BOOL
 csNextSourceAndDestinationName(
-    NQ_TCHAR** srcName,
-    NQ_TCHAR** dstName
+    NQ_WCHAR** srcName,
+    NQ_WCHAR** dstName
     )
 {
-    *srcName = (NQ_TCHAR*)csNextSourceName(&staticData->srcEnumerator);
+    *srcName = (NQ_WCHAR*)csNextSourceName(&staticData->srcEnumerator);
     if (*srcName == NULL)
     {
         csCancelEnumeration(&staticData->srcEnumerator);
@@ -432,18 +456,18 @@ csNextSourceAndDestinationName(
  *====================================================================
  */
 
-static const NQ_TCHAR*
+static const NQ_WCHAR*
 findNextWildcard(
-    const NQ_TCHAR* src
+    const NQ_WCHAR* src
     )
 {
-    NQ_TCHAR nextChar[3];
+    NQ_WCHAR nextChar[3];
 
     while (*src)
     {
-        if (*src==cmTChar('>') || *src==cmTChar('?') || *src==cmTChar('*'))
+        if (*src==cmWChar('>') || *src==cmWChar('?') || *src==cmWChar('*'))
             return src;
-        src += cmTToupper(nextChar, src);
+        src += cmWToupper(nextChar, src);
     }
     return NULL;
 }
@@ -466,42 +490,42 @@ findNextWildcard(
 
 static NQ_BOOL
 substituteName(
-    const NQ_TCHAR* srcPattern,
-    const NQ_TCHAR* source,
-    const NQ_TCHAR* dstPattern,
-    NQ_TCHAR* destination
+    const NQ_WCHAR* srcPattern,
+    const NQ_WCHAR* source,
+    const NQ_WCHAR* dstPattern,
+    NQ_WCHAR* destination
     )
 {
-    const NQ_TCHAR* sp;  /* pointer in source pattern */
-    const NQ_TCHAR* s;   /* pointer in source name */
-    const NQ_TCHAR* dp;  /* pointer in destination pattern */
-    NQ_TCHAR* d;         /* pointer in destination name */
+    const NQ_WCHAR* sp;  /* pointer in source pattern */
+    const NQ_WCHAR* s;   /* pointer in source name */
+    const NQ_WCHAR* dp;  /* pointer in destination pattern */
+    NQ_WCHAR* d;         /* pointer in destination name */
 
     sp = srcPattern;
     s = source;
     dp = dstPattern;
     d = destination;
 
-    *d = cmTChar(0);
+    *d = cmWChar(0);
 
     while(*s)
     {
-        const NQ_TCHAR* ws;    /* next wildchar pointer in the source */
-        const NQ_TCHAR* wd;    /* next wildchar pointer in the destination */
+        const NQ_WCHAR* ws;    /* next wildchar pointer in the source */
+        const NQ_WCHAR* wd;    /* next wildchar pointer in the destination */
 
         /* find text fragment in the source pattern
            skip the same text fragment in the source */
 
         ws = findNextWildcard(sp);
         if (ws == NULL)
-            ws = sp + cmTStrlen(sp);
+            ws = sp + syWStrlen(sp);
         while (*sp)
         {
-            NQ_TCHAR c1[2], c2[2];     /* chars to compare */
+            NQ_WCHAR c1[2], c2[2];     /* chars to compare */
             NQ_INT l1, l2;
 
-            l1 = cmTToupper(c1, s);
-            l2 = cmTToupper(c2, sp);
+            l1 = cmWToupper(c1, s);
+            l2 = cmWToupper(c2, sp);
             if (l1 != l2 || c1[0] != c2[0] || (l1 == 2 && c1[1]!= c2[1]))
                 break;
             s += l1;
@@ -513,7 +537,7 @@ substituteName(
 
         wd = findNextWildcard(dp);
         if (wd == NULL)
-            wd = dp + cmTStrlen(dp);
+            wd = dp + syWStrlen(dp);
         while (wd>dp)
             *d++ = *dp++;
 
@@ -528,26 +552,26 @@ substituteName(
             sp++;
         switch (*ws)
         {
-        case cmTChar('?'):
-        case cmTChar('>'):
+        case cmWChar('?'):
+        case cmWChar('>'):
             {
-                NQ_TCHAR c[2];
+                NQ_WCHAR c[2];
                 NQ_INT len;
 
-                len = cmTToupper(c, s);
-                syMemcpy(d, s, len * (NQ_INT)sizeof(NQ_TCHAR));
+                len = cmWToupper(c, s);
+                syMemcpy(d, s, len * (NQ_INT)sizeof(NQ_WCHAR));
                 d += len;
                 s += len;
             }
             break;
-        case cmTChar('*'):
+        case cmWChar('*'):
             while (*s)
             {
-                NQ_TCHAR c[2];
+                NQ_WCHAR c[2];
                 NQ_INT len;
 
-                len = cmTToupper(c, s);
-                syMemcpy(d, s, len * (NQ_INT)sizeof(NQ_TCHAR));
+                len = cmWToupper(c, s);
+                syMemcpy(d, s, len * (NQ_INT)sizeof(NQ_WCHAR));
                 d += len;
                 s += len;
                 if (nameMatch(sp, s))
@@ -560,18 +584,18 @@ substituteName(
     }
     while (*dp)
     {
-        const NQ_TCHAR* wd;    /* next wildchar pointer in the destination */
+        const NQ_WCHAR* wd;    /* next wildchar pointer in the destination */
 
         wd = findNextWildcard(dp);
         if (wd == NULL)
-            wd = dp + cmTStrlen(dp);
+            wd = dp + syWStrlen(dp);
         while (wd>dp)
             *d++ = *dp++;
         dp = wd;
         if (*dp)
             dp++;
     }
-    *d = cmTChar(0);
+    *d = cmWChar(0);
 
     return TRUE;
 }
@@ -591,29 +615,29 @@ substituteName(
 
 static NQ_BOOL
 nameMatch(
-    const NQ_TCHAR *pattern,
-    const NQ_TCHAR *name
+    const NQ_WCHAR *pattern,
+    const NQ_WCHAR *name
     )
 {
-    NQ_TCHAR nextPatternChar[3];
-    NQ_TCHAR nextNameChar[3];
+    NQ_WCHAR nextPatternChar[3];
+    NQ_WCHAR nextNameChar[3];
 
     while (*pattern != 0)
     {
         NQ_INT len;     /* ANSI character length in bytes */
 
-        len = cmTToupper(nextPatternChar, pattern);
+        len = cmWToupper(nextPatternChar, pattern);
         pattern += len;
 
         switch (nextPatternChar[0])
         {
-        case cmTChar('?'):
+        case cmWChar('?'):
             if (!*name)
                 return FALSE;
-            name += cmTToupper(nextNameChar, name);
+            name += cmWToupper(nextNameChar, name);
             break;
-        case cmTChar('>'):
-            if (*name == cmTChar('.'))
+        case cmWChar('>'):
+            if (*name == cmWChar('.'))
             {
                 if (!*(name+1) && nameMatch(pattern, name+1))
                     return TRUE;
@@ -623,34 +647,34 @@ nameMatch(
             }
             if (!*name)
                 return nameMatch(pattern, name);
-            name += cmTToupper(nextNameChar, name);
+            name += cmWToupper(nextNameChar, name);
             break;
-        case cmTChar('*'):
-            for (; *name; name += cmTToupper(nextNameChar, name))
+        case cmWChar('*'):
+            for (; *name; name += cmWToupper(nextNameChar, name))
                 if (nameMatch(pattern, name))
                     return TRUE;
             break;
-        case cmTChar('<'):
-            for (; *name; name += cmTToupper(nextNameChar, name))
+        case cmWChar('<'):
+            for (; *name; name += cmWToupper(nextNameChar, name))
             {
                 if (nameMatch(pattern, name))
                     return TRUE;
-                if (*name == cmTChar('.') && !cmTStrchr(name+1, cmTChar('.')))
+                if (*name == cmWChar('.') && !syWStrchr(name+1, cmWChar('.')))
                 {
                     break;
                 }
             }
             break;
-        case cmTChar('"'):
+        case cmWChar('"'):
             if (!*name && nameMatch(pattern, name))
                 return TRUE;
-            if (*name != cmTChar('.'))
+            if (*name != cmWChar('.'))
                 return FALSE;
             name++;
             break;
         default:
-            name += cmTToupper(nextNameChar, name);
-            if (0 != cmTStrncmp(nextPatternChar, nextNameChar, (NQ_UINT)len))
+            name += cmWToupper(nextNameChar, name);
+            if (0 != syWStrncmp(nextPatternChar, nextNameChar, (NQ_UINT)len))
                 return FALSE;
             break;
         }
@@ -676,33 +700,33 @@ nameMatch(
 static void
 decomposeName(
     CSFileEnumeration* descriptor,
-    const NQ_TCHAR* name
+    const NQ_WCHAR* name
     )
 {
-    NQ_TCHAR* pSeparator;
+    NQ_WCHAR* pSeparator;
 
-    cmTStrncpy(descriptor->name, name, sizeof(descriptor->name));
-    pSeparator = cmTStrrchr(descriptor->name, cmTChar(SY_PATHSEPARATOR));
+    syWStrncpy(descriptor->name, name, sizeof(descriptor->name));
+    pSeparator = syWStrrchr(descriptor->name, cmWChar(SY_PATHSEPARATOR));
 
     if (pSeparator == NULL)
     {
         descriptor->hasDirectory = FALSE;
         descriptor->file = descriptor->name;
-        descriptor->path = (NQ_TCHAR*)currentDirectory;
+        descriptor->path = (NQ_WCHAR*)currentDirectory;
     }
     else
     {
-        *pSeparator = cmTChar(0);
+        *pSeparator = cmWChar(0);
         descriptor->hasDirectory = TRUE;
         descriptor->file = ++pSeparator;
         descriptor->path = descriptor->name;
     }
     descriptor->hasWildcards =
-           (cmTStrchr(descriptor->file, cmTChar('*')) != NULL)
-        || (cmTStrchr(descriptor->file, cmTChar('?')) != NULL)
-        || (cmTStrchr(descriptor->file, cmTChar('<')) != NULL)
-        || (cmTStrchr(descriptor->file, cmTChar('>')) != NULL)
-        || (cmTStrchr(descriptor->file, cmTChar('"')) != NULL)
+           (syWStrchr(descriptor->file, cmWChar('*')) != NULL)
+        || (syWStrchr(descriptor->file, cmWChar('?')) != NULL)
+        || (syWStrchr(descriptor->file, cmWChar('<')) != NULL)
+        || (syWStrchr(descriptor->file, cmWChar('>')) != NULL)
+        || (syWStrchr(descriptor->file, cmWChar('"')) != NULL)
         ;
 }
 
@@ -725,7 +749,7 @@ restoreName(
 {
     if (descriptor->hasDirectory)
     {
-        *(descriptor->file - 1) = cmTChar(SY_PATHSEPARATOR);
+        *(descriptor->file - 1) = cmWChar(SY_PATHSEPARATOR);
     }
 }
 

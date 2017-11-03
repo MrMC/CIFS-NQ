@@ -192,14 +192,18 @@ SY_PACK_ATTR CMCifsByteBlock;
  */
 
 /* defines whether a 32-bit error code is an NT code */
-#define cmCifsIsNtError(code)   ((code & 0xFF) > 3)
+#define cmCifsIsNtError(code)       ((code & 0xFF) > 3)
+
+/* defines whether a 32-bit error code is an NQ custom internal code */
+#define cmCifsIsCustomError(code)   ((code & 0xe0000000) == 0xe0000000)
 
 /* defines if a return code is an error code */
-#define cmCifsIsError(code)                     \
-    (   cmCifsIsNtError(code)?                  \
-          ((code & 0xf0000000) == 0xc0000000)   \
-        : (code != 0)                           \
-    )                                           \
+#define cmCifsIsError(code)                                 \
+    (   cmCifsIsCustomError(code) ? 1 :                     \
+            (cmCifsIsNtError(code) ?                        \
+                ((code & 0xf0000000) == 0xc0000000)         \
+                : (code != 0))                              \
+    )                                                       \
 
 /* pseudo code with meaning - send no response */
 #define SMB_STATUS_NORESPONSE   0xff000000
@@ -210,7 +214,7 @@ SY_PACK_ATTR CMCifsByteBlock;
 
  */
 
-/* Data portion follows the header. It starts with an identifier byte which defines the futher format */
+/* Data portion follows the header. It starts with an identifier byte which defines the further format */
 
 #define SMB_FIELD_DATABLOCK 1
 #define SMB_FIELD_DIALECT   2
@@ -291,6 +295,7 @@ SY_PACK_ATTR CMCifsData;
     ---------------------------------
  */
 
+#define SMB_DESIREDACCESS_NOCHANGE				0x00000000
 #define SMB_DESIREDACCESS_READDATA              0x00000001  /* file */
 #define SMB_DESIREDACCESS_WRITEDATA             0x00000002  /* file */
 #define SMB_DESIREDACCESS_APPENDDATA            0x00000004  /* file */
@@ -360,11 +365,13 @@ SY_PACK_ATTR CMCifsNegotiateRequest;
 
 #define SMB_ENCRYPTION_LENGTH 8              /* length of the encryption key */
 #define SMB_SESSIONKEY_LENGTH 16             /* length of the session key */
+#define SMB_SERVERGUID_LENGTH 16             /* length of the server GUID */
+#define SMB3_PREAUTH_INTEG_HASH_LENGTH 64
 
 typedef SY_PACK_PREFIX struct
 {
     NQ_SBYTE          wordCount;        /* count of parameters words = 17  */
-    NQ_SUINT16        dialectIndex;     /* index of choosen negotiated dialect */
+    NQ_SUINT16        dialectIndex;     /* index of chosen negotiated dialect */
     NQ_SBYTE          securityMode;     /* security flags (see above) */
     NQ_SUINT16        maxMpxCount;      /* max number of pending multiplex requests - always 1 */
     NQ_SUINT16        maxNumberVcs;     /* max number of VCs between client and server */
@@ -376,7 +383,16 @@ typedef SY_PACK_PREFIX struct
     NQ_SUINT16        serverTimeZone;   /* time zone at the server */
     NQ_SBYTE          encryptKeyLength; /* length of the encryption key */
     NQ_SUINT16        byteCount;        /* number of data bytes */
-    NQ_SBYTE          encryptKey[SMB_ENCRYPTION_LENGTH];   /* the challenge encryption key */
+    union
+	{
+    	NQ_SBYTE          encryptKey[SMB_ENCRYPTION_LENGTH];   /* the challenge encryption key */
+    	struct
+		{
+    		/* extended response */
+    		NQ_BYTE serverGUID[16];
+    		NQ_SBYTE securityBlob[];
+		}_st;
+	}_un;
 }
 SY_PACK_ATTR CMCifsNegotiateResponse;
 
@@ -385,7 +401,7 @@ SY_PACK_ATTR CMCifsNegotiateResponse;
 typedef SY_PACK_PREFIX struct
 {
     NQ_SBYTE          wordCount;        /* count of parameters words = 1  */
-    NQ_SUINT16        dialectIndex;     /* index of choosen negotiated dialect */
+    NQ_SUINT16        dialectIndex;     /* index of chosen negotiated dialect */
     NQ_SUINT16        byteCount;        /* number of data bytes - always 0 */
 }
 SY_PACK_ATTR CMCifsNegotiateNegative;
@@ -449,7 +465,7 @@ typedef SY_PACK_PREFIX struct
     NQ_SBYTE andXReserved;                      /* must be zero */
     NQ_SUINT16 andXOffset;                      /* offset to the wordCount of the next command */
     NQ_SUINT16 action;                          /* request mode: bit0 - logged in as a guest */
-    NQ_SUINT16 byteCount;                       /* number of bytes in names, going after thsi field */
+    NQ_SUINT16 byteCount;                       /* number of bytes in names, going after this field */
 }
 SY_PACK_ATTR CMCifsSessionSetupAndXResponse;
 
@@ -483,12 +499,12 @@ typedef SY_PACK_PREFIX struct
 }
 SY_PACK_ATTR CMCifsSessionSetupAndXSSPResponse;
 
-#define SMB_SESSIONSETUPANDX_REQUEST_WORDCOUNT 13   /* expected WordCount */
-#define SMB_SESSIONSETUPANDX_RESPONSE_WORDCOUNT 3   /* WordCount in response */
-#define SMB_SESSIONSETUPANDXSSP_REQUEST_WORDCOUNT 12/* expected WordCount */
-#define SMB_SESSIONSETUPANDXSSP_RESPONSE_WORDCOUNT 4/* WordCount in response */
-#define SMB_SESSIONSETUPANDX_ACTION_GUEST       1   /* logged as a guest */
-#define SMB_SESSIONSETUPANDX_CREDENTIALS_LENGTH 48  /* maximum credentials length */
+#define SMB_SESSIONSETUPANDX_REQUEST_WORDCOUNT     13	/* expected WordCount for NTLM - old smb1. */
+#define SMB_SESSIONSETUPANDX_RESPONSE_WORDCOUNT    3	/* WordCount in response */
+#define SMB_SESSIONSETUPANDXSSP_REQUEST_WORDCOUNT  12 	/* expected WordCount */
+#define SMB_SESSIONSETUPANDXSSP_RESPONSE_WORDCOUNT 4 	/* WordCount in response */
+#define SMB_SESSIONSETUPANDX_ACTION_GUEST          1 	/* logged as a guest */
+#define SMB_SESSIONSETUPANDX_CREDENTIALS_LENGTH    48	/* maximum credentials length */
 
 /*
     Logoff AndX
@@ -556,6 +572,8 @@ typedef SY_PACK_PREFIX struct
 }
 SY_PACK_ATTR CMCifsTreeConnectAndXRequest;
 
+#define SMB_TREECONNECTANDX_FLAGS_EXTENDEDRESPONSE  8   /* flags: extended response */
+
 typedef SY_PACK_PREFIX struct
 {
     NQ_SBYTE wordCount;             /* must read 2 */
@@ -563,7 +581,9 @@ typedef SY_PACK_PREFIX struct
     NQ_SBYTE andXReserved;          /* must be 0 */
     NQ_SUINT16 andXOffset;          /* offset to the next command */
     NQ_SUINT16 optionalSupport;     /* optional support bits (see below) */
-    NQ_SUINT16 byteCount;           /* must be at least 3 */
+    /*NQ_SUINT32 userMaxShareAccess;*/  /* present if extended response: maximal share access rights */
+    /*NQ_SUINT32 guestMaxShareAccess;*/ /* present if extended response: guest maximal share access rights */
+    /*NQ_SUINT16 byteCount;*/           /* must be at least 3 */
 }
 SY_PACK_ATTR CMCifsTreeConnectAndXResponse;
 
@@ -586,6 +606,7 @@ SY_PACK_ATTR CMCifsTreeDisconnect;
 #define SMB_TREECONNECTANDX_REQUEST_WORDCOUNT 4     /* expected WordCount */
 #define SMB_TREECONNECTANDX_REQUEST_MINBYTES 4      /* minimum ByteCount */
 #define SMB_TREECONNECTANDX_RESPONSE_WORDCOUNT 3    /* WordCount in response */
+#define SMB_TREECONNECTANDX_RESPONSE_WORDCOUNTEXT 7 /* WordCount in extended response */
 
 /*
     File Open/Create commands
@@ -677,6 +698,7 @@ SY_PACK_ATTR CMCifsOpenAndXResponse;
 #define SMB_OPENANDX_DOFAIL 0x0000          /* - value for action when file does not exist */
 
 #define SMB_OPENANDX_OPENRESPONSE 0x0003    /* mask for open result in response */
+#define SMB_OPENANDX_WASSUPERSEDED 0x0000   /* - value for action when existing file was superseded */
 #define SMB_OPENANDX_WASOPENED 0x0001       /* - value for action when file was opened */
 #define SMB_OPENANDX_WASCREATED 0x0002      /* - value for action when file was created */
 #define SMB_OPENANDX_WASTRUNCATED 0x0003    /* - value for action when file was truncated */
@@ -804,9 +826,37 @@ typedef SY_PACK_PREFIX struct
 }
 SY_PACK_ATTR CMCifsNtCreateAndXResponse;
 
+typedef SY_PACK_PREFIX struct
+{
+    NQ_SBYTE wordCount;             /* must read 42 */
+    NQ_SBYTE andXCommand;           /* next command */
+    NQ_SBYTE andXReserved;          /* must be 0 */
+    NQ_SUINT16 andXOffset;          /* offset to the next command */
+    NQ_SBYTE oplockLevel;           /* the oplock level granted */
+    NQ_SUINT16 fid;                 /* assigned file ID */
+    NQ_SUINT32 createAction;        /* the action taken */
+    LargeInteger creationTime;      /* the time file was created */
+    LargeInteger lastAccessTime;    /* the time file was last accessed */
+    LargeInteger lastWriteTime;     /* the time file was last written */
+    LargeInteger lastChangeTime;    /* the time file was last changed */
+    NQ_SUINT32 fileAttributes;      /* of the opened file */
+    LargeInteger allocationSize;    /* the number of bytes allocated */
+    LargeInteger endOfFile;         /* the end-of-file offset */
+    NQ_SUINT16 fileType;            /* see below */
+    NQ_SUINT16 deviceState;         /* state of IPC device (e.g., - pipe) */
+    NQ_SBYTE directory;             /* TRUE if this is a directory */
+    NQ_BYTE VolumeGuid[16];			/* volume GUID */
+    LargeInteger fid_full;			/* File ID - quad part */
+    NQ_SUINT32 maximalAccessRights; /* access rights */
+    NQ_SUINT32 guestMaximalAccessRights; /* guest access rights */
+    NQ_SUINT16 byteCount;           /* must be 0 */
+}
+SY_PACK_ATTR CMCifsNtCreateAndXExtendedResponse;
+
 #define SMB_NTCREATEANDX_REQUEST_WORDCOUNT 24   /* expected WordCount */
 #define SMB_NTCREATEANDX_REQUEST_MINBYTES 1     /* minimum ByteCount */
 #define SMB_NTCREATEANDX_RESPONSE_WORDCOUNT 34  /* WordCount in response */
+#define SMB_NTCREATEANDX_EXTENDED_RESPONSE_WORDCOUNT 42  /* WordCount in response */
 
 /* bits in flags if the request */
 #define SMB_NTCREATEANDX_REQUESTOPLOCKNONE       0x00000000     /* request no oplock */
@@ -852,7 +902,7 @@ SY_PACK_ATTR CMCifsNtCreateAndXResponse;
 
 /* disposition values */
 
-#define SMB_NTCREATEANDX_SUPERSEDE 0            /* do nothing action */
+#define SMB_NTCREATEANDX_FILESUPERSEDE 0        /* supersede existing, otherwise create */
 #define SMB_NTCREATEANDX_FILEOPEN 1             /* open file action */
 #define SMB_NTCREATEANDX_FILECREATE 2           /* create action */
 #define SMB_NTCREATEANDX_FILEOPENIF 3           /* open or create action */
@@ -1673,6 +1723,7 @@ SY_PACK_ATTR CMCifsNtTransactionFileNotify;
  */
 
 #define SMB_SERVER_NAMELEN 16                   /* lengths of NetBIOS name */
+#define SMB_SERVER_COMMENTLEN		256
 #define SMB_SERVERANNOUNCEMENT_SETUPCOUNT 3    /* number of setups */
 #define SMB_SERVERANNOUNCEMENT_WORDCOUNT 10    /* response WordCount */
 #define SMB_SERVERANNOUNCEMENT_BROWSER "\\MAILSLOT\\BROWSE"  /* mail slot for announcement */
@@ -1688,7 +1739,7 @@ typedef SY_PACK_PREFIX struct
     NQ_SBYTE versionMinor;                      /* minor version number of our software */
     NQ_SUINT32 installedServices;               /* see below */
     NQ_SUINT32 signature;                       /* should read: 0xAA55001F */
-    NQ_SBYTE comment;                           /* we use 1 byte zer-length string */
+    NQ_SBYTE comment[SMB_SERVER_COMMENTLEN];    /* comment */
 }
 SY_PACK_ATTR CMCifsServerAnnouncementData;
 
@@ -1944,6 +1995,7 @@ SY_PACK_ATTR CMCifsFindFirst2Response;
 #define SMB_FINDFIRST2_CLOSEIF 2            /* bit 1 - close search if end of search reached */
 #define SMB_FINDFIRST2_RESUMEKEY 4          /* bit 2 - return resume keys for each entry found */
 #define SMB_FINDFIRST2_RESUME 8             /* bit 3 - continue search from previous ending place */
+#define SMB_FINDFIRST2_ENDOFSEARCH 0x1000   /* use in vf */
 
 /* informationLevel values */
 
@@ -1971,15 +2023,68 @@ SY_PACK_ATTR CMCifsFindFirst2Response;
 #define SMB_PASSTHRU_FILE_STANDARDINFO              1005    /* equivalent to: SMB_QUERYPATH2_NT_STANDARDINFO  (5) SMB2  */
 #define SMB_PASSTHRU_FILE_INTERNALINFO              1006    /* equivalent to: FileInternalInformation         (6) SMB2  */
 #define SMB_PASSTHRU_FILE_EAINFO                    1007    /* equivalent to: SMB_QUERYPATH2_NT_EAINFO        (7) SMB2  */
+#define SMB_PASSTHRU_FILE_FILEACCESSINFO            1008    /* equivalent to: FileAccessInformation	          (8) SMB2  */
 #define SMB_PASSTHRU_FILE_NAMEINFO                  1009    /* equivalent to: SMB_QUERYPATH2_NT_NAMEINFO      (9) SMB2  */
-#define SMB_PASSTHRU_FILE_RENAMEINFO                1010    /* equivalent to: FileRenameInformation           (10)SMB2  */                                                   
+#define SMB_PASSTHRU_FILE_RENAMEINFO                1010    /* equivalent to: FileRenameInformation           (10)SMB2  */
+#define SMB_PASSTHRU_FILE_LINKINFO					1011	/* equivalent to: FileLinkInformation             (11)SMB2  */
 #define SMB_PASSTHRU_FILE_DISPOSITIONINFO           1013    /* equivalent to: SMB_SETPATH2_NT_DISPOSITIONINFO (13)SMB2  */
+#define SMB_PASSTHRU_FILE_POSITIONINFO           	1014    /* equivalent to: FilePositionInformation 		  (14)SMB2  */
+#define SMB_PASSTHRU_FILE_FULLEAINFO                1015    /* equivalent to: SMB_QUERYPATH2_NT_FULLEAINFO    (15)SMB2  */
+#define SMB_PASSTHRU_FILE_MODEINFO                  1016    /* equivalent to: FileModeInformation    		  (16)SMB2  */
 #define SMB_PASSTHRU_FILE_ALLINFO                   1018    /* equivalent to: SMB_QUERYPATH2_NT_ALLINFO       (18)SMB2  */
 #define SMB_PASSTHRU_FILE_ALLOCATIONINFO            1019    /* equivalent to: SMB_SETPATH2_NT_ALLOCATIONINFO  (19)SMB2  */
 #define SMB_PASSTHRU_FILE_ENDOFFILEINFO             1020    /* equivalent to: SMB_SETPATH2_NT_ENDOFFILEINFO   (20)SMB2  */
 #define SMB_PASSTHRU_FILE_ALTNAMEINFO               1021    /* equivalent to: SMB_QUERYPATH2_NT_ALTNAMEINFO   (21)SMB2  */
+#define SMB_PASSTHRU_FILE_STREAMINFO                1022    /* equivalent to: FileStreamInformation		      (22)SMB2  */
+#define SMB_PASSTHRU_FILE_PIPEINFO	                1023    /* equivalent to: FilePipeInformation		      (23)SMB2  */
+#define SMB_PASSTHRU_FILE_QUOTAINFO               	1032    /* equivalent to: FileQuotaInformation		      (32)SMB2  */
 #define SMB_PASSTHRU_FILE_NETWORKINFO               1034    /* equivalent to: FileNetworkOpenInformation      (34)SMB2  */
+#define SMB_PASSTHRU_FILE_TAGINFO	                1035    /* equivalent to: FileAttributeTagInformation     (35)SMB2  */
+#define SMB_PASSTHRU_FILE_VALIDDATALENINFO          1039    /* equivalent to: FileValidDataLengthInformation  (39)SMB2  */
+#define SMB_PASSTHRU_FILE_SHORTNAMEINFO             1040    /* equivalent to: FileShortNameInformation	      (40)SMB2  */
 
+/* LOCAL classes (file and fs) - server NOT_SUPPORTED */
+#define SMB_PASSTHRU_FILE_NAMEINFO		            1009    /* equivalent to: FileNameInformation		      		(9)SMB2  */
+#define SMB_PASSTHRU_FILE_MAILSLOTGETINFO           1026    /* equivalent to: FileMailslotQueryInformation    		(26)SMB2  */
+#define SMB_PASSTHRU_FILE_MAILSLOTSETINFO           1027    /* equivalent to: FileMailslotSetInformation      		(27)SMB2  */
+#define SMB_PASSTHRU_FILE_OBJECTIDINFO	            1029    /* equivalent to: FileObjectIdInformation	      		(29)SMB2  */
+#define SMB_PASSTHRU_FILE_MOVECLUSTERINFO           1031    /* equivalent to: FileMoveClusterInformation      		(31)SMB2  */
+#define SMB_PASSTHRU_FILE_REPARSEPOINTINFO          1033    /* equivalent to: FileReparsePointInformation     		(33)SMB2  */
+#define SMB_PASSTHRU_FILE_TRAKINGINFO	            1036    /* equivalent to: FileTrackingInformation	      		(36)SMB2  */
+#define SMB_PASSTHRU_FILE_SFIORESERVEINFO           1044    /* equivalent to: FileSfioReserveInformation      		(44)SMB2  */
+#define SMB_PASSTHRU_FILE_SFIOVOLUMEINFO            1045    /* equivalent to: FileSfioVolumeInformation	      		(45)SMB2  */
+#define SMB_PASSTHRU_FILE_HARDLINKINFO	            1046    /* equivalent to: FileHardLinkInformation	      		(46)SMB2  */
+#define SMB_PASSTHRU_FILE_NORMALIZENAMEINFO         1048    /* equivalent to: FileNormalizedNameInformation   		(48)SMB2  */
+#define SMB_PASSTHRU_FILE_GLOBALTXDIRINFO           1050    /* equivalent to: FileIdGlobalTxDirectoryInformation    (50)SMB2  */
+#define SMB_PASSTHRU_FILE_STANDARDLINKINFO          1054    /* equivalent to: FileStandardLinkInformation     		(54)SMB2  */
+#define SMB_PASSTHRU_FS_LABELINFO          			2    	/* equivalent to: FileFsLabelInformation     			(2)SMB2  */
+#define SMB_PASSTHRU_FS_DRIVEPATHINFO          		9    	/* equivalent to: FileFsDriverPathInformation     		(9)SMB2  */
+#define SMB_PASSTHRU_FS_VOLUMEFLAGSINFO          	10    	/* equivalent to: FileFsVolumeFlagsInformation     		(10)SMB2  */
+
+/* icotl commands */
+#define SMB_IOCTL_GET_REFERRALS                 0x00060194    /* equivalent to: FSCTL_DFS_GET_REFERRALS */
+#define SMB_IOCTL_GET_REFERRALS_EX              0x000601B0    /* equivalent to: FSCTL_DFS_GET_REFERRALS_EX */
+#define SMB_IOCTL_GET_OBJECTID                  0x000900c0    /* equivalent to: FSCTL_SRV_GET_OBJECT_ID */
+#define SMB_IOCTL_PIPE_PEEK	                    0x0011400C    /* equivalent to: FSCTL_PIPE_PEEK */
+#define SMB_IOCTL_PIPE_WAIT	                    0x00110018    /* equivalent to: FSCTL_PIPE_WAIT */
+#define SMB_IOCTL_PIPE_TRANCEIVE                0x0011C017    /* equivalent to: FSCTL_PIPE_TRANSCEIVE */
+#define SMB_IOCTL_QUERY_NETWORK_INTERFACEINFO   0x001401FC    /* equivalent to: FSCTL_QUERY_NETWORK_INTERFACE_INFO */
+#define SMB_IOCTL_SRV_RESUME_KEY                0x00140078    /* equivalent to: FSCTL_SRV_REQUEST_RESUME_KEY */
+#define SMB_IOCTL_SRV_COPYCHUNK                 0x001440F2    /* equivalent to: FSCTL_SRV_COPYCHUNK */
+#define SMB_IOCTL_SRV_COPYCHUNK_WRITE           0x001480F2    /* equivalent to: FSCTL_SRV_COPYCHUNK_WRITE */
+#define SMB_IOCTL_SRV_ENUM_SNEPSHOTS            0x00144064    /* equivalent to: FSCTL_SRV_ENUMERATE_SNAPSHOTS */
+#define SMB_IOCTL_SRV_READ_HASH                 0x001441bb    /* equivalent to: FSCTL_SRV_READ_HASH */
+#define SMB_IOCTL_REQUEST_RESILIENCY            0x001401D4    /* equivalent to: FSCTL_LMR_REQUEST_RESILIENCY */
+#define SMB_IOCTL_SET_REPARSE_POINT             0x000900A4    /* equivalent to: FSCTL_SET_REPARSE_POINT */
+#define SMB_IOCTL_FILE_LEVEL_TRIM               0x00098208    /* equivalent to: FSCTL_FILE_LEVEL_TRIM */
+#define SMB_IOCTL_VALIDATE_NEGOTIATE            0x00140204    /* equivalent to: FSCTL_VALIDATE_NEGOTIATE_INFO */
+#define SMB_IOCTL_OFFLOAD_READ                  0x00094264    /* equivalent to: FSCTL_OFFLOAD_READ */
+#define SMB_IOCTL_OFFLOAD_WRITE                 0x00098268    /* equivalent to: FSCTL_OFFLOAD_WRITE */
+#define SMB_IOCTL_COMPRESSION                   0x0009c040    /* equivalent to: FSCTL_SET_COMPRESSION */
+#define SMB_IOCTL_SET_INTEGRITY_INFORMATION     0x0009c280	  /* equivalent to: FSCTL_SET_INTEGRITY_INFORMATION */
+#define SMB_IOCTL_GET_INTEGRITY_INFORMATION     0x0009027c	  /* equivalent to: FSCTL_GET_INTEGRITY_INFORMATION */
+#define SMB_IOCTL_DUPLICATE_EXTENTSTOFILE       0x00098344	  /* equivalent to: FSCTL_DUPLICATE_EXTENTS_TO_FILE */
+#define SMB_IOCTL_SET_ZERO_DATA					0x000980c8	  /* equivalent to: FSCTL_SET_ZERO_DATA */
 
 /* file information structures for different information levels:
     filename length (byte) and the file name follows the structure */
@@ -2256,7 +2361,7 @@ typedef SY_PACK_PREFIX struct
     NQ_SUINT16 lastWriteDate;       /* date of last write to the file */
     NQ_SUINT16 lastWriteTime;       /* time of last write to the file */
     NQ_SUINT32 dataSize;            /* file size */
-    NQ_SUINT32 allocationSize;      /* size of filesystem allocation unit */
+    NQ_SUINT32 allocationSize;      /* size of file system allocation unit */
     NQ_SUINT16 attributes;          /* file Attributes */
 }
 SY_PACK_ATTR CMCifsFileInformation2Standard;
@@ -2264,7 +2369,7 @@ SY_PACK_ATTR CMCifsFileInformation2Standard;
 typedef SY_PACK_PREFIX struct
 {
     CMCifsFileInformation2Standard standardInfo;    /* as above */
-    NQ_SUINT32 eaSize;                               /* size of file's EA information (SMB_INFO_QUERY_EA_SIZE) */
+    NQ_SUINT32 eaSize;                              /* size of file's EA information (SMB_INFO_QUERY_EA_SIZE) */
 }
 SY_PACK_ATTR CMCifsFileInformation2EaSize;
 
@@ -2298,32 +2403,57 @@ SY_PACK_ATTR CMCifsFileInformation2NtStandard;
 
 typedef SY_PACK_PREFIX struct
 {
-    NQ_SUINT32 eaSize;                  /* size of file's extended attributes in bytes */
+    NQ_SUINT32 eaSize;              /* size of file's extended attributes in bytes */
 }
 SY_PACK_ATTR CMCifsFileInformation2NtEaSize;
 
 typedef SY_PACK_PREFIX struct
 {
-    NQ_SUINT32 fileNameLength;          /* size of the filename in bytes */
+	NQ_SUINT32 fileNameLength;      /* size of the filename in bytes */
 }
 SY_PACK_ATTR CMCifsFileInformation2NtFileName;
 
 typedef SY_PACK_PREFIX struct
 {
-    LargeInteger creationTime;      /* time when file was created */
-    LargeInteger lastAccessTime;    /* time of last file access */
-    LargeInteger lastWriteTime;     /* time of last write to the file */
-    LargeInteger lastChangeTime;    /* time when file was last changed */
-    NQ_SUINT32 attributes;          /* file attributes */
-    NQ_SUINT32 pad1;                /* reserved */
-    LargeInteger allocationSize;    /* allocated size of the file in number of bytes */
-    LargeInteger endOfFile;         /* offset to the first free byte in the file */
-    NQ_SUINT32 numberOfLinks;       /* number of hard links to the file */
-    NQ_SBYTE deletePending;         /* indicates whether the file is marked for deletion */
-    NQ_SBYTE directory;             /* indicates whether the file is a directory */
-    NQ_SUINT16 pad2;                /* reserved */
     LargeInteger fileIndex;         /* file index */
-    NQ_SUINT32 eaSize;              /* size of the file's extended attributes in number of bytes */
+}
+SY_PACK_ATTR CMCifsFileInternalInformation;
+
+typedef SY_PACK_PREFIX struct
+{
+    LargeInteger creationTime;      /* time when file was created */
+	LargeInteger lastAccessTime;    /* time of last file access */
+	LargeInteger lastWriteTime;     /* time of last write to the file */
+	LargeInteger lastChangeTime;    /* time when file was last changed */
+	NQ_SUINT32 attributes;          /* file attributes */
+	NQ_SUINT32 pad1;                /* reserved */
+	LargeInteger allocationSize;    /* allocated size of the file in number of bytes */
+	LargeInteger endOfFile;         /* offset to the first free byte in the file */
+	NQ_SUINT32 numberOfLinks;       /* number of hard links to the file */
+	NQ_SBYTE deletePending;         /* indicates whether the file is marked for deletion */
+	NQ_SBYTE directory;             /* indicates whether the file is a directory */
+	NQ_SUINT16 pad2;                /* reserved */
+	NQ_SUINT32 eaSize;              /* ea size */
+	NQ_SUINT32 fileNameLength;      /* file name length */
+}
+SY_PACK_ATTR CMCifsFileInformation2NtAllShort;
+
+typedef SY_PACK_PREFIX struct
+{
+    LargeInteger creationTime;      /* time when file was created */
+	LargeInteger lastAccessTime;    /* time of last file access */
+	LargeInteger lastWriteTime;     /* time of last write to the file */
+	LargeInteger lastChangeTime;    /* time when file was last changed */
+	NQ_SUINT32 attributes;          /* file attributes */
+	NQ_SUINT32 pad1;                /* reserved */
+	LargeInteger allocationSize;    /* allocated size of the file in number of bytes */
+	LargeInteger endOfFile;         /* offset to the first free byte in the file */
+	NQ_SUINT32 numberOfLinks;       /* number of hard links to the file */
+	NQ_SBYTE deletePending;         /* indicates whether the file is marked for deletion */
+	NQ_SBYTE directory;             /* indicates whether the file is a directory */
+	NQ_SUINT16 pad2;                /* reserved */
+	LargeInteger fileIndex;         /* file index */
+	NQ_SUINT32 eaSize;              /* size of the file's extended attributes in number of bytes */
     NQ_SUINT32 accessFlags;         /* access rights of a file that were granted when the file was opened */
     LargeInteger byteOffset;        /* current byte offset */
     NQ_SUINT32 mode;				/* file mode - how the file will subsequently be accessed */
@@ -2356,12 +2486,6 @@ typedef SY_PACK_PREFIX struct
     NQ_SUINT32 reserved;            /* reserved */    
 }
 SY_PACK_ATTR CMCifsFileNetworkOpenInformation;
-
-typedef SY_PACK_PREFIX struct
-{
-    LargeInteger fileIndex;         /* file index */
-}
-SY_PACK_ATTR CMCifsFileInternalInformation;
 
 typedef SY_PACK_PREFIX struct
 {

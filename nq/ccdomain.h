@@ -24,6 +24,10 @@
     #define ccNetLogon ccNetLogonA
 #endif
 
+NQ_BOOL ccDomainStart();
+
+void ccDomainShutdown();
+
 /* net logon (Ansi)*/
 
 NQ_BOOL ccNetLogonA(                    /* TRUE if succeded, FAIL otherwise */
@@ -38,8 +42,10 @@ NQ_BOOL ccNetLogonA(                    /* TRUE if succeded, FAIL otherwise */
     const AMCredentialsA *admin,              /* domain administrator credentials */
     const NQ_BYTE secret[16],                 /* domain secret */ 
     NQ_BOOL isExtendedSecurity,               /* whether extended security is used */
-    NQ_BYTE userSessionKey[16]                /* user session key */
-    );    
+    NQ_BYTE userSessionKey[16],               /* user session key */
+	NQ_UINT32 * userRid,					  /* user rid*/
+	NQ_UINT32 * groupRid                      /* user group rid */
+	);
 
 /* net logon (Unicode)*/
 
@@ -55,6 +61,8 @@ NQ_BOOL ccNetLogonW(                    /* TRUE if succeded, FAIL otherwise */
     const AMCredentialsW *admin,              /* domain administrator credentials*/
     const NQ_BYTE secret[16],                 /* domain secret */     
     NQ_BOOL isExtendedSecurity,               /* whether extended security is used */
-    NQ_BYTE userSessionKey[16]                /* user session key */
-    );
+	NQ_BYTE userSessionKey[16],               /* user session key */
+	NQ_UINT32 * userRid,					  /* user rid*/
+	NQ_UINT32 * groupRid                      /* user group rid */
+	);
 

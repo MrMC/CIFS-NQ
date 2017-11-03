@@ -138,7 +138,7 @@ ContextParser contextDescriptors[] = {
 
 NQ_UINT32 csSmb2OnCreate(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *reader, CSSession *connection, CSUser *user, CSTree *tree, CMBufferWriter *writer)
 {
-    NQ_UINT32 impresonalizationLevel;   /* o for anonymnous, 1 for a user */
+    NQ_UINT32 impresonalizationLevel;   /* 0 for anonymous, 1 for a user */
     CSCreateParams params;              /* parameters for common Create processing */
     NQ_UINT16 nameOffset;               /* offset to the file name */
     NQ_UINT16 nameLen;                  /* name length */
@@ -147,17 +147,18 @@ NQ_UINT32 csSmb2OnCreate(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *re
     NQ_STATIC NQ_WCHAR fileName[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)]; /* buffer for composing the filename */
     NQ_UINT32 returnValue;              /* value to return */
     NQ_BOOL callCommon = TRUE;          /* true - to call common processing */
-    NQ_INT i;                           /* just a counter */
+    NQ_COUNT i;                         /* just a counter */
     NQ_COUNT nameLenChars;              /* name length in characters */
     NQ_BYTE oplockLevel;                /* requested oplock level */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDFileAccessEvent eventInfo;        /* share event information */
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 #ifdef UD_CS_INCLUDERPC_SPOOLSS
-    NQ_STATIC NQ_TCHAR printFileName[CM_BUFFERLENGTH(NQ_TCHAR, 21)];/* print filename */
+    NQ_STATIC NQ_WCHAR printFileName[CM_BUFFERLENGTH(NQ_WCHAR, 21)];/* print filename */
     NQ_STATIC NQ_CHAR noPrintName[] = "[Name Not Available]";
 #endif /* UD_CS_INCLUDERPC_SPOOLSS */
     CSName *pName;                      /* pointer to name slot */
+    static NQ_WCHAR fileNameBuff[CM_MAXFILENAMELEN];
     
     LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
 
@@ -169,7 +170,7 @@ NQ_UINT32 csSmb2OnCreate(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *re
    	eventInfo.access = 0;
 #endif
     /* parse requests */
-    cmBufferReaderSkip(reader, 1); /* security flags - unused in the tprotocol */
+    cmBufferReaderSkip(reader, 1); /* security flags - unused in the protocol */
     cmBufferReadByte(reader, &oplockLevel); /* oplock level */
     cmBufferReadUint32(reader, &impresonalizationLevel); 
     cmBufferReaderSkip(reader, 8 + 8); /* create flags + reserved  - unused */
@@ -237,24 +238,26 @@ NQ_UINT32 csSmb2OnCreate(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *re
     cmWStrncpy(fileName, (const NQ_WCHAR *)(in->_start + nameOffset), nameLenChars); 
     fileName[nameLenChars] = 0;  /* force null-terminated */
 
-    params.fileName = cmCifsNtohFilename(tree->share->map, (NQ_TCHAR*)fileName, TRUE);
+    params.fileName = cmCifsNtohFilename(fileNameBuff, tree->share->map, (NQ_WCHAR *)fileName, TRUE, TRUE);
 #ifdef UD_NQ_INCLUDEEVENTLOG
     eventInfo.access = params.desiredAccess;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
     if (NULL == params.fileName)
     {
 #ifdef UD_NQ_INCLUDEEVENTLOG
-        eventInfo.fileName = NULL;
-        eventInfo.access = 0;
-        udEventLog(
-            UD_LOG_MODULE_CS,
-            UD_LOG_CLASS_FILE,
-            UD_LOG_FILE_CREATE,
-            user->name,
-            user->ip,
-            SMB_STATUS_OBJECT_NAME_INVALID,
-            (const NQ_BYTE*)&eventInfo
-        );
+    	{
+			eventInfo.fileName = NULL;
+			eventInfo.access = 0;
+			udEventLog(
+				UD_LOG_MODULE_CS,
+				UD_LOG_CLASS_FILE,
+				UD_LOG_FILE_CREATE,
+				user->name,
+				user->ip,
+				SMB_STATUS_OBJECT_NAME_INVALID,
+				(const NQ_BYTE*)&eventInfo
+			);
+    	}
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         LOGERR(CM_TRC_LEVEL_ERROR, "Illegal filename");
         LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
@@ -269,7 +272,7 @@ NQ_UINT32 csSmb2OnCreate(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *re
     /* create file name for print file */
     if (tree->share->isPrintQueue)
     {
-        cmAnsiToTchar(printFileName, noPrintName);
+        syAnsiToUnicode(printFileName, noPrintName);
         params.fileName = printFileName;
     }
 #endif /* UD_CS_INCLUDERPC_SPOOLSS */
@@ -300,7 +303,7 @@ NQ_UINT32 csSmb2OnCreate(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *re
     }
 */
 
-    LOGMSG(CM_TRC_LEVEL_MESS_ALWAYS, "create for file: %s", cmTDump(params.fileName));
+    LOGMSG(CM_TRC_LEVEL_MESS_ALWAYS, "create for file: %s", cmWDump(params.fileName));
     /* call common processing */
     returnValue = 0;
     if (callCommon)
@@ -328,7 +331,8 @@ NQ_UINT32 csSmb2OnCreate(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *re
                 returnValue = contextDescriptors[i].performer(&params, &params.context);
                 if (0 != returnValue)
                 {
-                    csReleaseFile(params.file->fid);
+                	if (params.file != NULL)
+                		csReleaseFile(params.file->fid);
                     LOGERR(CM_TRC_LEVEL_ERROR, "failed, value 0x%x", returnValue);
                     LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
                     return returnValue;
@@ -347,7 +351,7 @@ NQ_UINT32 csSmb2OnCreate(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *re
                 UD_LOG_MODULE_CS,
                 UD_LOG_CLASS_FILE,
                 UD_LOG_FILE_CREATE,
-                user->name,
+				user->name,
                 user->ip,
                 csErrorReturn(SMB_STATUS_UNSUCCESSFUL, SRV_ERRerror),
                 (const NQ_BYTE*)&eventInfo
@@ -387,7 +391,7 @@ NQ_UINT32 csSmb2OnCreate(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *re
         }
         pFile->breakContext.prot.smb2.aid.low = asyncId;
         pFile->breakContext.prot.smb2.aid.high = 0;
-        pFile->breakContext.status = NQ_SUCCESS;
+        pFile->breakContext.status = (NQ_STATUS)returnValue;
         LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
         return SMB_STATUS_NORESPONSE;
     }
@@ -403,7 +407,7 @@ NQ_UINT32 csSmb2OnCreate(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *re
             UD_LOG_MODULE_CS,
             UD_LOG_CLASS_FILE,
             UD_LOG_FILE_CREATE,
-            user->name,
+			user->name,
             user->ip,
             SMB_STATUS_SHARING_VIOLATION,
             (const NQ_BYTE*)&eventInfo
@@ -474,6 +478,12 @@ NQ_UINT32 csSmb2OnCreate(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *re
         params.file->oplockGranted = oplockLevel != SMB2_OPLOCK_LEVEL_NONE;
         params.file->breakContext.socket = csDispatchGetSocket();
         params.file->breakContext.isSmb2 = TRUE;
+#ifdef UD_NQ_INCLUDESMB3
+        params.file->breakContext.doEncrypt = tree->share->isEncrypted;
+#endif
+		params.file->user = user;
+		params.file->uid = user->uid;
+		params.file->tid = tree->tid;
     }
  
     cmBufferWriteByte(writer, 0);       /* reserved */
@@ -492,10 +502,19 @@ NQ_UINT32 csSmb2OnCreate(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *re
     /* write contexts data */
     {
         CMBufferWriter cwriter;  /* contexts writer */
+        NQ_BYTE *position;
+        NQ_UINT32 contextsLen;
 
         cmBufferWriterBranch(writer, &cwriter, 8);
-        cmBufferWriteUint32(writer, (NQ_UINT16)cmSmb2HeaderGetWriterOffset(out, &cwriter)); /* offset to contexts */ 
-        cmBufferWriteUint32(writer, cs2PackCreateContexts(&cwriter, &params.context));      /* contexts length */
+        position = cmBufferWriterGetPosition(writer);
+        cmBufferWriteUint32(writer, (NQ_UINT16)cmSmb2HeaderGetWriterOffset(out, &cwriter));               /* offset to contexts */ 
+        cmBufferWriteUint32(writer, contextsLen = cs2PackCreateContexts(&cwriter, &params.context));      /* contexts length */
+        if (contextsLen == 0)
+        {
+            cmBufferWriterSetPosition(writer, position);
+            cmBufferWriteUint32(writer, 0);
+            cmBufferWriterSkip(writer, 4);
+        }
         cmBufferWriterSync(writer, &cwriter);
     }
 
@@ -606,10 +625,10 @@ static NQ_BOOL parseMxac(CMBufferReader * reader, NQ_UINT32 len, CSCreateContext
 static NQ_UINT32 packMxac(CMBufferWriter * writer,  CSCreateParams * params, const CSCreateContext * context)
 {
     LOGFB(CM_TRC_LEVEL_MESS_SOME);
-    cmBufferWriteUint32(writer, SMB_STATUS_NOT_SUPPORTED);
+    /*cmBufferWriteUint32(writer, SMB_STATUS_NOT_SUPPORTED);
+    cmBufferWriteUint32(writer, 0);*/
     cmBufferWriteUint32(writer, 0);
-/*    cmBufferWriteUint32(writer, 0);
-    cmBufferWriteUint32(writer, 0x001e01ff);*/
+    cmBufferWriteUint32(writer, 0x001f01ff);
     LOGFE(CM_TRC_LEVEL_MESS_SOME);
     return sizeof(NQ_UINT32) * 2;
 }
@@ -735,7 +754,7 @@ static NQ_UINT32 performDhnc(CSCreateParams * params, const CSCreateContext * co
     }
     if (NQ_SUCCESS != csGetFileInformation(params->file, params->fileName, &params->fileInfo))
     {
-        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to query file info for: %s (fid=0x%x", cmTDump(params->fileName), fid);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to query file info for: %s (fid=0x%x", cmWDump(params->fileName), fid);
         LOGFE(CM_TRC_LEVEL_MESS_SOME);
     }
     params->takenAction = SMB_OPEN2_DOOPEN;
@@ -801,7 +820,7 @@ NQ_UINT32
 cs2PackCreateContexts(CMBufferWriter *writer, CSCreateContext *context)
 {
     NQ_UINT32 contextLen = 0;
-    NQ_INT i;       
+    NQ_COUNT i;
     NQ_BYTE * nextOffsetPtr = 0;        /* pointer to the next offset field in contexts */
     NQ_BYTE * contextOffsetPtr;         /* pointer to create context offset in response */
 

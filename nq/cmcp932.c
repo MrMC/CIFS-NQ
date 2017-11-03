@@ -5845,12 +5845,16 @@ cp932UnicodeToAnsi(
     else
     {
         if (!aStr)
-            return 0;
+        {
+            length = 0;
+            goto Exit;
+        }
     }
     /* not enough space in provided buff */
     if (ignoreOutLength || (length < outLength))
         *pA = '\0';
 
+Exit:
     return length;
 }
 
@@ -5900,13 +5904,17 @@ cp932AnsiToUnicode(
     else
     {
         if (!wStr)
-            return 0;
+        {
+            length = 0;
+            goto Exit;
+        }
     }
 
     if (ignoreOutLength || (length < outLength))
         *pW = 0;
 
-    return length*2;
+Exit:
+    return length * 2;
 }
 
 static NQ_INT
@@ -5919,6 +5927,7 @@ cp932ToUpper(
     NQ_WCHAR wsrc;
     NQ_WCHAR wdst;
     NQ_BYTE usrc  = (NQ_BYTE)src[0];
+    NQ_INT result;
 
     if (usrc < 0x7F || ( 0xA0 < usrc && usrc < 0xE0 )) /* one byte character */
     {
@@ -5930,7 +5939,8 @@ cp932ToUpper(
         {
             *dst = (NQ_CHAR)usrc;
         }
-        return 1;
+        result = 1;
+        goto Exit;
     }
 
     wsrc = (NQ_WCHAR)cmLtoh16(((NQ_WCHAR)src[1] << 8) + src[0]);
@@ -5946,7 +5956,10 @@ cp932ToUpper(
     }
     dst[0] = src[0];
     dst[1] = src[1];
-    return 2;
+    result = 2;
+
+Exit:
+    return result;
 }
 
 /*

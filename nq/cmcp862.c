@@ -144,6 +144,7 @@ cp862UnicodeToAnsi(
                 case 0xa7: *pA = (NQ_CHAR)0x9e; break;
                 case 0x7f: *pA = (NQ_CHAR)0xfc;
                 }
+                break;
             case 0x23:
                 switch(wLsb)
                 {
@@ -160,12 +161,16 @@ cp862UnicodeToAnsi(
     else
     {
         if (!aStr)
-            return 0;
+        {
+            length = 0;
+            goto Exit;
+        }
     }
     /* not enough space in provided buff */
     if (ignoreOutLength || (length < outLength))
         *pA = '\0';
 
+Exit:
     return length;
 }
 

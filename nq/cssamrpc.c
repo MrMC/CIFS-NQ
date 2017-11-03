@@ -80,9 +80,9 @@
 
 typedef struct
 {
-    NQ_TCHAR txtBufferT[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
-    NQ_TCHAR fullNameT[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
-    NQ_TCHAR descriptionT[CM_BUFFERLENGTH(NQ_TCHAR, 256)];
+    NQ_WCHAR txtBufferT[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
+    NQ_WCHAR fullNameT[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
+    NQ_WCHAR descriptionT[CM_BUFFERLENGTH(NQ_WCHAR, 256)];
     CMSdSecurityDescriptor sd;           /* temporary security descriptor */
     NQ_UINT32 rids[MAXRIDS_INREQUEST];   /* requested/returned RIDS */
     CMNetBiosNameInfo netbiosName;
@@ -370,11 +370,12 @@ samrConnect4(
 
     /* parse input parameters */
     cmRpcParseSkip(in, 4);      /* referent ID */
-    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     if (cmHtol16((NQ_WCHAR)('\\')) == *serverName.text)
         cmUnicodeToAnsiN(staticData->netbiosName.name, serverName.text + 2, (NQ_UINT)((serverName.length - 3)* sizeof(NQ_WCHAR)));
     else
         cmUnicodeToAnsiN(staticData->netbiosName.name, serverName.text, (NQ_UINT)((serverName.length - 1) * sizeof(NQ_WCHAR)));
+    staticData->netbiosName.name[serverName.length] = '\0';
     cmRpcParseSkip(in, 4);
     cmRpcParseUint32(in, &accessMask);
     if (accessMask != (CONNECTSERVER_RIGHTS & accessMask))
@@ -415,11 +416,12 @@ samrConnect5(
     /* parse input parameters */
 
     cmRpcParseSkip(in, 4);  /* referent ID */
-    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(in, &serverName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     if (cmHtol16((NQ_WCHAR)('\\')) == *serverName.text)
         cmUnicodeToAnsiN(staticData->netbiosName.name, serverName.text + 2, (NQ_UINT)((serverName.length - 3)* sizeof(NQ_WCHAR)));
     else
         cmUnicodeToAnsiN(staticData->netbiosName.name, serverName.text, (NQ_UINT)((serverName.length - 1) * sizeof(NQ_WCHAR)));
+    staticData->netbiosName.name[serverName.length] = '\0';
     cmRpcParseUint32(in, &accessMask);
     if (accessMask != (CONNECTSERVER_RIGHTS & accessMask))
     {
@@ -699,8 +701,8 @@ samrCreateUser2(
     retCode = parseSingletonHandle(in);                               /* handle */
     cmRpcParseSkip(in, 2 * 2 + 4);    /* size + length + name ptr */
     cmRpcParseUnicode(in, &nameDescr, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
-    cmUnicodeToTcharN(staticData->txtBufferT, nameDescr.text, (NQ_UINT)(nameDescr.length*sizeof(NQ_WCHAR)));
-    staticData->txtBufferT[nameDescr.length] = 0;
+    syWStrncpy(staticData->txtBufferT, nameDescr.text, nameDescr.length);
+    staticData->txtBufferT[nameDescr.length] = cmWChar(0);
     cmRpcAllign(in, 4);
     cmRpcParseUint32(in, &acctCtrl);
     cmRpcParseUint32(in, &accessMask);
@@ -739,23 +741,23 @@ samrCreateUser2(
     if (udGetUserRidByName(staticData->txtBufferT, &rid))
     {
         TRCERR("User already exists. Cannot be created");
-        TRC1P(" required name: %s", cmTDump(staticData->txtBufferT));
+        TRC1P(" required name: %s", cmWDump(staticData->txtBufferT));
         TRCE();
         return CM_RP_FAULTLOGONFAILURE;
     }
-    cmAnsiToTchar(staticData->fullNameT, "");
+    syAnsiToUnicode(staticData->fullNameT, "");
 
     if (!udCreateUser(staticData->txtBufferT, staticData->fullNameT, staticData->fullNameT))
     {
         TRCERR("Unable to add user");
-        TRC1P(" required name: %s", cmTDump(staticData->txtBufferT));
+        TRC1P(" required name: %s", cmWDump(staticData->txtBufferT));
         TRCE();
         return CM_RP_FAULTLOGONFAILURE;
     }
     if (!udGetUserRidByName(staticData->txtBufferT, &rid))
     {
         TRCERR("User was not added");
-        TRC1P(" required name: %s", cmTDump(staticData->txtBufferT));
+        TRC1P(" required name: %s", cmWDump(staticData->txtBufferT));
         TRCE();
         return CM_RP_FAULTLOGONFAILURE;
     }
@@ -926,8 +928,9 @@ samrLookupDomain(
     cmRpcParseSkip(in, 2);    /* length */
     cmRpcParseSkip(in, 2);    /* size */
     cmRpcParseSkip(in, 4);    /* ref id */
-    cmRpcParseUnicode(in, &domainName, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-    cmUnicodeToAnsiN(staticData->netbiosName.name, domainName.text, (NQ_UINT)(domainName.length * sizeof(NQ_WCHAR)));
+    cmRpcParseUnicode(in, &domainName, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+    cmUnicodeToAnsiN(staticData->netbiosName.name, domainName.text, (NQ_UINT)(domainName.length * sizeof(NQ_WCHAR)));    
+    staticData->netbiosName.name[domainName.length] = '\0';
 
     /* for error return */
 
@@ -1008,14 +1011,14 @@ samrQueryDisplayInfo(
              nextIdx++, numUsers++
             )
         {
-            if (!udGetUserInfo(nextIdx, &rid, staticData->txtBufferT, staticData->fullNameT, staticData->descriptionT))
+            if (!udGetUserInfo((NQ_UINT)nextIdx, &rid, staticData->txtBufferT, staticData->fullNameT, staticData->descriptionT))
             {
                 break;
             }
             if (cmRpcSpace(out) < (48 + sizeof(NQ_WCHAR) *
-                                        (cmTStrlen(staticData->txtBufferT) +
-                                         cmTStrlen(staticData->fullNameT) +
-                                         cmTStrlen(staticData->descriptionT)
+                                        (syWStrlen(staticData->txtBufferT) +
+                                         syWStrlen(staticData->fullNameT) +
+                                         syWStrlen(staticData->descriptionT)
                                         )
                                    )
                )
@@ -1025,15 +1028,15 @@ samrQueryDisplayInfo(
             cmRpcPackUint32(out, nextIdx + 1);            /* next index */
             cmRpcPackUint32(out, rid);                    /* rid */
             cmRpcPackUint32(out, USERACCOUNT_ATTRIBS);    /* account attrib */
-            nameLen = (NQ_UINT16)(sizeof(NQ_WCHAR) * cmTStrlen(staticData->txtBufferT));
+            nameLen = (NQ_UINT16)(sizeof(NQ_WCHAR) * syWStrlen(staticData->txtBufferT));
             cmRpcPackUint16(out, nameLen);                /* length */
             cmRpcPackUint16(out, nameLen);                /* size */
             cmRpcPackUint32(out, refId++);                /* account name */
-            nameLen = (NQ_UINT16)(sizeof(NQ_WCHAR) * cmTStrlen(staticData->descriptionT));
+            nameLen = (NQ_UINT16)(sizeof(NQ_WCHAR) * syWStrlen(staticData->descriptionT));
             cmRpcPackUint16(out, nameLen);                /* length */
             cmRpcPackUint16(out, nameLen);                /* size */
             cmRpcPackUint32(out, refId++);                /* description */
-            nameLen = (NQ_UINT16)(sizeof(NQ_WCHAR) * cmTStrlen(staticData->fullNameT));
+            nameLen = (NQ_UINT16)(sizeof(NQ_WCHAR) * syWStrlen(staticData->fullNameT));
             cmRpcPackUint16(out, nameLen);                /* length */
             cmRpcPackUint16(out, nameLen);                /* size */
             cmRpcPackUint32(out, refId++);                /* full name */
@@ -1045,10 +1048,10 @@ samrQueryDisplayInfo(
                  nextIdx++
                 )
             {
-                udGetUserInfo(nextIdx, &rid, staticData->txtBufferT, staticData->fullNameT, staticData->descriptionT);
-                cmRpcPackTcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
-                cmRpcPackTcharAsUnicode(out, staticData->descriptionT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
-                cmRpcPackTcharAsUnicode(out, staticData->fullNameT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+                udGetUserInfo((NQ_UINT)nextIdx, &rid, staticData->txtBufferT, staticData->fullNameT, staticData->descriptionT);
+                cmRpcPackWcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+                cmRpcPackWcharAsUnicode(out, staticData->descriptionT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+                cmRpcPackWcharAsUnicode(out, staticData->fullNameT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
             }
             returnedSize = (NQ_UINT32)(out->current - savedPtr);
             cmRpcPackUint32(&outTemp, returnedSize);    /* total size */
@@ -1370,8 +1373,9 @@ samrLookupNames(
         cmRpcParseSkip(in, 2);    /* length */
         cmRpcParseSkip(in, 2);    /* size */
         cmRpcParseSkip(in, 4);    /* ref id */
-        cmRpcParseUnicode(in, &nameDescr, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
-        cmUnicodeToTchar(staticData->txtBufferT, nameDescr.text);
+        cmRpcParseUnicode(in, &nameDescr, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+        syWStrncpy(staticData->txtBufferT, nameDescr.text, nameDescr.length);
+        staticData->txtBufferT[nameDescr.length] = cmWChar(0);
 
         /* pack response */
         if (    cmSdLookupName(staticData->txtBufferT, &nextRid)
@@ -1480,7 +1484,7 @@ samrLookupRids(
         if (cmSdLookupRid(staticData->rids[i], staticData->txtBufferT, staticData->fullNameT))
         {
             numMapped++;
-            nameLen = (NQ_UINT16)cmTStrlen(staticData->txtBufferT);
+            nameLen = (NQ_UINT16)syWStrlen(staticData->txtBufferT);
             cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));    /* name len 1 */
             cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));    /* name size 1 */
             cmRpcPackUint32(out, refId++);                       /* name string */
@@ -1503,7 +1507,7 @@ samrLookupRids(
     {
         if (cmSdLookupRid(staticData->rids[i], staticData->txtBufferT, staticData->fullNameT))
         {
-            cmRpcPackTcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+            cmRpcPackWcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
         }
     }
 
@@ -1593,19 +1597,29 @@ samrQueryAliasInfo(
         cmRpcPackUint32(out, refId++);          /* ref id */
         cmRpcPackUint16(out, infoLevel);        /* level */
         cmRpcAllign(out, 4);
-        nameLen = (NQ_UINT16)cmTStrlen(staticData->txtBufferT);
+        nameLen = (NQ_UINT16)syWStrlen(staticData->txtBufferT);
         cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* account name len */
         cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* account name size */
         cmRpcPackUint32(out, refId++);            /* account name ref id */
-        nameLen = (NQ_UINT16)cmTStrlen(staticData->fullNameT);
+        nameLen = (NQ_UINT16)syWStrlen(staticData->fullNameT);
         cmRpcPackUint32(out, numUsers);
         cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* full name len */
         cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* full name size */
         cmRpcPackUint32(out, refId++);            /* full name ref id */
-        cmRpcPackTcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);    /* account name */
+        cmRpcPackWcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);    /* account name */
         cmRpcAllign(out, 4);
-        cmRpcPackTcharAsUnicode(out, staticData->fullNameT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);    /* full name */
+        cmRpcPackWcharAsUnicode(out, staticData->fullNameT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);    /* full name */
         break;
+    case 2:
+		cmRpcPackUint32(out, refId++);          /* ref id */
+		cmRpcPackUint16(out, infoLevel);        /* level */
+		cmRpcAllign(out, 4);
+		nameLen = (NQ_UINT16)cmWStrlen(staticData->txtBufferT);
+		cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* account name len */
+		cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* account name size */
+		cmRpcPackUint32(out, refId++);            /* account ref id */
+		cmRpcPackUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);    /* account name */
+		break;
 	case 3:
         cmRpcPackUint32(out, refId++);          /* ref id */
         cmRpcPackUint16(out, infoLevel);        /* level */
@@ -1684,15 +1698,15 @@ samrQueryUserInfo(
         cmRpcAllign(out, 4);
         cmRpcPackUint64(out, 0, 0);             /* logon time */
         cmRpcPackUint64(out, 0, 0);             /* logoff time */
-        cmRpcPackTimeAsUTC(out, (NQ_TIME)syGetTime());   /* password last set */
+        cmRpcPackTimeAsUTC(out, syGetTimeInMsec());   /* password last set */
         cmRpcPackUint64(out, 0, 0);             /* password expires */
-        cmRpcPackTimeAsUTC(out, (NQ_TIME)syGetTime());   /* password can change */
+        cmRpcPackTimeAsUTC(out, syGetTimeInMsec());   /* password can change */
         cmRpcPackUint64(out, 0xFFFFFFFF, 0x7FFFFFFF); /* password must change */
-        nameLen = (NQ_UINT16)cmTStrlen(staticData->txtBufferT);
+        nameLen = (NQ_UINT16)syWStrlen(staticData->txtBufferT);
         cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* account name len */
         cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* account name size */
         cmRpcPackUint32(out, refId++);          /* account name ref id */
-        nameLen = (NQ_UINT16)cmTStrlen(staticData->fullNameT);
+        nameLen = (NQ_UINT16)syWStrlen(staticData->fullNameT);
         cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* full name len */
         cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* full name size */
         cmRpcPackUint32(out, refId++);          /* full name ref id */
@@ -1747,8 +1761,8 @@ samrQueryUserInfo(
         cmRpcPackByte(out, 0);                  /* LM password set */
         cmRpcPackByte(out, 0);                  /* expired flag */
         cmRpcPackByte(out, 0);                  /* undocumented */
-        cmRpcPackTcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);   /* account name */
-        cmRpcPackTcharAsUnicode(out, staticData->fullNameT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);    /* full name */
+        cmRpcPackWcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);   /* account name */
+        cmRpcPackWcharAsUnicode(out, staticData->fullNameT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);    /* full name */
         cmRpcPackAsciiAsUnicode(out, "", CM_RP_SIZE32 | CM_RP_FRAGMENT32);            /* home */
         cmRpcPackAsciiAsUnicode(out, "", CM_RP_SIZE32 | CM_RP_FRAGMENT32);            /* home drive */
         cmRpcPackAsciiAsUnicode(out, "", CM_RP_SIZE32 | CM_RP_FRAGMENT32);            /* script */
@@ -2116,13 +2130,31 @@ samrSetUserInfo(
         if (infoLevel == 25)
         {
             CMRpcPacketDescriptor tempDesc;
+#ifdef UD_NQ_INCLUDESMB3
+            CSSession	*	pSession = NULL;
+#endif /* UD_NQ_INCLUDESMB3 */
+
 
             pPassword = in->current;
-            cmDecryptPassword(
-                ((CSUser*)in->user)->sessionKey,
-                pPassword,
-                TRUE
-                );
+#ifdef UD_NQ_INCLUDESMB3
+            pSession = csGetSessionById(((CSUser*)in->user)->session);
+            if (pSession != NULL && pSession->dialect >= CS_DIALECT_SMB30)
+            {
+				cmDecryptPassword(
+						((CSUser*)in->user)->applicationKey,
+						pPassword,
+						TRUE
+						);
+            }
+            else
+#endif /* UD_NQ_INCLUDESMB3 */
+            {
+            	cmDecryptPassword(
+						((CSUser*)in->user)->sessionKey,
+						pPassword,
+						TRUE
+						);
+            }
             pPassword += 512;
             cmRpcSetDescriptor(&tempDesc, pPassword, in->nbo);
             cmRpcParseUint32(&tempDesc, &passLen);
@@ -2147,13 +2179,15 @@ samrSetUserInfo(
             CMSdRid otherRid; /* RID to check if new neme belongs to another user */
 
             cmRpcParseUnicode(in, &strDescr, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
-            cmUnicodeToTchar(staticData->txtBufferT, strDescr.text);
+            syWStrncpy(staticData->txtBufferT, strDescr.text, strDescr.length);
+            staticData->txtBufferT[strDescr.length] = cmWChar(0);
+
             if (   udGetUserRidByName(staticData->txtBufferT, &otherRid)
                 && otherRid != rid
                )
             {
                 TRCERR("user with this name already exists");
-                TRC3P(" Rid: %ld, name: %s, other rid: %ld", rid, cmTDump(staticData->txtBufferT), otherRid);
+                TRC3P(" Rid: %ld, name: %s, other rid: %ld", rid, cmWDump(staticData->txtBufferT), otherRid);
                 TRCE();
                 return CM_RP_FAULTLOGONFAILURE;
             }
@@ -2171,12 +2205,14 @@ samrSetUserInfo(
         if (isFullName)
         {
             cmRpcParseUnicode(in, &strDescr, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
-            cmUnicodeToTchar(staticData->fullNameT, strDescr.text);
+            syWStrncpy(staticData->fullNameT, strDescr.text, strDescr.length);
+            staticData->txtBufferT[strDescr.length] = cmWChar(0);
         }
         if (isDescription)
         {
             cmRpcParseUnicode(in, &strDescr, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
-            cmUnicodeToTchar(staticData->fullNameT, strDescr.text);
+            syWStrncpy(staticData->fullNameT, strDescr.text, strDescr.length);
+            staticData->txtBufferT[strDescr.length] = cmWChar(0);
         }
         if (!udSetUserInfo(
                 rid,
@@ -2195,15 +2231,32 @@ samrSetUserInfo(
         break;
     case 23:
     {
+#ifdef UD_NQ_INCLUDESMB3
+        CSSession	*	pSession = NULL;
+#endif /* UD_NQ_INCLUDESMB3 */
         pPassword = in->current + 196;    /* undocumented */
-        cmDecryptPassword(
-            ((CSUser*)in->user)->sessionKey,
-            pPassword,
-            FALSE
-            );
+#ifdef UD_NQ_INCLUDESMB3
+        pSession = csGetSessionById(((CSUser*)in->user)->session);
+        if (pSession != NULL && (pSession->dialect == CS_DIALECT_SMB30 || pSession->dialect == CS_DIALECT_SMB311))
+        {
+			cmDecryptPassword(
+					((CSUser*)in->user)->applicationKey,
+					pPassword,
+					TRUE
+					);
+        }
+        else
+#endif /* UD_NQ_INCLUDESMB3 */
+        {
+			cmDecryptPassword(
+				((CSUser*)in->user)->sessionKey,
+				pPassword,
+				FALSE
+				);
+        }
         pPassword += 512;
         passLen = cmGetSUint32(*((NQ_SUINT32*)pPassword));
-        passLen = in->nbo? syNtoh32(passLen): cmLtoh32(passLen);
+        passLen = (NQ_UINT32)(in->nbo? syNtoh32(passLen): cmLtoh32(passLen));
         if ((NQ_UINT32)passLen >= 512)
         {
             TRCERR("Illegal password length");
@@ -2287,18 +2340,18 @@ samrQueryGroupInfo(
         cmRpcPackUint32(out, refId++);          /* ref id */
         cmRpcPackUint16(out, infoLevel);        /* level */
         cmRpcAllign(out, 4);
-        nameLen = (NQ_UINT16)cmTStrlen(staticData->txtBufferT);
+        nameLen = (NQ_UINT16)syWStrlen(staticData->txtBufferT);
         cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* group name len */
         cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* group name size */
         cmRpcPackUint32(out, refId++);          /* group name ref id */
         cmRpcPackUint32(out, 7);                /* undocumented */
         cmRpcPackUint32(out, 0);                /* undocumented */
-        nameLen = (NQ_UINT16)cmTStrlen(staticData->fullNameT);
+        nameLen = (NQ_UINT16)syWStrlen(staticData->fullNameT);
         cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* full name len */
         cmRpcPackUint16(out, (NQ_UINT16)(nameLen * sizeof(NQ_WCHAR)));   /* full name size */
         cmRpcPackUint32(out, refId++);          /* full name ref id */
-        cmRpcPackTcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);   /* account name */
-        cmRpcPackTcharAsUnicode(out, staticData->fullNameT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);    /* full name */
+        cmRpcPackWcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);   /* account name */
+        cmRpcPackWcharAsUnicode(out, staticData->fullNameT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);    /* full name */
         break;
     default:
         cmRpcPackUint32(out, 0);    /* ref id */
@@ -2384,7 +2437,7 @@ samrQuerySecurity(
         cmRpcPackUint32(out, staticData->sd.length);  /* size */
         cmRpcPackUint32(out, refId++);    /* ref id */
         cmRpcPackUint32(out, staticData->sd.length);  /* size */
-        cmSdPackSecurityDescriptor(out, &staticData->sd);
+        cmSdPackSecurityDescriptor(out, &staticData->sd, 0x0f);
         break;
     default:
         cmRpcPackUint32(out, 0);    /* ref id */
@@ -2835,17 +2888,17 @@ packGroupInfo(
     cmRpcPackUint32(out, index + 1);            /* next index */
     cmRpcPackUint32(out, rid);                  /* rid */
     cmRpcPackUint32(out, GROUPACCOUNT_ATTRIBS); /* rid attributes */
-    nameLen = (NQ_UINT16)(sizeof(NQ_WCHAR) * cmTStrlen(staticData->txtBufferT));
+    nameLen = (NQ_UINT16)(sizeof(NQ_WCHAR) * syWStrlen(staticData->txtBufferT));
     cmRpcPackUint16(out, nameLen);              /* length */
     cmRpcPackUint16(out, nameLen);              /* size */
     cmRpcPackUint32(out, 3);                    /* account name ptr */
-    nameLen = (NQ_UINT16)(sizeof(NQ_WCHAR) * cmTStrlen(staticData->fullNameT));
+    nameLen = (NQ_UINT16)(sizeof(NQ_WCHAR) * syWStrlen(staticData->fullNameT));
     cmRpcPackUint16(out, nameLen);              /* length */
     cmRpcPackUint16(out, nameLen);              /* size */
     cmRpcPackUint32(out, 4);                    /* account description ptr */
     /* strings */
-    cmRpcPackTcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
-    cmRpcPackTcharAsUnicode(out, staticData->fullNameT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+    cmRpcPackWcharAsUnicode(out, staticData->txtBufferT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
+    cmRpcPackWcharAsUnicode(out, staticData->fullNameT, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
     return TRUE;
 }
 
@@ -2869,7 +2922,7 @@ initData(
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(*staticData));
     if (NULL == staticData)
     {
         TRCERR("Unable to allocate SPOOLSS table");

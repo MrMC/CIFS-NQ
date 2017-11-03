@@ -17,6 +17,7 @@
  * LAST AUTHOR   : $Author:$
  ********************************************************************/
 #include "udparams.h"
+#include "sycompil.h"
 
 #ifndef _UDAPI_H_
 #define _UDAPI_H_
@@ -42,16 +43,25 @@ typedef unsigned SY_INT32   NQ_UINT32;
 #else
 typedef unsigned long       NQ_UINT32;
 #endif
+typedef struct {
+    NQ_UINT32 low;
+    NQ_UINT32 high;
+} NQ_UINT64;
+typedef struct {
+    NQ_UINT32 low;
+    NQ_UINT32 high;
+    NQ_INT32  sign;
+} NQ_INT64;
 typedef NQ_UINT16           NQ_WCHAR;
 typedef void                *NQ_HANDLE;
 typedef NQ_INT              NQ_STATUS;
-typedef NQ_UINT32           NQ_TIME;
+typedef NQ_UINT64           NQ_TIME;
 typedef NQ_UINT16           NQ_PORT;
 typedef NQ_UINT32           NQ_IPADDRESS4;
 typedef NQ_UINT16           NQ_IPADDRESS6[8];
 typedef unsigned long       NQ_ULONG;
 
-#define UD_DNS_SERVERSTRINGSIZE (16 * sizeof(NQ_TCHAR) * UD_NQ_MAXDNSSERVERS * UD_NS_MAXADAPTERS)
+#define UD_DNS_SERVERSTRINGSIZE (16 * sizeof(NQ_WCHAR) * UD_NQ_MAXDNSSERVERS * UD_NS_MAXADAPTERS)
 
 #ifdef UD_NQ_USETRANSPORTIPV6
 typedef struct _NQ_IPADDRESS
@@ -171,6 +181,7 @@ typedef NQ_IPADDRESS4 NQ_IPADDRESS;
 #define SMB_STATUS_OK                                   0xc0000000
 #define SMB_STATUS_INVALID                              0xffffffff
 
+#define SMB_STATUS_SUCCESS                              0x00000000
 #define SMB_STATUS_ENUMDIR                              0x0000010c
 #define SMB_STATUS_PENDING                              0x00000103
 #define SMB_STATUS_MORE_ENTRIES                         0x00000105
@@ -181,6 +192,7 @@ typedef NQ_IPADDRESS4 NQ_IPADDRESS;
 
 #define SMB_STATUS_BUFFER_OVERFLOW                      0x80000005
 #define SMB_STATUS_NO_MORE_FILES                        0x80000006
+#define SMB_STATUS_DEVICE_OFF_LINE                      0x80000010
 #define SMB_STATUS_NO_MORE_ENTRIES                      0x8000001a
 
 #define SMB_STATUS_UNSUCCESSFUL                         0xc0000001
@@ -377,7 +389,7 @@ typedef NQ_IPADDRESS4 NQ_IPADDRESS;
 #define SMB_STATUS_DEVICE_DOES_NOT_EXIST                0xc00000c0
 #define SMB_STATUS_TOO_MANY_COMMANDS                    0xc00000c1
 #define SMB_STATUS_ADAPTER_HARDWARE_ERROR               0xc00000c2
-#define SMB_STATUS_INVALID_NETWORK_RESPONSE             0xc00000c3
+#define SMB_STATUS_INVALID_NETWORK_RESPONSE             0xc00000c3 
 #define SMB_STATUS_UNEXPECTED_NETWORK_ERROR             0xc00000c4
 #define SMB_STATUS_BAD_REMOTE_ADAPTER                   0xc00000c5
 #define SMB_STATUS_PRINT_QUEUE_FULL                     0xc00000c6
@@ -684,7 +696,8 @@ typedef NQ_IPADDRESS4 NQ_IPADDRESS;
 #define SMB_STATUS_TOO_MANY_LINKS                       0xc0000265
 #define SMB_STATUS_QUOTA_LIST_INCONSISTENT              0xc0000266
 #define SMB_STATUS_FILE_IS_OFFLINE                      0xc0000267
-#define SMB_STATUS_VOLUME_DISMOUNTED                    0xC000026E
+#define SMB_STATUS_DFS_UNAVAILABLE                      0xc000026d
+#define SMB_STATUS_VOLUME_DISMOUNTED                    0xc000026e
 #define SMB_STATUS_NOT_A_REPARSE_POINT                  0xc0000275
 #define SMB_STATUS_IO_REPARSE_TAG_NOT_HANDLED           0xc0000279
 #define SMB_STATUS_NO_SUCH_JOB                          0xc0000ede
@@ -700,7 +713,9 @@ typedef NQ_IPADDRESS4 NQ_IPADDRESS;
  */
 
 #define NQ_ERR_MODULE   (255 << 16)     /* This module defines the NQ error subset */
-
+#ifndef IS_NQ_ERROR
+#define IS_NQ_ERROR(err) ((err & NQ_ERR_MODULE) == NQ_ERR_MODULE)
+#endif
 /**** Errors ****/
 #define NQ_ERR_OK               0  /* Success */
 #define NQ_ERR_BADPARAM         (NQ_ERR_MODULE | 3)  /* Parameter error */
@@ -720,7 +735,13 @@ typedef NQ_IPADDRESS4 NQ_IPADDRESS;
 #define NQ_ERR_USERNOTFOUND     (NQ_ERR_MODULE | 31) /* account name not mapped */
 #define NQ_ERR_NOTFOUND         (NQ_ERR_MODULE | 32) /* not found */
 #define NQ_ERR_LOGONFAILURE     (NQ_ERR_MODULE | 33) /* logon failure */
-#define NQ_ERR_VOLUMEDISMOUNTED (NQ_ERR_MODULE | 34) /* vlume not mounted */
+#define NQ_ERR_VOLUMEDISMOUNTED (NQ_ERR_MODULE | 34) /* volume not mounted */
+#define NQ_ERR_NETWORKERROR     (NQ_ERR_MODULE | 35) /* network error: unreachable, busy, name deleted */
+#define NQ_ERR_BADCONNECTION    (NQ_ERR_MODULE | 36) /* connection error: refused, disconnected, reset */
+#define NQ_ERR_SHARINGPAUSED    (NQ_ERR_MODULE | 37) /* file sharing error: has been temporarily paused */
+#define NQ_ERR_BADDFS           (NQ_ERR_MODULE | 38) /* dfs error: dfs not available on a server */
+#define NQ_ERR_IOTIMEOUT        (NQ_ERR_MODULE | 39) /* IO error: time-out period expired */
+#define NQ_ERR_TRYAGAIN 		(NQ_ERR_MODULE | 40) /* connection changed: possibly reconnect occurred - retry */
 
 #define NQ_ERR_BADFUNC          (NQ_ERR_MODULE | 1001)   /* SMB_ERRbadfunc                       1 */
 #define NQ_ERR_BADFILE          (NQ_ERR_MODULE | 1002)   /* SMB_ERRbadfile                       2 */
@@ -818,13 +839,18 @@ typedef NQ_IPADDRESS4 NQ_IPADDRESS;
 #define NQ_ERR_NBDDCOMMUNICATIONERROR       (NQ_ERR_MODULE | 4013)  /* NQ failed to communicate with NetbIOS daemon */
 #define NQ_ERR_NBBUFFEROVERFLOW             (NQ_ERR_MODULE | 4014)  /* Internal buffer size exceeded */
 #define NQ_ERR_NBRELEASENAMEFAIL            (NQ_ERR_MODULE | 4015)  /* NQ failed to release a registered name */
+#define NQ_ERR_NBLISTENFAIL                 (NQ_ERR_MODULE | 4016)  /* NQ failed to listen */
 
+#define NQ_ERR_SOCKETCREATE                 (NQ_ERR_MODULE | 5000)  /* Socket failed to create */
+#define NQ_ERR_SOCKETBIND                   (NQ_ERR_MODULE | 5001)  /* Socket failed to bind */
+#define NQ_ERR_SOCKETNAME                   (NQ_ERR_MODULE | 5002)  /* Socket failed to get name */
 
-#define NQ_ERR_RECONNECTREQUIRED (0xfffffffe)           /* Error used when send fails and reconnect is required */
+#define NQ_ERR_INVALIDUINT32SIZE            (0xfffffffd)            /* Invalid NQ_UINT32 size */
+#define NQ_ERR_RECONNECTREQUIRED            (0xfffffffe)            /* Error used when send fails and reconnect is required */
+#define NQ_ERR_SIZEERROR                    (0xffffffff)            /* Error requesting file size */
+#define NQ_ERR_SEEKERROR                    (0xffffffff)            /* Invalid seek result */
+#define NQ_ERR_ATTRERROR                    (0xffffffff)            /* Error requesting file attributes */
 
-#define NQ_ERR_SIZEERROR       (0xffffffff) /* Error requesting file size */
-#define NQ_ERR_SEEKERROR       (0xffffffff) /* Invalid seek result */
-#define NQ_ERR_ATTRERROR       (0xffffffff) /* Error requesting file attributes */
 
 /* Password Length*/
 
@@ -899,7 +925,7 @@ udBrowserDaemonClosed(
 
 void
 udGetScopeID(
-    NQ_TCHAR* buffer            /* buffer for the result */
+    NQ_WCHAR* buffer            /* buffer for the result */
     );
 
 /* get wins address information */
@@ -913,7 +939,7 @@ udGetWins(
 
 void
 udGetDomain(
-    NQ_TCHAR *buffer,           /* buffer for the result */
+    NQ_WCHAR *buffer,           /* buffer for the result */
     NQ_BOOL *isWorkgroup        /* 0 - false, 1 - true */
     );
 
@@ -922,8 +948,8 @@ udGetDomain(
 
 void
 udGetDnsParams(
-    NQ_TCHAR *domain,           /* The default domain target belongs to */
-    NQ_TCHAR *server            /* The DNS server IP address */
+    NQ_WCHAR *domain,           /* The default domain target belongs to */
+    NQ_WCHAR *server            /* The DNS server IP address */
     );
 #endif /* defined(UD_NQ_USETRANSPORTIPV4) || defined(UD_NQ_USETRANSPORTIPV6) */
 
@@ -932,43 +958,43 @@ udGetDnsParams(
 NQ_BOOL            /* TRUE - got credentials, FALSE - failed */
 udGetCredentials(
     const void* resource,   /* URI about to connect to */
-    NQ_TCHAR* userName,             /* buffer for user name */
-    NQ_TCHAR* password,             /* buffer for password */
-    NQ_TCHAR* domain                /* buffer for domain name */
+    NQ_WCHAR* userName,             /* buffer for user name */
+    NQ_WCHAR* password,             /* buffer for password */
+    NQ_WCHAR* domain                /* buffer for domain name */
     );
 
 /* determine fielsystem for the given share */
 
 void
 udGetFileSystemName(
-    const NQ_TCHAR* shareName,  /* pointer to the share name */
-    const NQ_TCHAR* sharePath,  /* pointer to the share path */
-    NQ_TCHAR* fileSystemName    /* buffer for the filesystem name */
+    const NQ_WCHAR* shareName,  /* pointer to the share name */
+    const NQ_WCHAR* sharePath,  /* pointer to the share path */
+    NQ_WCHAR* fileSystemName    /* buffer for the filesystem name */
     );
 
 /* get next share in the list of shares for CS */
 
 NQ_BOOL                  /* TRUE - a share read FALSE - no more shares */
 udGetNextShare(
-    NQ_TCHAR* name,         /* buffer for share name */
-    NQ_TCHAR* map,          /* buffer for the map path */
+    NQ_WCHAR* name,         /* buffer for share name */
+    NQ_WCHAR* map,          /* buffer for the map path */
     NQ_INT* printQueue,    /* 0 for file system, 1 for print queue */
-    NQ_TCHAR* description   /* buffer for the share description */
+    NQ_WCHAR* description   /* buffer for the share description */
     );
 
 /* get next mount in the list of mounted volumes for CC */
 
 NQ_BOOL                 /* TRUE more valumes in the list, FALSE when no more volumes available */
 udGetNextMount(
-    NQ_TCHAR* name,     /* buffer for volume name */
-    NQ_TCHAR* map       /* buffer for the map path */
+    NQ_WCHAR* name,     /* buffer for volume name */
+    NQ_WCHAR* map       /* buffer for the map path */
     );
 
 /* check password for a specific user */
 
 NQ_INT              /* See values above */
 udGetPassword(
-    const NQ_TCHAR* userName,   /* user name */
+    const NQ_WCHAR* userName,   /* user name */
     NQ_CHAR* password,          /* buffer for password */
     NQ_INT* pwdIsHashed,        /* TRUE - paasword hashed, FALSE - plain text */
     NQ_UINT32* userNumber       /* >1000 for administrators */
@@ -1029,7 +1055,7 @@ udGetTaskPriorities(
 
 void
 udGetServerComment(
-    NQ_TCHAR *buffer            /* buffer for the result */
+    NQ_WCHAR *buffer            /* buffer for the result */
     );
 
 /* get CIFS driver name */
@@ -1057,14 +1083,14 @@ udServerDataIn(
 
 void
 udServerShareConnect(
-    const NQ_TCHAR* share           /* share name */
+    const NQ_WCHAR* share           /* share name */
     );
 
 /* project-level processing on client disconnect from a share */
 
 void
 udServerShareDisconnect(
-    const NQ_TCHAR* share           /* share name */
+    const NQ_WCHAR* share           /* share name */
     );
 
 /* allocate buffer in the user space */
@@ -1117,7 +1143,7 @@ udGetComputerId(
 
 NQ_COUNT                        /* SD length or zero on error */
 udLoadShareSecurityDescriptor(
-    const NQ_TCHAR* shareName,  /* share name */
+    const NQ_WCHAR* shareName,  /* share name */
     NQ_BYTE* buffer,            /* buffer to read SD in */
     NQ_COUNT bufferLen          /* buffer length */
     );
@@ -1126,7 +1152,7 @@ udLoadShareSecurityDescriptor(
 
 void
 udSaveShareSecurityDescriptor(
-    const NQ_TCHAR* shareName,  /* share name */
+    const NQ_WCHAR* shareName,  /* share name */
     const NQ_BYTE* sd,          /* pointer to SD */
     NQ_COUNT sdLen              /* SD length */
     );
@@ -1144,7 +1170,7 @@ udGetUserCount(
 
 NQ_BOOL                     /* TRUE when user was found */
 udGetUserRidByName(
-    const NQ_TCHAR* name,   /* user name */
+    const NQ_WCHAR* name,   /* user name */
     NQ_UINT32* rid          /* buffer for user ID */
     );
 
@@ -1153,8 +1179,8 @@ udGetUserRidByName(
 NQ_BOOL                     /* TRUE when user was found */
 udGetUserNameByRid(
     NQ_UINT32 rid,              /* user id */
-    NQ_TCHAR* nameBuffer,       /* buffer for user name */
-    NQ_TCHAR* fullNameBuffer    /* buffer for full name */
+    NQ_WCHAR* nameBuffer,       /* buffer for user name */
+    NQ_WCHAR* fullNameBuffer    /* buffer for full name */
     );
 
 /* enumerate users */
@@ -1163,9 +1189,9 @@ NQ_BOOL                     /* TRUE when user was available */
 udGetUserInfo(
     NQ_UINT index,          /* user index (zero based) */
     NQ_UINT32* rid,         /* user id */
-    NQ_TCHAR* name,         /* buffer for user name */
-    NQ_TCHAR* fullName,     /* buffer for full user name */
-    NQ_TCHAR* description   /* buffer for user description */
+    NQ_WCHAR* name,         /* buffer for user name */
+    NQ_WCHAR* fullName,     /* buffer for full user name */
+    NQ_WCHAR* description   /* buffer for user description */
     );
 
 /* set user administrative rights */
@@ -1181,9 +1207,9 @@ udSetUserAsAdministrator(
 NQ_BOOL                     /* TRUE when user was added/modified */
 udSetUserInfo(
     NQ_UINT32 rid,                  /* user RID */
-    const NQ_TCHAR* name,           /* user name */
-    const NQ_TCHAR* fullName,       /* full user name */
-    const NQ_TCHAR* description,    /* user description */
+    const NQ_WCHAR* name,           /* user name */
+    const NQ_WCHAR* fullName,       /* full user name */
+    const NQ_WCHAR* description,    /* user description */
     const NQ_WCHAR* password        /* Unicode text password or NULL */
     );
 
@@ -1191,9 +1217,9 @@ udSetUserInfo(
 
 NQ_BOOL                     /* TRUE when user was added/modified */
 udCreateUser(
-    const NQ_TCHAR* name,           /* user name */
-    const NQ_TCHAR* fullName,       /* full user name */
-    const NQ_TCHAR* description     /* user description */
+    const NQ_WCHAR* name,           /* user name */
+    const NQ_WCHAR* fullName,       /* full user name */
+    const NQ_WCHAR* description     /* user description */
     );
 
 /* remove user */
@@ -1213,17 +1239,17 @@ udDeleteUserByRid(
 
 NQ_BOOL
 udSaveShareInformation(
-    const NQ_TCHAR* name,           /* share to modify or NULL for a new share */
-    const NQ_TCHAR* newName,        /* new share name */
-    const NQ_TCHAR* newMap,         /* new share path */
-    const NQ_TCHAR* newDescription  /* new share description */
+    const NQ_WCHAR* name,           /* share to modify or NULL for a new share */
+    const NQ_WCHAR* newName,        /* new share name */
+    const NQ_WCHAR* newMap,         /* new share path */
+    const NQ_WCHAR* newDescription  /* new share description */
     );
 
 /* remove share from the persistent store */
 
 NQ_BOOL
 udRemoveShare(
-    const NQ_TCHAR* name            /* share to remove */
+    const NQ_WCHAR* name            /* share to remove */
     );
 
 #endif /* UD_CS_INCLUDERPC_SRVSVC_EXTENSION */
@@ -1248,8 +1274,8 @@ udRemoveShare(
 /* start/stop evemts */
 #define UD_LOG_GEN_START        1   /* Start event type */
 #define UD_LOG_GEN_STOP         2   /* Stop event type */
-
 #define UD_LOG_GEN_NAMECONFLICT 3 	/* Name Conflict has occured*/
+#define UD_LOG_GEN_NAMEREGFAIL	4	/* Name Registration Failed */
 
 /* file access events */
 #define UD_LOG_FILE_CREATE      1   /* File/directory create event type */
@@ -1286,8 +1312,8 @@ udRemoveShare(
    Depending on the event type, some members of this structure may be undefined */
 
 typedef struct {
-    const NQ_TCHAR* fileName;   /* file to access */
-    const NQ_TCHAR* newName;    /* new file name for rename operation */
+    const NQ_WCHAR* fileName;   /* file to access */
+    const NQ_WCHAR* newName;    /* new file name for rename operation */
     NQ_UINT32 access;           /* this value is has different meaning for different events:
                                    for UD_LOG_FILE_CREATE, UD_LOG_FILE_DELETE and UD_LOG_FILE_RENAME - no meaning.
                                    for UD_LOG_FILE_OPEN and UD_LOG_FILE_CLOSE:
@@ -1321,7 +1347,7 @@ UDFileAccessEvent;
    Depending on the event type, some members of this structure may be undefined */
 
 typedef struct {
-    const NQ_TCHAR* shareName;      /* name of the share being accessed */
+    const NQ_WCHAR* shareName;      /* name of the share being accessed */
     NQ_BOOL 		ipc;          	/* TRUE for IPC$ share */
     NQ_BOOL 		printQueue;    	/* TRUE for a printer queue share */
     NQ_UINT32  		rid;           	/* Unique user ID */
@@ -1342,9 +1368,9 @@ UDUserAccessEvent;
 void
 udEventLog (
     NQ_UINT module,                 /* NQ module that originated this event */
-    NQ_UINT class,                  /* event class */
+    NQ_UINT eventClass,              /* event class */
     NQ_UINT type,                   /* event type */
-    const NQ_TCHAR* userName,       /* name of the user */
+    const NQ_WCHAR* userName,       /* name of the user */
     const NQ_IPADDRESS* pIp,        /* next side IP address */
     NQ_UINT32 status,               /* zero if the operation has succeeded or error code on failure
                                        for server event this code is the same that will be transmitted

@@ -116,7 +116,7 @@ cp852UnicodeToAnsi(
     NQ_INT inLength,
     NQ_INT outLength
 )
-    {
+{
     const NQ_WCHAR* pW = wStr;
     NQ_CHAR* pA = aStr;
     NQ_INT length = 0;
@@ -126,9 +126,9 @@ cp852UnicodeToAnsi(
     inLength /= 2;
 
     if (aStr && wStr)
-        {
+    {
         for (; *pW && (ignoreInLength || inLength) && (ignoreOutLength || (length < outLength)); pA++, pW++, inLength--, length++)
-            {
+        {
             /* extract Msb in wStr */
             NQ_BYTE wLsb, wMsb;
             cmSplitUnicode (*pW, &wMsb, &wLsb);
@@ -136,7 +136,7 @@ cp852UnicodeToAnsi(
             *pA = 0x00;
 
             switch (wMsb)
-                {
+            {
                 case 0x00:
                     if (wLsb < 0xA0)
                         *pA = (NQ_CHAR)wLsb;
@@ -155,22 +155,26 @@ cp852UnicodeToAnsi(
                     if (wLsb <= 0xa0)
                         *pA = (NQ_CHAR)u2a_25[wLsb];
                     break;
-                }
+            }
             if (*pA == 0x00) /* wrong unicode */
                 break;
-            }
         }
+    }
     else
-        {
+    {
         if (!aStr)
-            return 0;
+        {
+            length = 0;
+            goto Exit;
         }
+    }
     /* not enough space in provided buff */
     if (ignoreOutLength || (length < outLength))
         *pA = '\0';
 
+Exit:
     return length;
-    }
+}
 /*
 static NQ_INT
 cp852AnsiToUnicode(

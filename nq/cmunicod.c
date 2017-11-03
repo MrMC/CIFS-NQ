@@ -19,7 +19,7 @@
 
 #include "cmunicod.h"
 
-#define CM_WDUMP_NUMOFCHARS UD_FS_FILENAMELEN
+#define CM_WDUMP_NUMOFCHARS 2049 /* max file name in Linux is 4096 for unicode. This is 4096 / 2 + 1 */
 
 /* This file implements UNICODE equivalents to the ansiString.h functions
    We assume that strings is not necessarily word aligned. */
@@ -222,11 +222,12 @@ cmWStrcat(
  *--------------------------------------------------------------------
  * PARAMS:  OUT destination string
  *          IN source string
- *          IN number of UNICODE characters
+ *          IN buffer size
  *
  * RETURNS: Number of copied characters
  *
- * NOTES:
+ * NOTES:   Converts only ASCII characters. If the resulted string does
+ *          not fit into the buffer, it is truncated.
  *====================================================================
  */
 
@@ -238,18 +239,25 @@ cmWStrncpy(
     )
 {
     NQ_UINT n1;
+    NQ_UINT result = 0;
 
     if (0 == n)
-        return 0;
+        goto Exit;
+
     to = (NQ_WCHAR*)cmAllignTwo(to);
     from = (const NQ_WCHAR*)cmAllignTwo(from);
+
     n1 = n;
     do
     {
         *to++ = *from++;
     }
     while (--n1 && *(from -1));
-    return n - n1;
+
+    result = n - n1;
+
+Exit:
+    return result;
 }
 
 /*
@@ -271,17 +279,23 @@ cmWStrcmp(
     const NQ_WCHAR* s2
     )
 {
+    NQ_INT result = 0;
+
     s1 = (const NQ_WCHAR*)cmAllignTwo(s1);
     s2 = (const NQ_WCHAR*)cmAllignTwo(s2);
+
     while (*s1 == *s2)
     {
         if (*s1 == 0)
-            return 0;
+            goto Exit;
         s1++;
         s2++;
     }
 
-    return *s1 - *s2;
+    result = *s1 - *s2;
+
+Exit:
+    return result;
 }
 
 /*
@@ -305,18 +319,24 @@ cmWStrncmp(
     NQ_UINT n
     )
 {
+    NQ_INT result = 0;
+
     if (0 == n)
-            return 0;
+        goto Exit;
+
     s1 = (const NQ_WCHAR*)cmAllignTwo(s1);
     s2 = (const NQ_WCHAR*)cmAllignTwo(s2);
     while (*s1 == *s2 && n-- > 0)
     {
         if (*s1 == 0)
-            return 0;
+            goto Exit;
         s1++;
         s2++;
     }
-    return ( n==0 )? 0 : *s1 - *s2;
+    result = ( n==0 )? 0 : *s1 - *s2;
+
+Exit:
+    return result;
 }
 
 /*
@@ -379,12 +399,14 @@ cmWStrincmp(
     )
 {
     NQ_WCHAR c1, c2;
+    NQ_INT result = 0;
 
     s1 = (const NQ_WCHAR*)cmAllignTwo(s1);
     s2 = (const NQ_WCHAR*)cmAllignTwo(s2);
 
     if (0 == n)
-            return 0;
+        goto Exit;
+
     for (;;)
     {
         c1 = *s1++;
@@ -394,11 +416,15 @@ cmWStrincmp(
         if (c1 != c2 || n-- <= 0)
             break;
         if (c1 == 0)
-            return 0;
+            goto Exit;
     }
     if (n == 0)
-        return 0;
-    return c1 - c2;
+        goto Exit;
+
+    result = c1 - c2;
+
+Exit:
+    return result;
 }
 
 /*
@@ -421,13 +447,18 @@ cmWStrchr(
     NQ_WCHAR c
     )
 {
+    NQ_WCHAR* pResult = NULL;
+
     s = (const NQ_WCHAR*)cmAllignTwo(s);
     while (*s != c)
     {
         if (!*s++)
-            return NULL;
+            goto Exit;
     }
-    return (NQ_WCHAR*)s;
+    pResult = (NQ_WCHAR*)s;
+
+Exit:
+    return pResult;
 }
 
 /*
@@ -452,6 +483,7 @@ cmWStrrchr(
 {
     const NQ_WCHAR* s1;
     NQ_UINT i;
+    NQ_WCHAR* pResult;
 
     s = (const NQ_WCHAR*)cmAllignTwo(s);
     i = cmWStrlen(s);
@@ -461,10 +493,14 @@ cmWStrrchr(
     {
         if (*--s1 == c)
         {
-            return (NQ_WCHAR*)s1;
+            pResult = (NQ_WCHAR*)s1;
+            goto Exit;
         }
     }
-    return NULL;
+    pResult = NULL;
+
+Exit:
+    return pResult;
 }
 
 /*
@@ -518,11 +554,12 @@ cmAnsiToUnicode(
  *--------------------------------------------------------------------
  * PARAMS:  OUT destination string
  *          IN source string
- *          IN number of chars
+ *          IN buffer size
  *
  * RETURNS: None
  *
- * NOTES:   Converts only ASCII characters
+ * NOTES:   Converts only ASCII characters. If the resulted string does
+ *          not fit into the buffer, it is truncated.
  *====================================================================
  */
 
@@ -551,11 +588,12 @@ cmUnicodeToAnsiN(
  *--------------------------------------------------------------------
  * PARAMS:  OUT destination string
  *          IN source string
- *          IN number of chars
+ *          IN buffer size
  *
  * RETURNS: None
  *
- * NOTES:   Converts only ASCII characters
+ * NOTES:   Converts only ASCII characters. If the resulted string does
+ *          not fit into the buffer it is truncated.
  *====================================================================
  */
 
@@ -597,14 +635,25 @@ cmWDump(
     const NQ_WCHAR* w
     )
 {
-#if SY_DEBUGMODE
+    NQ_CHAR* pResult;
+
+#if SY_DEBUGMODE || defined(UD_NQ_INCLUDETRACE) 
     static NQ_CHAR temp[CM_WDUMP_NUMOFCHARS*2+1];
 
-    cmUnicodeToAnsiN(temp, w, 2*CM_WDUMP_NUMOFCHARS);
-    return temp;
+    if (NULL != w)
+    {
+        cmUnicodeToAnsiN(temp, w, 2*CM_WDUMP_NUMOFCHARS);        
+    }
+    else
+    {
+        temp[0] = '\0';
+    }
+    pResult = temp;
 #else
-    return (NQ_CHAR*)w;
+    pResult = (NQ_CHAR*)w;
 #endif
+
+    return pResult;
 }
 
 
@@ -677,12 +726,14 @@ unicodeToupper(
 {
     NQ_INDEX i;  
     NQ_WCHAR c = cmLtoh16(w);
-    
+    NQ_WCHAR result;
+
     for (i = 0; i < PLAIN_TABLE_SIZE && plainRangeTable[i].start <= c ; i++)
     {
         if (c <= plainRangeTable[i].end)
-        {            
-            return cmHtol16((NQ_WCHAR)(c - plainRangeTable[i].diff));
+        {
+            result = cmHtol16((NQ_WCHAR)(c - plainRangeTable[i].diff));
+            goto Exit;
         }
     }
 
@@ -692,11 +743,14 @@ unicodeToupper(
         {
             if ((c - oddRangeTable[i].start) % 2 == 0)
             {                
-                return cmHtol16((NQ_WCHAR)(c - oddRangeTable[i].diff));
+                result = cmHtol16((NQ_WCHAR)(c - oddRangeTable[i].diff));
+                goto Exit;
             }
         }
     }
 
-    return cmHtol16(c);
-}
+    result = cmHtol16(c);
 
+Exit:
+    return result;
+}

@@ -20,7 +20,6 @@
 #include "csdcerpc.h"
 #include "cs2disp.h"
 #include "cmsmb2.h"
-#include "cs2notify.h"
 
 #if defined(UD_NQ_INCLUDECIFSSERVER) && defined(UD_NQ_INCLUDESMB2)
 
@@ -36,7 +35,7 @@ typedef struct
     NQ_BYTE notifyResponse[CM_NB_DATAGRAMBUFFERSIZE - sizeof(CMCifsHeader)];/* buffer for notify reponse */
     CMBufferWriter writer;                   /* for packing file entries */
     NQ_BOOL commonFieldsSet;                 /* singleton flag for setting up common fields */
-    NQ_TCHAR notifyPath[UD_FS_FILENAMELEN + 1];  /* full path to the directory to notify */
+    NQ_WCHAR notifyPath[UD_FS_FILENAMELEN + 1];  /* full path to the directory to notify */
     NQ_BOOL pathSet;                         /* singleton flag for seting up the path */
     NQ_UINT32 completionFilter;              /* value to match the request (the same for all entries) */
     NQ_BOOL notifyPending;                   /* TRUE when notofy information is ready to be sent */
@@ -73,7 +72,7 @@ cs2NotifyInit(
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)syMalloc(sizeof(*staticData));
     if (NULL == staticData)
     {
         TRCE();
@@ -186,7 +185,7 @@ NQ_UINT32 csSmb2OnChangeNotify(CMSmb2Header *in, CMSmb2Header *out, CMBufferRead
         }
     }
 
-    /* we send interim response now */
+    /* we send interim response now - notice the server should not sign an interim response */
     out->flags |= SMB2_FLAG_ASYNC_COMMAND;
     cs2GenerateNextAsyncId(&out->aid);
 
@@ -312,7 +311,7 @@ cs2NotifyEnd(
 
 void
 cs2NotifyFile(
-    const NQ_TCHAR* fileName,
+    const NQ_WCHAR* fileName,
     NQ_UINT32 action,
     NQ_BOOL notifyParent        
     )
@@ -324,25 +323,25 @@ cs2NotifyFile(
     /* set notify directory name for the first time */
     if (!staticData->pathSet)
     {
-        NQ_TCHAR* pSeparator;
+        NQ_WCHAR* pSeparator;
 
-        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NOTIFY: %s", cmTDump(fileName));
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NOTIFY: %s", cmWDump(fileName));
         staticData->pathSet = TRUE;
-        cmTStrncpy(staticData->notifyPath, fileName, sizeof(staticData->notifyPath)/sizeof(NQ_TCHAR));
+        syWStrncpy(staticData->notifyPath, fileName, sizeof(staticData->notifyPath)/sizeof(NQ_WCHAR));
         if (notifyParent)
         {
-            pSeparator = cmTStrrchr(staticData->notifyPath, cmTChar(SY_PATHSEPARATOR));
+            pSeparator = syWStrrchr(staticData->notifyPath, cmWChar(SY_PATHSEPARATOR));
             if (pSeparator == NULL)
             {
-                LOGERR(CM_TRC_LEVEL_ERROR, "Illegal path %s", cmTDump(staticData->notifyPath));
+                LOGERR(CM_TRC_LEVEL_ERROR, "Illegal path %s", cmWDump(staticData->notifyPath));
             }
             else
             {
-                *pSeparator = (NQ_TCHAR)0;
+                *pSeparator = (NQ_WCHAR)0;
             }
         }
         staticData->action = action;
-        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "PATH: %s", cmTDump(staticData->notifyPath));
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "PATH: %s", cmWDump(staticData->notifyPath));
     }
     
     LOGFE(CM_TRC_LEVEL_FUNC_TOOL);
@@ -384,7 +383,7 @@ cs2NotifySend(
     cmBufferWriterInit(&staticData->writer, staticData->notifyResponse, UD_NS_BUFFERSIZE - SMB2_HEADERSIZE);
     cmBufferWriterSkip(&staticData->writer, 2 * 2);    /* structure size + buffer offset */
     cmBufferWriteUint32(&staticData->writer, (NQ_UINT32)(savedPtr - staticData->bufferStart));    /* buffer length */
-    dataLen = (NQ_COUNT)(savedPtr - staticData->notifyResponse - 4);
+    dataLen = (NQ_COUNT)(savedPtr - staticData->notifyResponse);
     
     /* mark first entry */
     staticData->nextEntryOffset = NULL;
@@ -407,13 +406,13 @@ cs2NotifySend(
 
         /* match the directory with the notify path */
 
-        if (cmTStrncmp(staticData->notifyPath, pName->name, cmTStrlen(pName->name)) != 0)
+        if (syWStrncmp(staticData->notifyPath, pName->name, syWStrlen(pName->name)) != 0)
         {
             /* the directory name does not match the notify path or its beginning */
             continue;
         }
 
-        if (cmTStrlen(staticData->notifyPath) > cmTStrlen(pName->name))
+        if (syWStrlen(staticData->notifyPath) > syWStrlen(pName->name))
         {
             /* directory is above the notify path in the tree */
 
@@ -423,7 +422,7 @@ cs2NotifySend(
                 continue;
             }
 
-            if (*(staticData->notifyPath + cmTStrlen(pName->name)) != cmTChar(SY_PATHSEPARATOR))
+            if (*(staticData->notifyPath + syWStrlen(pName->name)) != cmWChar(SY_PATHSEPARATOR))
             {
                 /* directory is not an exact super-directory of the notify path */
                 continue;
@@ -443,7 +442,7 @@ cs2NotifySend(
         /* prepare and send the response */
 
         pSess = csGetSessionById(nextDir->session);
-        if (NULL != pSess && pSess->smb2)
+        if (NULL != pSess && pSess->dialect != CS_DIALECT_SMB1)
         {
             csDispatchSetSocket(nextDir->notifyContext.socket);
             cs2DispatchPrepareLateResponse(

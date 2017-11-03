@@ -23,6 +23,8 @@
 #include "ccapi.h"
 #include "amspnego.h"
 #include "ccfile.h"
+#include "ccsearch.h"
+#include "ccdummysmb.h"
 
 #ifdef UD_NQ_INCLUDECIFSCLIENT
 
@@ -50,7 +52,7 @@ static void dumpOne(CMItem * pItem)
 #endif /* SY_DEBUGMODE */
 
 /*
- * Explicitely dispose and disconnect server:
+ * Explicitly dispose and disconnect server:
  * 	- disconnects from the server
  *  - disposes private data  
  */
@@ -58,7 +60,7 @@ static void disposeServer(CCServer * pServer)
 {
     CMItem * pMasterUser = pServer->masterUser;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p", pServer);
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "About to dispose server %s", pServer->item.name ? cmWDump(pServer->item.name) : "");
 
     if (pMasterUser != NULL)
@@ -71,7 +73,7 @@ static void disposeServer(CCServer * pServer)
 	if (pServer->threads.first != NULL)
 	{
 		CMIterator	itr;
-		TRCERR( "There are items in the CCServer->threads list, Going to remove them" );
+		LOGERR(CM_TRC_LEVEL_ERROR,  "There are items in the CCServer->threads list, Going to remove them" );
 
 		cmListIteratorStart(&pServer->threads,&itr);
 		while (cmListIteratorHasNext(&itr))
@@ -86,9 +88,14 @@ static void disposeServer(CCServer * pServer)
 	cmListShutdown(&pServer->threads);
 	cmListShutdown(&pServer->async);
 	ccServerDisconnect(pServer);
-    cmListShutdown(&pServer->expectedResponses);
+	cmListShutdown(&pServer->expectedResponses);
+    cmListShutdown(&pServer->waitingNotifyResponses);
 	if (NULL != pServer->calledName)
 		cmMemoryFree(pServer->calledName);
+	pServer->calledName = NULL;
+	syMutexDelete(pServer->creditGuard);
+	cmMemoryFree(pServer->creditGuard);
+	pServer->creditGuard = NULL;
 	cmListItemRemoveAndDispose((CMItem *)pServer);
 	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
@@ -98,7 +105,7 @@ static void removeExpectedResponses(CCServer * pServer)
 {
     CMIterator      iterator;
     
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p", pServer);
 	LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "About to remove all expected responses from server %s", pServer->item.name ? cmWDump(pServer->item.name) : "");
 
     cmListIteratorStart(&pServer->expectedResponses, &iterator);  
@@ -111,7 +118,6 @@ static void removeExpectedResponses(CCServer * pServer)
         else
             cmListItemRemove(pItem);
     }
-           
     cmListIteratorTerminate(&iterator);
     
     LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
@@ -123,7 +129,7 @@ static void connectionBrokenCallback(void * context)
 {
     CCServer    *   pServer;
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "context:%p", context);
 
     pServer = (CCServer *)context;
     removeExpectedResponses(pServer);
@@ -136,21 +142,39 @@ static void connectionBrokenCallback(void * context)
  */
 static NQ_BOOL connectServer(CCServer * pServer, NQ_BOOL extendedSecurity)
 {
-	NQ_STATUS res;		/* exchange result */
-	
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-	
+	NQ_STATUS res;           /* exchange result */
+	NQ_BOOL result = FALSE;  /* return value */
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p extendedSecurity:%s", pServer, extendedSecurity ? "TRUE" : "FALSE");
+
 	pServer->useExtendedSecurity = extendedSecurity;
-	if (!ccTransportConnect(&pServer->transport, pServer->ips, (NQ_INT)pServer->numIps, pServer->item.name, connectionBrokenCallback, pServer))
+	if (!ccTransportConnect(&pServer->transport, pServer->ips, (NQ_INT)pServer->numIps, pServer->item.name, connectionBrokenCallback, pServer
+#ifdef UD_NQ_USETRANSPORTNETBIOS
+	,pServer->isTemporary
+#endif /* UD_NQ_USETRANSPORTNETBIOS */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    ,&pServer->captureHdr
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+	))
 	{
-		syMutexDelete(&pServer->transport.item.guard);
+		syMutexDelete(pServer->transport.item.guard);
+		cmMemoryFree(pServer->transport.item.guard);
+		pServer->transport.item.guard = NULL;
+		LOGERR(CM_TRC_LEVEL_ERROR, "Mount error");
 	    sySetLastError(NQ_ERR_MOUNTERROR);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
+		goto Exit;
 	}
 	pServer->credits = 0;
-	pServer->smb = ccCifsGetDefaultSmb();
-	
+	/*
+	 * During negotiate phase. SMB will be pointing dummySmb so any SMB operation will not proceed until negotiation phase is done.
+	 * The negoSmb will be used with default SMB. this pointer is used only on negotiate phase.
+	 * */
+	pServer->negoSmb = ccCifsGetDefaultSmb();
+	pServer->smb = ccSmbDummyGetCifs();
+
+	pServer->isNegotiationValidated = FALSE;
+
+	pServer->transport.server = pServer;
 	/* Repeat Negotiate until success. SMB_STATUS_PENDING means iteration - step
 	 * more negotiations.
 	 * Example: 
@@ -166,29 +190,31 @@ static NQ_BOOL connectServer(CCServer * pServer, NQ_BOOL extendedSecurity)
 	{
         if (NULL != pServer->firstSecurityBlob.data)
 			cmMemoryFreeBlob(&pServer->firstSecurityBlob);
-		res = pServer->smb->doNegotiate(pServer, &pServer->firstSecurityBlob);
+		res = pServer->negoSmb->doNegotiate(pServer, &pServer->firstSecurityBlob);
 		if (NQ_SUCCESS != res && SMB_STATUS_PENDING != res)
 		{
+			LOGERR(CM_TRC_LEVEL_ERROR, "Negotiate failed:%d", res);
 			sySetLastError((NQ_UINT32)res);
-			LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-			return FALSE;
+			goto Exit;
 		}
 	}
 	while (res == SMB_STATUS_PENDING);
-	pServer->smbContext = pServer->smb->allocateContext(pServer);
-	if (NULL == pServer->smbContext)
-	{
-		sySetLastError(NQ_ERR_OUTOFMEMORY);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
-	}
 	
+	ccTransportDiscardSettingUp(&pServer->transport);
+
 #if SY_DEBUGMODE
 	pServer->item.dump = dumpOne; 
 #endif /* SY_DEBUGMODE */
+	result = TRUE;
 
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return TRUE;
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+	if (pServer->smb != pServer->negoSmb)
+	{
+		/* if negotiation failed, don't want pServer->smb to keep pointing on dummysmb. */
+		pServer->smb = pServer->negoSmb;
+	}
+	return result;
 }
 
 /*
@@ -207,8 +233,9 @@ static CCServer * findServerByIp(const NQ_IPADDRESS * ips, NQ_INT numIps, const 
 {
     CMIterator iterator;         /* server iterator */
     CCServer * pServer;          /* pointer to server */
+    CCServer * pResult = NULL;   /* return value */
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "ips:%p numIps:%d dialect:%p", ips, numIps, pDialect);
     cmListIteratorStart(&servers, &iterator);
     while (cmListIteratorHasNext(&iterator))
     {
@@ -227,25 +254,27 @@ static CCServer * findServerByIp(const NQ_IPADDRESS * ips, NQ_INT numIps, const 
                     {
                     	if ((pDialect == NULL && pServer->isTemporary) || (pDialect != NULL && pDialect != pServer->smb))
 						{
-							LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-							return NULL;
+							LOGERR(CM_TRC_LEVEL_ERROR, "Invalid pDialect");
+							goto Exit;
 						}
                         cmListItemLock((CMItem *)pServer);
-                        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                        return pServer;
+                        pResult = pServer;
+                        goto Exit;
                     }
                     else
                     {
-                    	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                        return NULL;
+                        LOGERR(CM_TRC_LEVEL_ERROR, "Not findable");
+                        goto Exit;
                   	}
                 }
             }
         }
     }
     cmListIteratorTerminate(&iterator);
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return NULL;
+
+Exit:
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pResult);
+    return pResult;
 }
 
 /* Find existing server by name */
@@ -259,9 +288,12 @@ static CCServer * findServerByName(const NQ_WCHAR * name, const CCCifsSmb *pDial
 		if ((pDialect == NULL && pServer->isTemporary) || (pDialect != NULL && pDialect != pServer->smb))
 		{
 			cmListItemUnlock((CMItem *)pServer);
-			return NULL;
+			pServer = NULL;
+			goto Exit;
 		}
 	}
+
+Exit:
 	return pServer;
 }
 
@@ -269,24 +301,23 @@ static CCServer * findServerByName(const NQ_WCHAR * name, const CCCifsSmb *pDial
 static CCServer * createNewServer(const NQ_WCHAR * host, NQ_BOOL extendedSecurity, const NQ_IPADDRESS *ips, NQ_INT numIps)
 {
 	CCServer * pServer;
+	CCServer * pResult = NULL;
 
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "host:%s extendedSecurity:%s ips:%p numIps:%d", cmWDump(host), extendedSecurity ? "TRUE" : "FALSE", ips, numIps);
 
-	pServer = (CCServer *)cmListItemCreateAndAdd(&servers, sizeof(CCServer), host, unlockCallback, TRUE);
+	pServer = (CCServer *)cmListItemCreateAndAdd(&servers, sizeof(CCServer), host, unlockCallback, CM_LISTITEM_LOCK);
 	if (NULL == pServer)
 	{
-        syMutexGive(&servers.guard);
-		sySetLastError(NQ_ERR_OUTOFMEMORY);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NULL;
+		LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+		goto Error;
 	}
 
 	/* initialize server */
-	pServer->isLoggedIn = FALSE;
 	cmListStart(&pServer->users);
 	cmListStart(&pServer->threads);
 	cmListStart(&pServer->async);
-    cmListStart(&pServer->expectedResponses);
+	cmListStart(&pServer->expectedResponses);
+    cmListStart(&pServer->waitingNotifyResponses);
     ccTransportInit(&pServer->transport);
 	pServer->ips = ips;
 	pServer->numIps = (NQ_COUNT)numIps;
@@ -298,22 +329,65 @@ static CCServer * createNewServer(const NQ_WCHAR * host, NQ_BOOL extendedSecurit
     pServer->useName = TRUE;
     pServer->isReconnecting = FALSE;
     pServer->userSecurity = TRUE;
+    pServer->connectionBroke = FALSE;
 	if (NULL == pServer->calledName)
 	{
 	    cmListItemUnlock((CMItem *)pServer);
-        syMutexGive(&servers.guard);
-		sySetLastError(NQ_ERR_OUTOFMEMORY);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NULL;
+		LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+		goto Error;
 	}
-    pServer->vcNumber = 0;
+#ifdef UD_NQ_INCLUDESMB2
+	pServer->clientGuidPartial = (NQ_UINT32)syGetTimeInSec();
+#endif
+    pServer->vcNumber = 1;
     pServer->isTemporary = FALSE;
+    pServer->useAscii = FALSE;
+    pServer->negoAscii = FALSE;
+    pServer->isAesGcm = FALSE;
+    pServer->capabilities = 0;
+#ifdef UD_NQ_INCLUDESMB311
+    pServer->isPreauthIntegOn = FALSE;
+#endif /* UD_NQ_INCLUDESMB311 */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    syMemset(&pServer->captureHdr , 0 , sizeof(CMCaptureHeader));
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
+    pServer->creditGuard = (SYMutex *)cmMemoryAllocate(sizeof(*pServer->creditGuard));
+   	syMutexCreate(pServer->creditGuard);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return pServer;
+    pResult = pServer;
+    goto Exit;
+
+Error:
+    syMutexGive(&servers.guard);
+    sySetLastError(NQ_ERR_OUTOFMEMORY);
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pResult);
+    return pResult;
 }
 
+static NQ_BOOL areUsersLoggedOn(CCServer * pServer)
+{
+	CMIterator	userItr;
+	NQ_BOOL		result = FALSE;
 
+	cmListIteratorStart(&pServer->users , &userItr);
+	while (cmListIteratorHasNext(&userItr))
+	{
+		CCUser	*	pUser = NULL;
+
+		pUser = (CCUser *)cmListIteratorNext(&userItr);
+		if (pUser->isLogginOff == FALSE)
+		{
+			result = TRUE;
+			goto Exit;
+		}
+	}
+
+Exit:
+	cmListIteratorTerminate(&userItr);
+	return !result;
+}
 
 /* -- API Functions */
 
@@ -345,20 +419,58 @@ void ccServerShutdown(void)
             CCUser  *   pUser;
 
             pUser = (CCUser *)cmListIteratorNext(&userItr);
-                    
+            
+            /* remove files first */
             cmListItemLock((CMItem *)pUser);
             cmListIteratorStart(&pUser->shares, &shareItr);
             while (cmListIteratorHasNext(&shareItr))
             {
                 CCShare *   pShare;
-				NQ_COUNT	lockCntr = 0 , numOfLocks;
+                CMIterator  filesItr;
+                CMIterator  searchItr;
 				
 				pShare = (CCShare *)cmListIteratorNext(&shareItr);
-			
+
+                cmListIteratorStart(&pShare->files, &filesItr);
+                while (cmListIteratorHasNext(&filesItr))
+                {
+                    CMItem * pItem;
+
+                    pItem = cmListIteratorNext(&filesItr);
+                    cmListItemUnlock(pItem);
+                }
+                cmListIteratorTerminate(&filesItr);
+
+                cmListIteratorStart(&pShare->searches, &searchItr);
+				while (cmListIteratorHasNext(&searchItr))
+				{
+					CMItem *  pSearch;
+					NQ_COUNT  lockCntr = 0 , numOfLocks;
+
+					pSearch = cmListIteratorNext(&searchItr);
+					numOfLocks = pSearch->locks;
+					for (lockCntr = 0 ; lockCntr < numOfLocks; lockCntr++)
+					{
+						cmListItemUnlock(pSearch);
+					}
+				}
+				cmListIteratorTerminate(&searchItr);
+                /*  share can be already released at this point */	
+            }
+            cmListIteratorTerminate(&shareItr);
+ 
+            /* unlock shares */
+            cmListIteratorStart(&pUser->shares, &shareItr);
+            while (cmListIteratorHasNext(&shareItr))
+            {
+                CCShare *   pShare;
+                NQ_COUNT	lockCntr = 0 , numOfLocks;
+				
+				pShare = (CCShare *)cmListIteratorNext(&shareItr);
 				numOfLocks = ((CMItem *)pShare)->locks;
 				for (lockCntr = 0 ; lockCntr < numOfLocks; lockCntr++)
 				{
-								cmListItemUnlock((CMItem *)pShare);
+				    cmListItemUnlock((CMItem *)pShare);
 				}
             }
             cmListIteratorTerminate(&shareItr);
@@ -450,17 +562,19 @@ void ccServerCheckTimeouts(void)
  */
 void ccServerDisconnect(CCServer * pServer)
 {
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p", pServer);
     
     syMutexTake(&servers.guard);
-	if (NULL!= pServer->smb && NULL != pServer->smbContext)
-		pServer->smb->freeContext(pServer->smbContext, pServer);
+    pServer->transport.connected = TRUE;
 	if (NULL != pServer->transport.callback)
 		ccTransportDisconnect(&pServer->transport);
+	if (NULL!= pServer->smb && NULL != pServer->smbContext)
+		pServer->smb->freeContext(pServer->smbContext, pServer);
 	cmMemoryFreeBlob(&pServer->firstSecurityBlob);
 	if (NULL != pServer->ips)
 	{
 		cmMemoryFree(pServer->ips);
+		pServer->ips = NULL;
 		pServer->numIps = 0;
 	}
 	syMutexGive(&servers.guard);
@@ -470,16 +584,16 @@ void ccServerDisconnect(CCServer * pServer)
 
 CCServer * ccServerFindOrCreate(const NQ_WCHAR * name, NQ_BOOL extendedSecurity, const CCCifsSmb *pDialect)
 {
-	CCServer * pServer = NULL;      /* server pointer */
-	NQ_IPADDRESS ip;	            /* server name converted to IP */
-	const NQ_IPADDRESS * ips = NULL;/* array of all server IPs */
-	NQ_INT numIps;		            /* number of resolved IPs */
-	const NQ_WCHAR * host;	        /* host name */
-    NQ_BOOL nameIsIp;               /* to distinguish between a name and an IP */
-    const NQ_WCHAR * pdcName = NULL;/* resolved over DFS */
-  	NQ_BOOL result;                 /* connect result */
-	
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	CCServer * pServer = NULL;       /* server pointer */
+	NQ_IPADDRESS ip;	             /* server name converted to IP */
+	const NQ_IPADDRESS * ips = NULL; /* array of all server IPs */
+	NQ_INT numIps;		             /* number of resolved IPs */
+	const NQ_WCHAR * host = NULL;    /* host name */
+    NQ_BOOL nameIsIp;                /* to distinguish between a name and an IP */
+    const NQ_WCHAR * pdcName = NULL; /* resolved over DFS */
+  	NQ_BOOL result;                  /* connect result */
+
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "name:%s extendedSecurity:%s dialect:%p", cmWDump(name), extendedSecurity ? "TRUE" : "FALSE", pDialect);
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "server: %s, dialect: %s", cmWDump(name), pDialect ? pDialect->name : "n/a");
 
     /* check server timeouts and remove those whose timeout has expired */
@@ -501,15 +615,13 @@ CCServer * ccServerFindOrCreate(const NQ_WCHAR * name, NQ_BOOL extendedSecurity,
 	}
     if (NULL != pServer)
 	{
-		LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Found existing server by name %s", pDialect ? "(with required dialect)" : "");
+		LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Found existing server by %s %s", nameIsIp ?  " IP" : " name", pDialect ? "(with required dialect)" : "");
 		if (!ccTransportIsConnected(&pServer->transport) && !ccServerReconnect(pServer))
 		{
 			cmListItemUnlock((CMItem *)pServer);
 			pServer = NULL;
 		}
-		syMutexGive(&servers.guard);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return pServer;
+		goto Exit;
     }
 
     /* try domain DFS resolution (when name is actually domain's name) */
@@ -522,11 +634,8 @@ CCServer * ccServerFindOrCreate(const NQ_WCHAR * name, NQ_BOOL extendedSecurity,
 			pServer = findServerByName(pdcName, NULL);
             if (NULL != pServer)
             {
-    		    cmMemoryFree(pdcName);
                 LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Found existing");
-                syMutexGive(&servers.guard);
-        		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        		return pServer;
+                goto Exit;
             }
 	    }
     }
@@ -539,13 +648,12 @@ CCServer * ccServerFindOrCreate(const NQ_WCHAR * name, NQ_BOOL extendedSecurity,
 	else
 	{
         host = pdcName ? cmMemoryCloneWString(pdcName) : cmMemoryCloneWString(name);
-        cmMemoryFree(pdcName);
         if (NULL == host)
         {
-            syMutexGive(&servers.guard);
+            LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
             sySetLastError(NQ_ERR_OUTOFMEMORY);
-    		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    		return NULL;
+    		pServer = NULL;
+    		goto Exit;
 		}
 	}
 	
@@ -555,11 +663,9 @@ CCServer * ccServerFindOrCreate(const NQ_WCHAR * name, NQ_BOOL extendedSecurity,
 		ips = (NQ_IPADDRESS *)cmMemoryAllocate(sizeof(NQ_IPADDRESS));
 		if (NULL == ips)
 		{
-			syMutexGive(&servers.guard);
-			cmMemoryFree(host);
-			sySetLastError(NQ_ERR_NOMEM);
-			LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-			return NULL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+    		pServer = NULL;
+    		goto Exit;
 		}
 		syMemcpy(ips, &ip, sizeof(NQ_IPADDRESS));
 		numIps = 1;
@@ -570,12 +676,9 @@ CCServer * ccServerFindOrCreate(const NQ_WCHAR * name, NQ_BOOL extendedSecurity,
 		ips = cmResolverGetHostIps(host, &numIps);
 		if (NULL == ips)
 		{
-			syMutexGive(&servers.guard);
 			LOGERR(CM_TRC_LEVEL_ERROR, "Cannot resolve IPs for %s", cmWDump(host));
-			cmMemoryFree(host);
 			sySetLastError(NQ_ERR_BADPATH);
-			LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-			return NULL;
+			goto Exit;
 		}
 	}
 	
@@ -587,29 +690,24 @@ CCServer * ccServerFindOrCreate(const NQ_WCHAR * name, NQ_BOOL extendedSecurity,
     if (NULL != pServer)
     {
 		LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Found existing server by IP: %s with IP (1st one): %s %s", cmWDump(pServer->item.name), cmIPDump(&pServer->ips[0]), pDialect ? "(with required dialect)" : "");
-		cmMemoryFree(host);
 		cmMemoryFree(ips);
 		if (!ccTransportIsConnected(&pServer->transport) && !ccServerReconnect(pServer))
 		{
 			cmListItemUnlock((CMItem *)pServer);
 			pServer = NULL;
 		}
-		syMutexGive(&servers.guard);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return pServer;
+		goto Exit;
     }
 
     /* create new server */
 	LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Creating new server %s", pDialect ? "(with required dialect)" : "");
 	pServer = createNewServer(host, extendedSecurity, ips, numIps);
-	cmMemoryFree(host);
+
 	if (NULL == pServer)
 	{
 		LOGERR(CM_TRC_LEVEL_ERROR, "Failed to create a server object");
-		syMutexGive(&servers.guard);
 		cmMemoryFree(ips);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NULL;
+		goto Exit;
 	}
 	if (nameIsIp)
 		pServer->useName = FALSE;
@@ -624,14 +722,17 @@ CCServer * ccServerFindOrCreate(const NQ_WCHAR * name, NQ_BOOL extendedSecurity,
 	{
 		LOGERR(CM_TRC_LEVEL_ERROR, "Failed to connect to server");
 		cmListItemUnlock((CMItem *)pServer);
-		syMutexGive(&servers.guard);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return NULL;
+		pServer = NULL;
+		goto Exit;
 	}
 
+Exit:
+	/* ips is stored into pServer->ips inside the createNewServer(), so do not free ips unless createNewServer() returns NULL */
+    cmMemoryFree(pdcName);
+	cmMemoryFree(host);
 	syMutexGive(&servers.guard);
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return pServer;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pServer);
+    return pServer;
 }
 
 NQ_BOOL ccServerConnect(CCServer * pServer, const NQ_WCHAR * name)
@@ -640,9 +741,10 @@ NQ_BOOL ccServerConnect(CCServer * pServer, const NQ_WCHAR * name)
 	const NQ_IPADDRESS * ips;	/* array of all server IPs */
 	NQ_INT numIps;		        /* number of resolved IPs */
 	const NQ_WCHAR * host;	    /* host name */
-	
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
-    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "server: %s", cmWDump(name));
+	NQ_BOOL result = FALSE;     /* return value */
+
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p name:%s", pServer, cmWDump(name));
+    /*LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "server: %s", cmWDump(name));*/
 
     cmListItemTake((CMItem *)pServer);
     if (ccUtilsNameToIp(name, &ip))
@@ -655,11 +757,9 @@ NQ_BOOL ccServerConnect(CCServer * pServer, const NQ_WCHAR * name)
 	}
 	if (NULL == host)
 	{
-        cmListItemGive((CMItem *)pServer);
 		sySetLastError(NQ_ERR_BADPATH);
 		LOGERR(CM_TRC_LEVEL_ERROR, "Cannot resolve server");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
+		goto Exit;
 	}
 	
 	/* now resolve all server IPs regardless of how it was specified: by name or by a single ip */
@@ -667,11 +767,9 @@ NQ_BOOL ccServerConnect(CCServer * pServer, const NQ_WCHAR * name)
 	if (NULL == ips)
 	{
 		cmMemoryFree(host);
-        cmListItemGive((CMItem *)pServer);
 		sySetLastError(NQ_ERR_BADPATH);
 		LOGERR(CM_TRC_LEVEL_ERROR, "Cannot resolve IPs for %s", name);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
+		goto Exit;
 	}
 
    	/* initialize server */
@@ -681,44 +779,54 @@ NQ_BOOL ccServerConnect(CCServer * pServer, const NQ_WCHAR * name)
    	pServer->calledName = NULL;
     pServer->item.name = (NQ_WCHAR *)host;
     /* connect to server */
-    pServer->vcNumber = 1;
     if (!connectServer(pServer, TRUE))
 	{
+		cmMemoryFree(host);
         cmMemoryFree(pServer->ips);
-        cmListItemGive((CMItem *)pServer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
+		goto Exit;
 	}
-  	cmMemoryFree(host);
+	result = TRUE;
 
+Exit:
     cmListItemGive((CMItem *)pServer);
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return TRUE;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+	return result;
 }
 
 NQ_BOOL ccServerReconnect(CCServer * pServer)
 {
 	CMIterator userIterator;		/* to enumerate users */
+    NQ_BOOL result = FALSE;         /* operation result */
 	
-	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%p", pServer);
 	
     cmListItemTake((CMItem *)pServer);
     if (pServer->isReconnecting)
     {
-        cmListItemGive((CMItem *)pServer);
-		LOGERR(CM_TRC_LEVEL_ERROR, "Server is already reconnecting");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Server is already reconnecting");
+        goto Exit;
     }
-	if (ccTransportIsConnected(&pServer->transport))
-	{
-        cmListItemGive((CMItem *)pServer);
-		sySetLastError(NQ_ERR_TIMEOUT);
-		LOGERR(CM_TRC_LEVEL_ERROR, "False alarm - the server is still connected");
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
+    if (ccTransportIsConnected(&pServer->transport))
+    {
+        LOGERR(CM_TRC_LEVEL_ERROR, "False alarm - the server is still connected");
+        sySetLastError(NQ_ERR_TIMEOUT);
+        result = TRUE;
+        goto Exit;
 	}
+
+    if (areUsersLoggedOn(pServer))
+    {
+    	LOGERR(CM_TRC_LEVEL_ERROR, "False alarm - All users are logged off");
+    	result = TRUE;
+    	goto Exit;
+    }
+
     pServer->isReconnecting = TRUE;
+	pServer->connectionBroke = FALSE;
+/*  cmListItemGive((CMItem *)pServer); */ /* To free other threads that should exit */
+/*	cmListItemTake((CMItem *)pServer); */
+    pServer->smb->signalAllMatch(&pServer->transport);
+    pServer->transport.connected = TRUE;
     ccTransportDisconnect(&pServer->transport);
     pServer->smb->freeContext(pServer->smbContext, pServer);
 	cmMemoryFreeBlob(&pServer->firstSecurityBlob);
@@ -734,6 +842,11 @@ NQ_BOOL ccServerReconnect(CCServer * pServer)
         cmU64Zero(&pUser->uid);
 		amSpnegoFreeKey(&pUser->sessionKey);
 		amSpnegoFreeKey(&pUser->macSessionKey);
+#ifdef UD_NQ_INCLUDESMB3
+		cmMemoryFreeBlob(&pUser->encryptionKey);
+		cmMemoryFreeBlob(&pUser->decryptionKey);
+		cmMemoryFreeBlob(&pUser->applicationKey);
+#endif /* UD_NQ_INCLUDESMB3 */
 	    cmListIteratorStart(&pUser->shares, &shareIterator);
 	    while (cmListIteratorHasNext(&shareIterator))
 	    {
@@ -749,26 +862,32 @@ NQ_BOOL ccServerReconnect(CCServer * pServer)
 	if (!connectServer(pServer, pServer->useExtendedSecurity))
 	{
 	    pServer->isReconnecting = FALSE;
-        cmListItemGive((CMItem *)pServer);
-		LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-		return FALSE;
 	}
 
+	cmListItemLock((CMItem *)pServer);
 	cmListIteratorStart(&pServer->users, &userIterator);
 	while (cmListIteratorHasNext(&userIterator))
 	{
 		CCUser * pUser;			/* next user pointer */
+		NQ_BOOL	 reconRes = FALSE;
 		
 		pUser = (CCUser *)cmListIteratorNext(&userIterator);
 		if (ccUserLogon(pUser))
 		{
-			ccUserReconnectShares(pUser);
+			result = ccUserReconnectShares(pUser);
+			if (result)
+			{
+				reconRes = TRUE;
+			}
 		}
-		else
+
+		if (!reconRes)
 		{
 			/* user couldnt logon, cleaning up everything */
 			CMIterator  shrItr;
 
+			LOGERR(CM_TRC_LEVEL_ERROR , "Reconnect failed.");
+			cmListItemLock((CMItem *)pUser);
 			cmListIteratorStart(&pUser->shares,&shrItr);
 			while (cmListIteratorHasNext(&shrItr))
 			{
@@ -779,19 +898,19 @@ NQ_BOOL ccServerReconnect(CCServer * pServer)
 				cmListIteratorStart(&pShare->files, &iterator);
 				while (cmListIteratorHasNext(&iterator))
 				{
-				    CMItem * pItem;
+				    CCFile * pFile = NULL;
 
-				    pItem = cmListIteratorNext(&iterator);
-				    cmListItemUnlock(pItem);
+				    pFile = (CCFile *)cmListIteratorNext(&iterator);
+				    pFile->disconnected = TRUE;
 				}
 				cmListIteratorTerminate(&iterator);
 				cmListIteratorStart(&pShare->searches, &iterator);
 			    while (cmListIteratorHasNext(&iterator))
 			    {
-			        CMItem * pItem;
+			    	CCSearch * pSearch;
 
-			        pItem = cmListIteratorNext(&iterator);
-			        cmListItemUnlock(pItem);
+			    	pSearch = (CCSearch *)cmListIteratorNext(&iterator);
+			    	pSearch->disconnected = TRUE;
 			    }
 			    cmListIteratorTerminate(&iterator);
 				ccMountIterateMounts(&mntItr);
@@ -807,15 +926,21 @@ NQ_BOOL ccServerReconnect(CCServer * pServer)
 				cmListIteratorTerminate(&mntItr);
 			}
 			cmListIteratorTerminate(&shrItr);
-			
+			cmListItemUnlock((CMItem *)pUser);
 		}
 	}
 	cmListIteratorTerminate(&userIterator);
+	cmListItemUnlock((CMItem *)pServer);
 
-    pServer->isReconnecting = FALSE;
+	if (result)
+	{
+		pServer->isReconnecting = FALSE;
+	}
+
+Exit:
     cmListItemGive((CMItem *)pServer);
-	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-	return TRUE;
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+	return result;
 }
 
 void ccServerIterateServers(CMIterator * iterator)
@@ -838,6 +963,8 @@ void ccCloseAllConnections(void)
 void ccCloseHiddenConnections(void)
 {
     CMIterator serverIterator;      /* server iterator */
+
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     cmListIteratorStart(&servers, &serverIterator);
     while (cmListIteratorHasNext(&serverIterator))
@@ -873,15 +1000,18 @@ void ccCloseHiddenConnections(void)
 					
                     if (pShare == pMount->share)
                     {
+                        cmListIteratorTerminate(&mountIterator);
                         doDisconnect = FALSE;
 						break;
                     }
                 }
+                cmListIteratorTerminate(&mountIterator);
                 cmListIteratorStart(&pShare->files, &fileItr);
                 if (cmListIteratorHasNext(&fileItr))
                 {
                     doDisconnect = FALSE;  
                 }
+                cmListIteratorTerminate(&fileItr);
                 if (doDisconnect)
 			    {
                     cmListItemCheck((CMItem *)pShare);
@@ -891,27 +1021,44 @@ void ccCloseHiddenConnections(void)
         }
         cmListIteratorTerminate(&userIterator);
     }
-    cmListIteratorTerminate(&serverIterator);
+	cmListIteratorTerminate(&serverIterator);
+	
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
-NQ_BOOL ccServerWaitForCredits(CCServer * pServer)
+NQ_BOOL ccServerWaitForCredits(CCServer * pServer, NQ_COUNT credits)
 {
+    NQ_INT newCredits;
     CMThread * curThread;   /* current thread pointer */
     NQ_BOOL res = TRUE;     /* operation result */
 
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "pServer:%p credits:%d - %d", pServer, pServer->credits, credits);
+
     cmListItemTake(&pServer->item);
-    while (pServer->credits <= 0)
+    syMutexTake(pServer->creditGuard);
+    newCredits = pServer->credits - (NQ_INT)credits;
+    while (newCredits <= 0)
     {
+    	syMutexGive(pServer->creditGuard);
         curThread = cmThreadGetCurrent();
         cmListItemAdd(&pServer->threads, &curThread->element.item, NULL);
         cmListItemGive(&pServer->item);
+
         res = cmThreadCondWait(&curThread->asyncCond, ccConfigGetTimeout());
         if (!res)
-        	return FALSE;
+        {
+            goto Exit;
+        }
         cmListItemTake(&pServer->item);
+        syMutexTake(pServer->creditGuard);
+        newCredits = pServer->credits - (NQ_INT)credits;
     }
-    pServer->credits--;
+    pServer->credits = newCredits;
+    syMutexGive(pServer->creditGuard);
     cmListItemGive(&pServer->item);
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "%s credits: %d", res ? "TRUE" : "FALSE", pServer->credits);
     return res;
 }
 
@@ -919,13 +1066,19 @@ void ccServerPostCredits(CCServer * pServer, NQ_COUNT credits)
 {
     CMThreadElement * element;  /* waiting thread */
 
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "pServer:%p credits:%d + %d", pServer, pServer->credits, credits);
+
+    syMutexTake(pServer->creditGuard);
     pServer->credits += (NQ_INT)credits;
+    syMutexGive(pServer->creditGuard);
+
     element = (CMThreadElement *)pServer->threads.first;
     if (NULL != element)
     {
         cmListItemRemove(&element->item);
         cmThreadCondSignal(&((CMThread *)element->thread)->asyncCond);
     }
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 #if SY_DEBUGMODE
@@ -938,4 +1091,3 @@ void ccServerDump(void)
 #endif /* SY_DEBUGMODE */
 
 #endif /* UD_NQ_INCLUDECIFSCLIENT */
-

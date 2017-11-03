@@ -26,6 +26,42 @@
 
 /*
  *====================================================================
+ * PURPOSE: Copy WCHAR string to either ASCII or UNICODE
+ *--------------------------------------------------------------------
+ * PARAMS:  IN destination
+ *          IN source
+ *          IN unicode flag
+ *
+ * RETURNS: pointer to the first byte after the result
+ *
+ * NOTES:
+ *====================================================================
+ */
+
+NQ_BYTE*
+cmWcharToStr(
+    NQ_BYTE *pp,
+    const NQ_WCHAR *str,
+    NQ_BOOL useUnicode
+    )
+{
+    if (useUnicode)
+    {
+        cmWStrcpy((NQ_WCHAR*)pp, str);
+        pp = cmAllignTwo(pp);
+        pp += (syWStrlen((NQ_WCHAR*)pp) + 1) * sizeof(NQ_WCHAR);
+    }
+    else
+    {
+        cmUnicodeToAnsi((NQ_CHAR*)pp, str);
+        pp += syStrlen((NQ_CHAR*)pp) + sizeof(NQ_CHAR);
+    }
+
+    return pp;
+}
+
+/*
+ *====================================================================
  * PURPOSE: Compare two strings ignoring case
  *--------------------------------------------------------------------
  * PARAMS:  IN first string
@@ -44,6 +80,8 @@ cmAStricmp(
     const NQ_CHAR* s2
     )
 {
+    NQ_INT result = 0;
+
 #ifdef UD_NQ_INCLUDECODEPAGE
     NQ_CHAR c1[2], c2[2];
     NQ_INT l1, l2;
@@ -55,11 +93,12 @@ cmAStricmp(
         if (l1 != l2 || c1[0] != c2[0] || (l1 == 2 && c1[1] != c2[1]))
             break;
         if (c1[0] == 0)
-            return 0;
+            goto Exit;
         s1 += l1;
         s2 += l2;
     }
-    return (c1[0] == c2[0]) ? (c1[1] - c2[1]) : (c1[0] - c2[0]);
+    result = (c1[0] == c2[0]) ? (c1[1] - c2[1]) : (c1[0] - c2[0]);
+Exit:
 #else
     NQ_CHAR c1, c2;
     for (;;)
@@ -74,8 +113,9 @@ cmAStricmp(
         if (c1 == 0)
             break;
     }
-    return (c1 - c2);
+    result = (c1 - c2);
 #endif
+    return result;
 }
 
 /*
@@ -100,6 +140,8 @@ cmAStrincmp(
     NQ_COUNT n
     )
 {
+    NQ_INT result = 0;
+
 #ifdef UD_NQ_INCLUDECODEPAGE
     NQ_CHAR c1[2], c2[2];
     for (;;)
@@ -117,8 +159,12 @@ cmAStrincmp(
         s2 += l2;
     }
     if (n <= 0)
-        return (NQ_INT)n; /* if n == -1, the input is wrong and an error is returned */
-    return (c1[0] == c2[0]) ? (c1[1] - c2[1]) : (c1[0] - c2[0]);
+    {
+        /* if n == -1, the input is wrong and an error is returned */
+        result = (NQ_INT)n;
+        goto Exit;
+    }
+    result = (c1[0] == c2[0]) ? (c1[1] - c2[1]) : (c1[0] - c2[0]);
 #else
     NQ_CHAR c1, c2;
 
@@ -132,12 +178,15 @@ cmAStrincmp(
         if (c1 != c2 || n-- <= 0)
             break;
         if (c1 == 0)
-            return 0;
+            goto Exit;
     }
     if (n == 0)
-        return 0;
-    return c1 - c2;
+        goto Exit;
+    result = c1 - c2;
 #endif
+
+Exit:
+    return result;
 }
 
 /*
@@ -169,42 +218,6 @@ cmAStrupr(
         s++;
     }
 #endif
-}
-
-/*
- *====================================================================
- * PURPOSE: Copy TCHAR string to either ASCII or UNICODE
- *--------------------------------------------------------------------
- * PARAMS:  IN destination
- *          IN source
- *          IN unicode flag
- *
- * RETURNS: pointer to the first byte after the result
- *
- * NOTES:
- *====================================================================
- */
-
-NQ_BYTE*
-cmTcharToStr(
-    NQ_BYTE *pp,
-    const NQ_TCHAR *str,
-    NQ_BOOL useUnicode
-    )
-{
-    if (useUnicode)
-    {
-        cmTcharToUnicode((NQ_WCHAR*)pp, str);
-        pp = cmAllignTwo(pp);
-        pp += (syWStrlen((NQ_WCHAR*)pp) + 1) * sizeof(NQ_WCHAR);
-    }
-    else
-    {
-        cmTcharToAnsi((NQ_CHAR*)pp, str);
-        pp += syStrlen((NQ_CHAR*)pp) + sizeof(NQ_CHAR);
-    }
-
-    return pp;
 }
 
 /*
@@ -298,12 +311,16 @@ cmAToupper(
     const NQ_CHAR* src
     )
 {
+    NQ_INT result;
+
 #ifdef UD_NQ_INCLUDECODEPAGE
-    return cmCpAToUpper(dst, src);
+    result = cmCpAToUpper(dst, src);
 #else
     *dst = syToupper(*src);
-    return 1;
+    result = 1;
 #endif
+
+    return result;
 }
 
 /*
@@ -325,6 +342,8 @@ cmAStrchr(
     NQ_INT c
     )
 {
+    NQ_CHAR* pResult = NULL;
+
 #ifdef UD_NQ_INCLUDECODEPAGE
     while (*str)
     {
@@ -333,15 +352,17 @@ cmAStrchr(
 
         if (len == 1 && *str == c)
         {
-            return (NQ_CHAR*)str;
+            pResult = (NQ_CHAR*)str;
+            goto Exit;
         }
         str += len;
     }
-    return NULL;
+Exit:
 #else
-    return syStrchr(str, c);
+    pResult = (NQ_CHAR *)syStrchr(str, c);
 #endif
 
+    return pResult;
 }
 
 /*
@@ -363,9 +384,9 @@ cmAStrrchr(
     NQ_INT c
     )
 {
-#ifdef UD_NQ_INCLUDECODEPAGE
     NQ_CHAR* pFound = NULL;
 
+#ifdef UD_NQ_INCLUDECODEPAGE
     while (*str)
     {
         NQ_CHAR upperStr[2];
@@ -377,9 +398,9 @@ cmAStrrchr(
         }
         str += len;
     }
-    return pFound;
 #else
-    return syStrrchr(str, c);
+    pFound = (NQ_CHAR *)syStrrchr(str, c);
 #endif
 
+    return pFound;
 }

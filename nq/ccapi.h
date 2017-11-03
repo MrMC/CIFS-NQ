@@ -19,7 +19,7 @@
 #include "syapi.h"
 #include "cmapi.h"
 #include "amcredentials.h"
-#include "ccconfig.h"
+#include "ccparams.h"
 
 
 /*********************************************************************
@@ -27,8 +27,8 @@
  ********************************************************************/
 
 /**** Credential fields length ****/
-#define CM_USERNAMELENGTH   256     /* maximum user name length */
-#define PASSWORD_LENGTH     UD_NQ_MAXPWDLEN /* maximum password length */
+#define CM_USERNAMELENGTH   256     				/* maximum user name length */
+#define PASSWORD_LENGTH     UD_NQ_MAXPWDLEN 		/* maximum password length */
 #define DOMAIN_LENGTH       (CM_NQ_HOSTNAMESIZE)    /* maximum domain name length */
 
 /**** Notification events ****/
@@ -48,6 +48,7 @@
 #define FILE_AM_READ            0   /* read-only */
 #define FILE_AM_WRITE           1   /* write-only */
 #define FILE_AM_READ_WRITE      2   /* read and write */
+#define FILE_AM_READ_ATTR		8	/* read attributes */
 
 /**** File share mode ****/
 #define FILE_SM_COMPAT          0   /* compatibility mode */
@@ -87,7 +88,9 @@
 /**** Errors ****/
 
 #define NQ_ERR_MODULE   (255 << 16)     /* This module defines the NQ error subset */
-
+#ifndef IS_NQ_ERROR
+#define IS_NQ_ERROR(err) ((err & NQ_ERR_MODULE) == NQ_ERR_MODULE)
+#endif
 #define NQ_ERR_OK               0  /* Success */
 #define NQ_ERR_BADPARAM         (NQ_ERR_MODULE | 3)  /* Parameter error */
 #define NQ_ERR_GETDATA          (NQ_ERR_MODULE | 18) /* error retrieving data */
@@ -102,7 +105,7 @@
 #define NQ_ERR_PATHNOTCOVERED   (NQ_ERR_MODULE | 27) /* path should be resolved over DFS */
 #define NQ_ERR_DFSCACHEOVERFLOW (NQ_ERR_MODULE | 28) /* DFS cache overflow */
 #define NQ_ERR_ACCOUNTLOCKEDOUT (NQ_ERR_MODULE | 29) /* account locked out */
-#define NQ_ERR_USEREXISTS       (NQ_ERR_MODULE | 30) /* acount already exists */
+#define NQ_ERR_USEREXISTS       (NQ_ERR_MODULE | 30) /* account already exists */
 #define NQ_ERR_USERNOTFOUND     (NQ_ERR_MODULE | 31) /* account name not mapped */
 #define NQ_ERR_OUTOFMEMORY      (NQ_ERR_MODULE | 901) /* failed to allocate memory block */
 
@@ -133,7 +136,7 @@
 #define NQ_ERR_INVALIDNAME      (NQ_ERR_MODULE | 1123)   /* File name or path contains invalid characters. */
 #define NQ_ERR_ALREADYEXISTS    (NQ_ERR_MODULE | 1183)   /* Object already exists. Returned on an attempt to create file or directory which already exists on the server. */
 #define NQ_ERR_BADPIPE          (NQ_ERR_MODULE | 1230)   /* RPC request specifies invalid handle or a handle that does correspond to an RPC pipe. */
-#define NQ_ERR_PIPEBUSY         (NQ_ERR_MODULE | 1231)   /* Server cannot currently perform the required RPC operation. Cleint can try again later. */
+#define NQ_ERR_PIPEBUSY         (NQ_ERR_MODULE | 1231)   /* Server cannot currently perform the required RPC operation. Client can try again later. */
 #define NQ_ERR_PIPECLOSING      (NQ_ERR_MODULE | 1232)   /* RPC pipe is being closed. */
 #define NQ_ERR_NOTCONNECTED     (NQ_ERR_MODULE | 1233)   /* Connection to server lost. */
 #define NQ_ERR_MOREDATA         (NQ_ERR_MODULE | 1234)   /* The entire payload does not fit in the response. */
@@ -208,10 +211,10 @@ typedef struct {
     NQ_UINT32 lastWriteTimeHigh;    /* high 32 bits of file last write time */
     NQ_UINT32 fileSizeLow;          /* low 32 bits of file data size */
     NQ_UINT32 fileSizeHigh;         /* high 32 bits of file data size */
-    NQ_UINT32 allocationSizeLow;    /* low 32 bits of file allocation sizee */
-    NQ_UINT32 allocationSizeHigh;   /* high 32 bits of file allocation sizee */
+    NQ_UINT32 allocationSizeLow;    /* low 32 bits of file allocation size */
+    NQ_UINT32 allocationSizeHigh;   /* high 32 bits of file allocation size */
     NQ_UINT32 fileNameLength;       /* file name length in characters */
-    NQ_WCHAR fileName[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];    /* file name buffer */
+    NQ_WCHAR fileName[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMECOMPONENTLEN)];    /* file name buffer */
 } FindFileDataW_t;  /* UNICODE version */
 
 /* file search data - ASCII version */
@@ -225,10 +228,10 @@ typedef struct {
     NQ_UINT32 lastWriteTimeHigh;    /* high 32 bits of file last write time */
     NQ_UINT32 fileSizeLow;          /* low 32 bits of file data size */
     NQ_UINT32 fileSizeHigh;         /* high 32 bits of file data size */
-    NQ_UINT32 allocationSizeLow;    /* low 32 bits of file allocation sizee */
-    NQ_UINT32 allocationSizeHigh;   /* high 32 bits of file allocation sizee */
+    NQ_UINT32 allocationSizeLow;    /* low 32 bits of file allocation size */
+    NQ_UINT32 allocationSizeHigh;   /* high 32 bits of file allocation size */
     NQ_UINT32 fileNameLength;       /* file name length in characters */
-    NQ_CHAR fileName[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];    /* file name buffer */
+    NQ_CHAR fileName[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMECOMPONENTLEN)];    /* file name buffer */
 } FindFileDataA_t;  /* ASCII version */
 
 /* This structure is used when calling <link ccFindFirstFile, ccFindFirstFile()>
@@ -249,14 +252,35 @@ typedef struct {
     NQ_UINT32 lastWriteTimeHigh;    /* high 32 bits of file last write time */
     NQ_UINT32 attributes;           /* file attributes as defined in <link File Attributes> */
     NQ_UINT32 volumeSerialNumber;   /* volume serial number */
-    NQ_UINT32 allocationSizeLow;    /* low 32 bits of file allocation sizee */
-    NQ_UINT32 allocationSizeHigh;   /* high 32 bits of file allocation sizee */
+    NQ_UINT32 allocationSizeLow;    /* low 32 bits of file allocation size */
+    NQ_UINT32 allocationSizeHigh;   /* high 32 bits of file allocation size */
     NQ_UINT32 fileSizeLow;          /* low 32 bits of file data size */
     NQ_UINT32 fileSizeHigh;         /* high 32 bits of file data size */
     NQ_UINT32 numberOfLinks;        /* number of hard links to this file */
     NQ_UINT32 fileIndexLow;         /* low 32 bits of file ID (always zero) */
     NQ_UINT32 fileIndexHigh;        /* high 32 bits of file ID (always zero) */
 } FileInfo_t;
+
+/* CCNetShareItem - ASCII version */
+typedef struct{
+    NQ_CHAR	*   name;               /* share name */
+    NQ_UINT32	type;               /* share type */
+    NQ_CHAR *	comment;            /* share comment */
+}CCNetShareItemA;
+
+/* CCNetShareItem - UNICODE version */
+typedef struct{
+    NQ_WCHAR *	name;               /* share name */
+    NQ_UINT32	type;               /* share type */
+    NQ_WCHAR *	comment;            /* share comment */
+}CCNetShareItemW;
+
+/* This structure is used when calling <link ccNetworkGetNextShareItem, ccNetworkGetNextShareItem()> */
+#ifdef UD_CM_UNICODEAPPLICATION
+    #define CCNetShareItem CCNetShareItemW
+#else
+    #define CCNetShareItem CCNetShareItemA
+#endif
 
 /*********************************************************************
  * API functions
@@ -268,15 +292,14 @@ typedef struct {
    
    The <i>fsNotify</i> parameter is used for callback
    notification. Application can provide this function to become
-   informed of important events inside NQ Notification is
-   useful, for instance, NQ Client is being wrapped as a local
-   filesystem.
+   informed of important events inside NQ Notification. It is
+   useful when, for instance, NQ Client is being wrapped as a local
+   file system.
    Parameters
    fsNotify :  Pointer to the notification function. This value can
-               be NULL.
-   
+               be NULL.   
    Returns
-   None                                                             */
+   None  Application can examine the error code for the failure reason. */
 NQ_BOOL ccInit(void (*fsdNotify)(NQ_INT eventId, NQ_ULONG param));
 
 /* Description
@@ -295,7 +318,7 @@ NQ_INT nqAddMountA(const NQ_CHAR *mountPoint, const NQ_CHAR *remotePath, NQ_BOOL
 NQ_INT nqAddMountW(const NQ_WCHAR *mountPoint, const NQ_WCHAR *remotePath, NQ_BOOL connect);   /* UNICODE version */
 
 /* Description
-   This function mounts the remote share as a local subdirectory
+   This function mounts the remote share as a local sub directory
    under the local virtual network file system. This call is a
    triplet call (see <link Summary>).
    Parameters
@@ -308,7 +331,7 @@ NQ_INT nqAddMountW(const NQ_WCHAR *mountPoint, const NQ_WCHAR *remotePath, NQ_BO
                  postpone connection to the first operation over
                  this mount point.
    Returns
-   This function returns 0 – if the mount point was connected
+   This function returns 0 if the mount point was connected
    successfully or -1 otherwise. Application can examine the
    error code for the failure reason.
    See Also
@@ -499,7 +522,7 @@ NQ_BOOL ccRemoveDirectoryW(const NQ_WCHAR *pathName);   /* UNICODE version */
 
 /* Description
    This function is called by application to create or open a
-   file. This call is a triplet call (see <link Summary>).
+   \file. This call is a triplet call (see <link Summary>).
    Parameters
    fileName :      Path of the file to be created/opened.
    access :        Desired file access mode (see <link File Access Modes>).
@@ -510,13 +533,16 @@ NQ_BOOL ccRemoveDirectoryW(const NQ_WCHAR *pathName);   /* UNICODE version */
                    response is returned, data is expected to be
                    on the disk or device.
    attributes :    \File attributes for a newly created file (see
-                   <link File Attributes>).
+                   <link File Attributes>).<p /><b>Warning</b>\:
+                   This parameter is obsolete and its value is
+                   not used. To set file attributes use the <link ccSetFileAttributes>
+                   call instead. 
    createAction :  Desired file create action (see <link File Create Actions>).
    openAction :    Desired file open action (see <link File Open Actions>).
    Returns
    This function returns NULL if it cannot create/open a file or
    a valid handle otherwise. The application can inspect the
-   error code for the failure reason.                                           */
+   error code for the failure reason.                                                  */
 #ifdef UD_CM_UNICODEAPPLICATION
     #define ccCreateFile ccCreateFileW
 #else
@@ -678,7 +704,7 @@ NQ_BOOL ccReadFile(NQ_HANDLE hndl, NQ_BYTE *buffer, NQ_UINT count, NQ_UINT *read
    
    Because of the asynchronous character of this operation the
    \return value does not reflect read results. Application
-   should use <i>callback</i> to analyse read results.                                                                      */
+   should use <i>callback</i> to analyze read results.                                                                      */
 NQ_BOOL ccReadFileAsync(NQ_HANDLE hndl, NQ_BYTE *buffer, NQ_UINT count, void * context, void (* callback)(NQ_STATUS, NQ_UINT, void *));
 
 /* Description
@@ -712,7 +738,7 @@ NQ_BOOL ccWriteFile(NQ_HANDLE hndl, NQ_BYTE *buffer, NQ_UINT count, NQ_UINT *wri
 
 /* Description
    This function is called by application to write data to an
-   open file using asyncrhonous operations.
+   open file using asynchronous operations.
    
    Upon successful completion NQ schedules necessary write
    operations. When all writes will be complete, NQ will call
@@ -755,7 +781,7 @@ NQ_BOOL ccWriteFile(NQ_HANDLE hndl, NQ_BYTE *buffer, NQ_UINT count, NQ_UINT *wri
    
    Because of the asynchronous character of this operation the
    \return value does not reflect write results. Application
-   should use <i>callback</i> to analyse write results.                                                                      */
+   should use <i>callback</i> to analyze write results.                                                                      */
 NQ_BOOL ccWriteFileAsync(NQ_HANDLE hndl, NQ_BYTE *buffer, NQ_UINT count, void * context, void (* callback)(NQ_STATUS , NQ_UINT, void *));
 
 /* Description
@@ -819,6 +845,49 @@ NQ_BOOL ccGetDiskFreeSpaceA(const NQ_CHAR *pathName, NQ_UINT *sectorsPerCluster,
 NQ_BOOL ccGetDiskFreeSpaceW(const NQ_WCHAR *pathName, NQ_UINT *sectorsPerCluster, 
                             NQ_UINT *bytesPerSector, NQ_UINT *freeClusters, NQ_UINT *totalClusters, 
                             NQ_UINT *fsType, NQ_UINT *serialNumber);    /* UNICODE version */
+
+/* Description
+   Extended version of <link ccGetDiskFreeSpace>. When disk is
+   larger than 4 giga clusters - only the extended version gives
+   the correct result.
+   Parameters
+   pathName :           Path of any object on the remote share
+                        the free disk space information is
+                        requested for.
+   sectorsPerCluster :  Pointer to a variable which will receive
+                        the number of sectors per cluster on the
+                        remote share.
+   bytesPerSector :     Pointer to a variable which will receive
+                        the number of bytes per sector on the
+                        remote share.
+   freeClusters :       Pointer to a variable which will receive
+                        the number of free clusters on the remote
+                        share.
+   totalClusters :      Pointer to a variable which will receive
+                        the number of total clusters on the
+                        remote share.
+   fsType :             Pointer to a variable which will receive
+                        the type of the file system.
+   serialNumber :       Pointer to a variable which will receive
+                        the serial number of the file system
+   Returns
+   This function returns TRUE if the remote disk information is
+   received successfully or FALSE otherwise. The application can
+   inspect the error code for the failure reason.                 */
+
+#ifdef UD_CM_UNICODEAPPLICATION
+    #define ccGetDiskFreeSpaceEx ccGetDiskFreeSpaceExW
+#else
+    #define ccGetDiskFreeSpaceEx ccGetDiskFreeSpaceExA
+#endif
+NQ_BOOL ccGetDiskFreeSpaceExA(const NQ_CHAR *pathName, NQ_UINT *sectorsPerCluster,
+                            NQ_UINT *bytesPerSector, NQ_UINT64 *freeClusters, NQ_UINT64 *totalClusters,
+                            NQ_UINT *fsType, NQ_UINT *serialNumber);    /* ASCII version */
+NQ_BOOL ccGetDiskFreeSpaceExW(const NQ_WCHAR *pathName, NQ_UINT *sectorsPerCluster,
+                            NQ_UINT *bytesPerSector, NQ_UINT64 *freeClusters, NQ_UINT64 *totalClusters,
+                            NQ_UINT *fsType, NQ_UINT *serialNumber);    /* UNICODE version */
+
+
 
 /* Description
    This function is called by application to get attributes of
@@ -987,13 +1056,29 @@ NQ_UINT32 ccGetFileSize(NQ_HANDLE handle, NQ_UINT32 *fileSizeHigh);
 NQ_BOOL ccGetFileInformationByHandle(NQ_HANDLE handle, FileInfo_t *fileInfo);
 
 #ifdef UD_CC_INCLUDEOLDBROWSERAPI
+/* Description
+   This function allows to modify the default timeout value timeout
+   value for the GetBackupList operation.
+   
+   This operation is sent as a broadcast. NQ issues this
+   operation when starting network browsing.
+   
+   The default value is defined in the
+   UD_CC_CLIENTRESPONSETIMEOUT parameter.
+   Parameters
+   seconds :  Timeout in seconds.
+   
+   Returns
+   None                                                             */
+
+void ccSetGetBackupListTimeout(NQ_UINT32 seconds);
 
 #ifdef UD_NQ_USETRANSPORTNETBIOS
 
 /* Description
    This function is called by application to get the
    domains/workgroups collected from the network. Browser daemon
-   listens on the network for the domain announcements packets
+   listens on the network for the domain announcement packets
    which are sent by Local Master Browsers of each
    domain/workgroup once per 12 minutes. If no announcements
    have been captured so far then this function returns an empty
@@ -1001,7 +1086,7 @@ NQ_BOOL ccGetFileInformationByHandle(NQ_HANDLE handle, FileInfo_t *fileInfo);
    
    This call is a triplet call (see <link Summary>).
    Parameters
-   listBuffer :  Buffer to place the ‘\\0’ separated list of
+   listBuffer :  Buffer to place the '\\0' separated list of
                  domains/workgroups.
    bufferSize :  Size of listBuffer.
    count :       Pointer to a variable that will receive the
@@ -1011,7 +1096,7 @@ NQ_BOOL ccGetFileInformationByHandle(NQ_HANDLE handle, FileInfo_t *fileInfo);
    is obtained successfully or FALSE otherwise. Application can
    examine the error code for the failure.
    Note
-   This function is only avaiable when NQ supports the NetBIOS transport. 
+   This function is only available when NQ supports the NetBIOS transport.
    Note
    This function is deprecated. Use new Browser API instead. The
    functions of the new Browser API are designated with a <i>ccNetwork...
@@ -1026,6 +1111,44 @@ NQ_BOOL nqGetCachedWorkgroupsW(NQ_WCHAR *listBuffer, NQ_UINT  bufferSize, NQ_UIN
 
 /* Description
    This function defines the name of domain/workgroup that will
+   be used as the default in subsequent calls to ccNetwork methods.
+   This call is a triplet call (see <link Summary>).
+   Parameters
+   domain:  The name of the default domain/workgroup to be used in
+            subsequent calls.
+   Returns
+   None                                                         
+   Note
+   This function is only available when NQ supports the NetBIOS transport.
+   Note
+   This function is part of the new browser API, it replaces
+   nqSetClientDefaultWorkgroup.
+   */
+#ifdef UD_CM_UNICODEAPPLICATION
+    #define ccNetworkSetDefaultDomain ccNetworkSetDefaultDomainW
+#else
+    #define ccNetworkSetDefaultDomain ccNetworkSetDefaultDomainA
+#endif
+void ccNetworkSetDefaultDomainA(const NQ_CHAR *domain);      /* ASCII version */
+void ccNetworkSetDefaultDomainW(const NQ_WCHAR *domain);     /* UNICODE version */
+
+/*  Description
+    This function sets network browsing cache state.
+
+    Network browsing cache is enabled by default.
+
+    Parameters
+    timeout : timeout/ttl value for entry cache (0 to disable cache)
+    Returns
+    None. 
+    Note
+    When cache is enabled domains, servers and shares per server are cached.
+    This function is part of the new browser API.
+    */
+void ccNetworkCacheSet(NQ_UINT32 timeout);
+
+/* Description
+   This function defines the name of domain/workgroup that will
    be used as the default in subsequent calls. This call is a
    triplet call (see <link Summary>).
    Parameters
@@ -1033,9 +1156,9 @@ NQ_BOOL nqGetCachedWorkgroupsW(NQ_WCHAR *listBuffer, NQ_UINT  bufferSize, NQ_UIN
                 subsequent browser related calls as the default
                 domain/workgroup.
    Returns
-   None                                                         
+   None
    Note
-   This function is only avaiable when NQ supports the NetBIOS transport. 
+   This function is only available when NQ supports the NetBIOS transport.
    Note
    This function is deprecated. Use new Browser API instead. The
    functions of the new Browser API are designated with a <i>ccNetwork...
@@ -1048,22 +1171,49 @@ NQ_BOOL nqGetCachedWorkgroupsW(NQ_WCHAR *listBuffer, NQ_UINT  bufferSize, NQ_UIN
 void nqSetClientDefaultWorkgroupA(NQ_CHAR *workgroup);      /* ASCII version */
 void nqSetClientDefaultWorkgroupW(NQ_WCHAR *workgroup);     /* UNICODE version */
 
+
+/* Description
+   This function is called by application to get the name of the
+   workgroup/domain that CIFS Client will use by default. This
+   default will be used in those CIFS Client functions where
+   workgroup/domain is not explicitly specified.
+   
+   This call is a triplet call (see <link Summary>).
+   Parameters
+   none
+   Returns
+		Buffer pointer to the name of the default
+        domain/workgroup.
+   Note
+   This function is relevant when NQ supports the NetBIOS transport.
+   Note
+   This function is part of the new Browser API. The functions of the
+    new Browser API are designated with a <i>ccNetwork...
+   </i>prefix.                                                            */
+#ifdef UD_CM_UNICODEAPPLICATION
+    #define ccNetworkGetDefaultDomain ccNetworkGetDefaultDomainW
+#else
+    #define ccNetworkGetDefaultDomain ccNetworkGetDefaultDomainA
+#endif
+const NQ_CHAR* ccNetworkGetDefaultDomainA();      /* ASCII version */
+const NQ_WCHAR* ccNetworkGetDefaultDomainW();     /* UNICODE version */
+
 /* Description
    This function is called by application to get the name of the
    workgroup/domain that CIFS Client will use by default. This
    workgroup/domain will be used in those CIFS Client functions
    where workgroup/domain is not explicitly specified.
-   
+
    This call is a triplet call (see <link Summary>).
    Parameters
    workgroup :  Buffer to place the name of the default
                 domain/workgroup. This buffer should be able to
                 accommodate at least <link DOMAIN_LENGTH>
-                charactesr.
+                characters.
    Returns
    None
    Note
-   This function is only avaiable when NQ supports the NetBIOS transport. 
+   This function is relevant when NQ supports the NetBIOS transport.
    Note
    This function is deprecated. Use new Browser API instead. The
    functions of the new Browser API are designated with a <i>ccNetwork...
@@ -1078,7 +1228,7 @@ void nqGetClientDefaultWorkgroupW(NQ_WCHAR *workgroup);     /* UNICODE version *
 
 /* Description
    This function is called by application to get the list of all
-   domains/workgroups registered with the default workgroup’s
+   domains/workgroups registered with the default workgroup's
    Local Master Browser. Normally Local Master Browser of each
    domain/workgroup has a list of all known domains/workgroups.
    If no domains/workgroups are known then it is possible to
@@ -1088,7 +1238,7 @@ void nqGetClientDefaultWorkgroupW(NQ_WCHAR *workgroup);     /* UNICODE version *
    
    This call is a triplet call (see <link Summary>).
    Parameters
-   listBuffer :  Buffer to place the ‘\\0’ separated list of
+   listBuffer :  Buffer to place the '\\0' separated list of
                  domains/workgroups.
    bufferSize :  Size of listBuffer.
    count :       Pointer to a variable that will receive the
@@ -1102,7 +1252,7 @@ void nqGetClientDefaultWorkgroupW(NQ_WCHAR *workgroup);     /* UNICODE version *
    
    <link nqGetWorkgroupsByWg, nqGetWorkgroupsByWg()>
    Note
-   This function is only avaiable when NQ supports the NetBIOS transport. 
+   This function is only available when NQ supports the NetBIOS transport.
    Note
    This function is deprecated. Use new Browser API instead. The
    functions of the new Browser API are designated with a <i>ccNetwork...
@@ -1117,7 +1267,7 @@ NQ_BOOL nqGetWorkgroupsW(NQ_WCHAR *listBuffer, NQ_COUNT bufferSize, NQ_INT *coun
 
 /* Description
    This function is called by application to get the list of all
-   domains/workgroups registered with the specified workgroup’s
+   domains/workgroups registered with the specified workgroup's
    Local Master Browser. This function can be used if at least
    one domain/workgroup is known on the network. Normally Local
    Master Browser of each domain/workgroup has a list of all
@@ -1129,7 +1279,7 @@ NQ_BOOL nqGetWorkgroupsW(NQ_WCHAR *listBuffer, NQ_COUNT bufferSize, NQ_INT *coun
    This call is a triplet call (see <link Summary>).
    Parameters
    workgroup :   Workgroup/Domain name.
-   listBuffer :  Buffer to place the ‘\\0’ separated list of
+   listBuffer :  Buffer to place the '\\0' separated list of
                  domains/workgroups.
    bufferSize :  Size of listBuffer.
    count :       Pointer to a variable that will receive the number
@@ -1141,7 +1291,7 @@ NQ_BOOL nqGetWorkgroupsW(NQ_WCHAR *listBuffer, NQ_COUNT bufferSize, NQ_INT *coun
    See Also
    <link nqGetCachedWorkgroups, nqGetCachedWorkgroups()>
    Note
-   This function is only avaiable when NQ supports the NetBIOS transport. 
+   This function is only available when NQ supports the NetBIOS transport.
    Note
    This function is deprecated. Use new Browser API instead. The
    functions of the new Browser API are designated with a <i>ccNetwork...
@@ -1162,7 +1312,7 @@ NQ_BOOL nqGetWorkgroupsByWgW(NQ_WCHAR *workgroup, NQ_WCHAR *listBuffer, NQ_COUNT
    hosts in the default Domain/Workgroup. This call is a triplet
    call (see <link Summary>).
    Parameters
-   listBuffer :  Buffer to place the ‘\\0’ separated list of
+   listBuffer :  Buffer to place the '\\0' separated list of
                  hosts.
    bufferSize :  Size of listBuffer in characters.
    count :       Pointer to a variable that will receive the
@@ -1191,7 +1341,7 @@ NQ_BOOL nqGetHostsInWorkgroupW(NQ_WCHAR *listBuffer, NQ_COUNT bufferSize, NQ_INT
    triplet call (see <link Summary>).
    Parameters
    workgroup :   Domain/workgroup name.
-   listBuffer :  Buffer to place the ‘\\0’ separated list of hosts.
+   listBuffer :  Buffer to place the '\\0' separated list of hosts.
    bufferSize :  Size of listBuffer in characters.
    count :       Pointer to a variable that will receive the number
                  of items in the list returned.
@@ -1218,7 +1368,7 @@ NQ_BOOL nqGetHostsInWorkgroupByWgW(NQ_WCHAR *workgroup, NQ_WCHAR *listBuffer, NQ
    (see <link Summary>).
    Parameters
    hostName :    Host name.
-   listBuffer :  Buffer to place the ‘\\0’ separated list of
+   listBuffer :  Buffer to place the '\\0' separated list of
                  shares.
    bufferSize :  Size of listBuffer in characters.
    count :       Pointer to a variable that will receive the
@@ -1292,7 +1442,7 @@ NQ_BOOL nqGetShareInfoW(NQ_WCHAR *hostName, NQ_WCHAR *shareName, NQ_UINT16 *type
    Note
    The resulted handle is not thread-safe.
    Note
-   This function is only avaiable when NQ supports the NetBIOS transport. 
+   This function is only available when NQ supports the NetBIOS transport. 
    See Also
    <link ccNetworkGetNextItemName, ccNetworkGetNextItemName()>
    
@@ -1316,7 +1466,7 @@ NQ_HANDLE ccNetworkEnumerateDomains(void);
    This call is a triplet call (see <link Summary>).
    Parameters
    domain :  Domain/workgroup name. This call will return a list
-             of servers for this domain/workgroup.
+             of servers for this domain/workgroup. When domain name not supplied the default one will be used see <link ccNetworkSetDefaultDomain, ccNetworkSetDefaultDomain()>
    Returns
    This function returns an enumeration handle. Application
    should use this abstract handle in subsequent calls to <link ccNetworkGetNextItemName, ccNetworkGetNextItemName()>.
@@ -1351,7 +1501,7 @@ NQ_HANDLE ccNetworkEnumerateServersW(const NQ_WCHAR * domain); 			/* UNICODE ver
    This call is a triplet call (see <link Summary>).
    Parameters
    server :  Server name. This call will return a list of shares
-             for this domain/workgroup.
+             for this server.
    Returns
    This function returns an enumeration handle. Application
    should use this abstract handle in subsequent calls to <link ccNetworkGetNextItemName, ccNetworkGetNextItemName()>.
@@ -1377,13 +1527,44 @@ NQ_HANDLE ccNetworkEnumerateSharesW(const NQ_WCHAR * server);				/* UNICODE vers
    <link ccNetworkEnumerateServers, ccNetworkEnumerateServers()>
    or <link ccNetworkEnumerateShares, ccNetworkEnumerateShares()>).
    .
-   
+
    Application may withdraw share names one by one by calling <link ccNetworkGetNextItemName, ccNetworkGetNextItemName()>
    with the handle obtained in the current call. When finished
    with domain enumeration, application must call <link ccNetworkCloseHandle@NQ_HANDLE, ccNetworkCloseHandle()>
    to release resources associated with this handle.
-   
+
    This call is a triplet call (see <link Summary>).
+   Parameters
+   handle :  Enumeration handle as obtained in one of Browser
+             enumeration calls.
+   Returns
+   This function returns a pointer to the next item name in the
+   enumeration. Item type depends on the handle source - one of
+   the browser enumeration calls. This function returns a NULL
+   pointer when NQ Client reaches the end of enumeration.
+   See Also
+   <link ccNetworkEnumerateDomains, ccNetworkEnumerateDomains()>
+
+   <link ccNetworkEnumerateServers, ccNetworkEnumerateServers()>
+
+   <link ccNetworkEnumerateShares, ccNetworkEnumerateShares()>                                                            */
+#ifdef UD_CM_UNICODEAPPLICATION
+    #define ccNetworkGetNextItemName ccNetworkGetNextItemNameW
+#else
+    #define ccNetworkGetNextItemName ccNetworkGetNextItemNameA
+#endif
+const NQ_CHAR * ccNetworkGetNextItemNameA(NQ_HANDLE handle);			/* ASCII version */
+const NQ_WCHAR * ccNetworkGetNextItemNameW(NQ_HANDLE handle);			/* UNICODE version */
+
+/* Description
+   Application calls this function after successfully staring a
+   share enumeration (<link ccNetworkEnumerateShares, ccNetworkEnumerateShares()>).
+   
+   Application may withdraw CCNetShareItem Items one by one by calling <link ccNetworkGetNextShareItem, ccNetworkGetNextShareItem()>
+   with the handle obtained in the current call. When finished
+   with domain enumeration, application must call <link ccNetworkCloseHandle@NQ_HANDLE, ccNetworkCloseHandle()>
+   to release resources associated with this handle.
+   
    Parameters
    handle :  Enumeration handle as obtained in one of Browser
              enumeration calls. 
@@ -1393,18 +1574,10 @@ NQ_HANDLE ccNetworkEnumerateSharesW(const NQ_WCHAR * server);				/* UNICODE vers
    the browser enumeration calls. This function returns a NULL
    pointer when NQ Client reaches the end of enumeration.
    See Also
-   <link ccNetworkEnumerateDomains, ccNetworkEnumerateDomains()>
-   
-   <link ccNetworkEnumerateServers, ccNetworkEnumerateServers()>
    
    <link ccNetworkEnumerateShares, ccNetworkEnumerateShares()>                                                            */
-#ifdef UD_CM_UNICODEAPPLICATION
-    #define ccNetworkGetNextItemName ccNetworkGetNextItemNameW
-#else
-    #define ccNetworkGetNextItemName ccNetworkGetNextItemNameA
-#endif
-const NQ_CHAR * ccNetworkGetNextItemNameA(NQ_HANDLE handle);			/* ASCII version */
-const NQ_WCHAR * ccNetworkGetNextItemNameW(NQ_HANDLE handle);			/* UNICODE version */
+
+CCNetShareItem * ccNetworkGetNextShareItem(NQ_HANDLE handle);
 
 /* Description
    This function is called by application to get information
@@ -1472,30 +1645,58 @@ NQ_BOOL ccNetworkCloseHandle(NQ_HANDLE handle);
 NQ_BOOL ccNetworkResetHandle(NQ_HANDLE handle);
 
 /* Description
+   This function must be called only by the driver.
+   When the FUSE driver runs in regular mode (not debug) it creates a
+   hard fork and closes parent process. This causes the receiving thread
+   to be killed.
+   This function is used to restart the receiving thread.
+
+   Parameters
+   none
+
+   Returns
+   TRUE on success or FALSE on error.
+   Note
+   Currently, this function always return TRUE.	*/
+
+   NQ_BOOL ccTransportRestartRecieveThread();
+
+/* Description
+  This function is called by application to set the current
+  Message Signing mode.
+  Parameters
+  enable: 	if set to TRUE NQ Client will sign messages.
+   	   	   	if set to FALSE NQ Client will not sign  messages.
+  Returns
+  None
+  Note
+  Default is TRUE.
+  It's not recommended to set to FALSE unless the server shows unusual behavior.    */
+void ccSetSigningPolicy(NQ_BOOL enable);
+
+
+
+/* Description
    This function is called by application to set the NQ CIFS
    Client security configuration. Before this function is called
-   NQ CIFS Client uses the default security configuration (<link NQ_CC_AUTH_LM_AND_NTLM>
-   and no message signing).
+   NQ CIFS Client uses the default security configuration (<link AM_MAXSECURITYLEVEL>)
    Parameters
    authenticationLevel :  LAN Manager authentication level. The
-                          value of this parameter can be one of
-                          the following\:<p /><link NQ_CC_AUTH_LM_AND_NTLM><p /><link NQ_CC_AUTH_NTLM><p /><link NQ_CC_AUTH_NTLM_V2><p /><link NQ_CC_AUTH_SPNEGO_KERBEROS>
-   messageSigning :       Message signing. The value of this
-                          parameter can be one of the following\:<p />TRUE
-                          – sign messages if server supports
-                          signing<p />FALSE – do not sign if
-                          server does not require signing
+                          value of this parameter corresponds to table <link amSpnegoDefineLevel, amSpnegoDefineLevel()>
+   messageSigning :       This parameter has no impact.
    Returns
-   None                                                                                                                                                                    */
+   None
+   Note
+   This function is deprecated.  */
 void nqSetSecurityParams(NQ_INT authenticationLevel, NQ_BOOL messageSigning);
 
 /* Description
    This function is called by application to get the current
    Message Signing mode.
    Returns
-   This function returns TRUE if the current mode is set to sign
-   messages if server supports signing or FALSE if it is set to
-   not sign if server does not require signing.                  */
+   This function always returns TRUE.
+   Note
+   This function is deprecated.    */
 NQ_BOOL nqGetMessageSigning(void);
 
 /* Description
@@ -1503,7 +1704,9 @@ NQ_BOOL nqGetMessageSigning(void);
    Authentication Level.
    Returns
    This function returns the current Authentication Level (see
-   ???).                                                       */
+   <link nqSetSecurityParams, nqSetSecurityParams()>).
+   Note
+   This function is deprecated.  */
 NQ_INT nqGetAuthenticationLevel(void);
 
 /* Description
@@ -1569,14 +1772,14 @@ void ccCloseHiddenConnections(void);
            default value is 15 seconds.
    Returns
    None                                                       */
-void ccConfigSetTimeout(NQ_TIME secs);
+void ccConfigSetTimeout(NQ_UINT32 secs);
 
 /* Description
    Get the current value of SMB timeout.
    Returns 
    Number of seconds to wait for an SMB response. The default value is 15 seconds.
  */
-NQ_TIME ccConfigGetTimeout(void);
+NQ_UINT32 ccConfigGetTimeout(void);
 
 #ifdef UD_CC_INCLUDEDOMAINMEMBERSHIP
 
@@ -1593,7 +1796,7 @@ NQ_TIME ccConfigGetTimeout(void);
    domain :    Name of the domain to join. This may be a fully
                qualified name.
    computer :  Name of the computer (host) that joins.
-   admin :     Administrative credentials for tis domain.
+   admin :     Administrative credentials for its domain.
    secret :    Buffer for computer password. This buffer should
                accommodate at least 16 bytes .
    Returns
@@ -1623,7 +1826,7 @@ NQ_BOOL ccDomainJoinW(const NQ_WCHAR *domain, const NQ_WCHAR *computer,
    Parameters
    domain :    Name of the domain to leave.
    computer :  Name of the computer (host) that leaves.
-   admin :     Administrative credentials for tis domain.
+   admin :     Administrative credentials for its domain.
    Returns
    This function returns TRUE if computer successfully leaves
    the domain or FALSE otherwise. The application can inspect
@@ -1681,19 +1884,19 @@ NQ_BOOL ccDomainLogonW(const NQ_WCHAR *domain, const NQ_WCHAR * computer,
    makeExclusive parameter is TRUE the following access rights
    will be applied:
    
-   • Owner – full access
+   * Owner - full access
    
-   • Administrators (group) – full access
+   * Administrators (group) - full access
    
-   • All others – no access
+   * All others - no access
    
-   • When applied to a folder, access rights will be propagated
+   * When applied to a folder, access rights will be propagated
    down to subfolders/files, unless they have non-inheriting
    security descriptors
    
-   • The ownership is changed to the user authenticated.
+   * The ownership is changed to the user authenticated.
    
-   • Access rights of the parent directory will be no more
+   * Access rights of the parent directory will be no more
    inherited.
    
    When the second parameter is FALSE file descriptor is
@@ -1747,20 +1950,67 @@ NQ_BOOL ccIsExclusiveAccessToFileW(NQ_WCHAR *fileName); /* UNICODE version */
    Register the current system thread.
 
    This function creates an NQ object describing the current system (application) thread. 
-   NQ expects the application to call cmThreadUnsubscribe() to release NQ resources accosiated with
-   this thread. If this thread was alreday registered, nothing will happen. 
+   NQ expects the application to call cmThreadUnsubscribe() to release NQ resources associated with
+   this thread. If this thread was already registered, nothing will happen.
    Returns
    None.                                      */
 void ccThreadSubscribe(void);
 
 /* Description
-   Release the resources accosiated with the current system thread.
+   Release the resources associated with the current system thread.
 
    NQ assumes that the current system (application) thread was registered with a 
    cmThreadSubscribe() call. If this is not true, nothing will happen. 
    Returns
    None.                                      */
 void ccThreadUnsubscribe(void);
+
+/* Description
+   Returns last SMB NT error status for application thread.
+
+   Status returned is for last SMB command response from server.
+   Returns
+   Error code.                                      */
+NQ_UINT32 ccGetNTStatus(void);
+
+/* Description
+   This function is called by the application when some 
+	returned NQ error value should be translated to a SMB 
+	error.
+	
+	Parameters
+	nqErrorCode: the error code returned from some nq function.
+
+	Returns 
+	SMB error code.                                    */
+NQ_UINT32 ccErrorToSmbStatus(NQ_UINT32 nqError);
+
+/*  Description
+    Available SMB dialects.
+
+    See <link ccSetSmbDialect>. */
+typedef enum
+{
+    CC_SMB100, /* SMB 1 */
+    CC_SMB202, /* SMB 2.0.2 */
+    CC_SMB210, /* SMB 2.1.0 */
+    CC_SMB300, /* SMB 3.0.0 */
+    CC_SMB302, /* SMB 3.0.2 */
+    CC_SMB311  /* SMB 3.1.1 */
+}
+CCSmbDialect;
+
+/*  Description
+    Activates or deactivates selected SMB dialect.
+
+    This function affects new connections and it does not affect the existing connections.
+    Parameters
+    dialect: SMB dialect value, see <link SMBDialect>
+    setActive : <i>TRUE,/i> to enable this dialect or <i>FALSE</i> to disable it.
+
+    Returns
+    <i>TRUE,/i> or <i>FALSE</i> .                                    */
+NQ_BOOL ccSetSmbDialect(CCSmbDialect dialect, NQ_BOOL setActive);
 
 #endif /* _CCAPI_H_ */
 

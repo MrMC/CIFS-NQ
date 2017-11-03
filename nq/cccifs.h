@@ -20,19 +20,44 @@
 #include "cmbuf.h"
 #include "cmsdescr.h"
 #include "nsapi.h"
+#include "cmsmb2.h"
+
+/* -- Constants -- */
+
+#ifdef UD_NQ_INCLUDESMB2
+#define CCCIFS_SMB_ANY_SMB2
+#endif /* UD_NQ_INCLUDESMB2 */
+
+#ifdef UD_NQ_INCLUDESMB2
+#ifdef UD_NQ_INCLUDESMB3
+#ifdef UD_NQ_INCLUDESMB311
+#define CCCIFS_SMB_NUM_DIALECTS 7
+#else
+#define CCCIFS_SMB_NUM_DIALECTS 6
+#endif /* UD_NQ_INCLUDESMB311 */
+#else
+#ifdef CCCIFS_SMB_ANY_SMB2
+#define CCCIFS_SMB_NUM_DIALECTS 4
+#else
+#define CCCIFS_SMB_NUM_DIALECTS 3
+#endif /* CCCIFS_SMB_ANY_SMB2 */
+#endif /* UD_NQ_INCLUDESMB3 */
+#else /* UD_NQ_INCLUDESMB2 */
+#define CCCIFS_SMB_NUM_DIALECTS 1
+#endif /* UD_NQ_INCLUDESMB2 */
 
 /* -- Structures -- */
 
 /* Description
    Prototype for a callback function to parse one DFS referral.
    
-   This function is called from DFS query function of the procol
+   This function is called from DFS query function of the protocol
    object (see <link _cccifssmb::doQueryDfsReferrals, doQueryDfsReferrals>) 
    for each referral entry.
    Parameters
    reader :  The reader to use for parsing. This reader's pointer
              should be set at the beginning of the DFS response
-             portion of the SMB response payload. After retrun from this
+             portion of the SMB response payload. After return from this
              function, the reader should point right after the end of the 
              DFS response portion.                         
    Returns 
@@ -72,30 +97,12 @@ typedef void (* CCCifsWriteCallback) (NQ_STATUS status, NQ_UINT len, void * cont
 typedef void (* CCCifsReadCallback) (NQ_STATUS status, NQ_UINT len, void * context, NQ_BOOL final);
 
 /* Description
-   Prototype for a callback function on file information
-   response.
-   
-   This function is supplied as a parameter to <link _cccifssmb::doQueryFileInfoByName, doQueryFileInfoByName>
-   or <link _cccifssmb::doQueryFileInfoByHandle, doQueryFileInfoByHandle>
-   function of the protocol. Protocol calls this callback after
-   parsing a query response.
-   Parameters
-   reader :   A reader set to the very first byte of a file
-              information entry. This entry should conform to <i>FileAllInformation</i>.
-   context :  Caller's context as passed to a <link _cccifssmb::doQueryFileInfoByName, doQueryFileInfoByName>
-              or <link _cccifssmb::doQueryFileInfoByHandle, doQueryFileInfoByHandle>
-              call.
-   Returns
-   None.                                                                                                       */
-typedef void (* CCCifsParseFileInfoCallback) (CMBufferReader * reade, void * context);
-
-/* Description
    This structure represents a CIFS dialect (SMB, SMB2, SMB2.1).
    
    It mostly comprises function pointers for abstract CIFS
    functionality.
    
-   Most of fucntion pointers have a signature of type:
+   Most of function pointers have a signature of type:
    <code>
      NQ_BOOL \<func\>(NQSocketHandle socket, ...);
    </code>                                                       */
@@ -104,12 +111,12 @@ typedef struct _cccifssmb
 	/* Readable dialect name. */
 	const NQ_CHAR * name;	
 	/* Dialect revision ID. This value equals 1 for SMB. */
-	NQ_UINT16 revision;	
+	NQ_UINT16 revision;
     /* Maximum length of message signing keys. The keys, negotiated with server may exceed this value. Then, NQ will cut them for signing. */
 	NQ_UINT maxSigningKeyLen;	
 	/* If this value is TRUE and message signing is selected, NQ should attempt a 
 	   restriction on the list of encrypters of the chosen security mechanism. 
-	   The exact restrictions depend on the machanism. */
+	   The exact restrictions depend on the mechanism. */
 	NQ_BOOL restrictCrypters;	
 	/* This is the prefix to add to a file name when this name is an RPC pipe. */
 	const NQ_WCHAR * rpcNamePrefix;	
@@ -129,7 +136,7 @@ typedef struct _cccifssmb
 	/* Set this dialect as the only one.   
 
        This call affects the negotiation process and it works differently for different dialects. 
-       Since normally a dialect may offer several diialects during negotioations, this call may restrict
+       Since normally a dialect may offer several dialects during negotiations, this call may restrict
        it to only self dialect. 
 
        Expected usage of this call is:
@@ -160,8 +167,8 @@ typedef struct _cccifssmb
 	   Parameters
 	   server :  Server object pointer. On a successful negotiation the dialect pointed by 
 				 this structure, installs itself as the server's dialect. 
-	   pass1 :  LM paassword blob.
-	   pass1 :  NTLM paassword blob.
+	   pass1 :  LM password blob.
+	   pass1 :  NTLM password blob.
 	   Returns
 	   NQ_SUCCESS or error code.  */
 	NQ_STATUS (* doSessionSetup)(void * user, const CMBlob * pass1, const CMBlob * pass2);	
@@ -199,7 +206,7 @@ typedef struct _cccifssmb
 	   Returns
 	   NQ_SUCCESS or error code.  */
 	NQ_STATUS (* doCreate)(void * file);	
-	/* Re-opene file.
+	/* Re-open file.
 	   Parameters
 	   file :  File object pointer. This object should designate an open file with a valid handle (FID). 
 	   Returns
@@ -268,9 +275,10 @@ typedef struct _cccifssmb
 	   num :       Number of bytes to write.
 	   callback :  Function to call on response.
 	   context :   Pointer to pass to the callback function.
+	   hook :      hook for finding the relevant match for this call.
 	   Returns
 	   NQ_SUCCESS or error code.                                   */
-	NQ_STATUS (* doWrite)(void * pFile, const NQ_BYTE * buffer, NQ_UINT num, CCCifsWriteCallback callback, void * context);	
+	NQ_STATUS (* doWrite)(void * pFile, const NQ_BYTE * buffer, NQ_UINT num, CCCifsWriteCallback callback, void * context, void *hook);
 	/* Read bytes from file asynchronously.
 	   
 	   This function sends one read request and returns without waiting for response. 
@@ -284,7 +292,7 @@ typedef struct _cccifssmb
 	   context :   Pointer to pass to the callback function.
 	   Returns
 	   NQ_SUCCESS or error code.                                   */
-	NQ_STATUS (* doRead)(void * pFile, const NQ_BYTE * buffer, NQ_UINT num, CCCifsReadCallback callback, void * context);	
+	NQ_STATUS (* doRead)(void * pFile, const NQ_BYTE * buffer, NQ_UINT num, CCCifsReadCallback callback, void * context, void *hook);
 #ifdef UD_CC_INCLUDESECURITYDESCRIPTORS	
 	/* Withdraw file security descriptor.
 	   
@@ -330,11 +338,10 @@ typedef struct _cccifssmb
 	   pShare :    Pointer to the share object.
 	   fileName :  Pointer to file name. This should be a
 	               share\-local file name.
-	   callback :  Function to call on response.
 	   context :   Pointer to pass to the callback function.
 	   Returns
 	   NQ_SUCCESS or error code.                                                       */
-	NQ_STATUS (* doQueryFileInfoByName)(void * pShare, const NQ_WCHAR * fileName, CCCifsParseFileInfoCallback callback, void * context);	
+	NQ_STATUS (* doQueryFileInfoByName)(void * pShare, const NQ_WCHAR * fileName, void * context);
 	/* Withdraw file information for an open file.
 	   
 	   This function sends an appropriate (as used in the protocol)
@@ -342,13 +349,12 @@ typedef struct _cccifssmb
 	   block in the response should conform to the <i>FileBothDirectoryInformation</i>
 	   structure.
 	   Parameters
-	   pFile :     \File object pointer. The file should be
+	   pFile :     File object pointer. The file should be
 	               previously open.
-	   callback :  Function to call on response.
 	   context :   Pointer to pass to the callback function.
 	   Returns
 	   NQ_SUCCESS or error code.                                                       */
-	NQ_STATUS (* doQueryFileInfoByHandle)(void * pFile, CCCifsParseFileInfoCallback callback, void * context);	
+	NQ_STATUS (* doQueryFileInfoByHandle)(void * pFile, void * context);
 	/* This function sets attributes for an open file.
 	   
 	   This function sends an appropriate (as used in the protocol)
@@ -406,17 +412,21 @@ typedef struct _cccifssmb
 	   Returns
 	   NQ_SUCCESS or error code.                                       */
 	NQ_STATUS (* doFlush)(void * pFile);	
-	/* This function performs an old-facioned RAP transaction. 
+	/* This function performs an old-fashioned RAP transaction.
 	   
 	   Parameters
 	   pShare :           Share handle.
        inData :           Pointer to RAP parameters.
-       outData :          Pointer to blob to be set for RAP response. After a successfull return
+	   outParams :        Pointer to blob to be set for RAP response paramers. After a successful return
+	                      this blob will designate an allocated buffer. It is caller's responsibility to
+	                      release this buffer after usage.
+
+       outData :          Pointer to blob to be set for RAP response data. After a successful return
                           this blob will designate an allocated buffer. It is caller's responsibility to 
                           release this buffer after usage. 
 	   Returns
 	   NQ_SUCCESS or error code.                                       */
-	NQ_STATUS (* doRapTransaction)(void * pShare, const CMBlob * inData, CMBlob * outData);	
+	NQ_STATUS(*doRapTransaction)(void * pShare, const CMBlob * inData, CMBlob * outParams, CMBlob * outData);
     /*
             This function sends an echo request.
 
@@ -424,9 +434,51 @@ typedef struct _cccifssmb
             pServer:    Server handle.
     */
     NQ_STATUS (* doEcho)(void * pShare);
-    /* 
-        SMB1 requires full path for a new name (Will be TRUE), while SMB2 requires relative path (Will be FALSE)
+
+    /* This function performs an old-fashioned RAP transaction.
+
+    	   Parameters
+    	   pServer :           Share handle.
+    	   pUser :           Share handle.
+           pRequest :           Pointer to RAP parameters.
+           pMatch :          Pointer to blob to be set for RAP response. After a successful return
+                              this blob will designate an allocated buffer. It is caller's responsibility to
+                              release this buffer after usage.
+    	   Returns
+    	   NQ_SUCCESS or error code.                                       */
+    NQ_STATUS (* sendRequest)(void * pServer, void * pUser, void * pRequest, void * pMatch, NQ_BOOL (*callback)(CMItem * pItem));
+    /* This function performs an old-fashioned RAP transaction.
+
+        	   Parameters
+        	   pServer :           Share handle.
+        	   pUser :           Share handle.
+               pRequest :           Pointer to RAP parameters.
+               pResponse :          Pointer to blob to be set for RAP response. After a successful return
+                                  this blob will designate an allocated buffer. It is caller's responsibility to
+                                  release this buffer after usage.
+        	   Returns
+        	   NQ_SUCCESS or error code.                                       */
+    NQ_STATUS (* sendReceive)(void * pServer, void * pUser, void * pRequest, void * pResponse);
+    /* This function performs an old-fashioned RAP transaction.
+
+        	   Parameters
+        	   transport :           transport handle.
+        	   Returns
+        	   NQ_SUCCESS or error code.                                       */
+    void 	  (* anyResponseCallback)(void * transport);
+    /*
+            SMB1 requires full path for a new name (Will be TRUE), while SMB2 requires relative path (Will be FALSE)
     */
+    void (* keyDerivation)(void * pUser);
+
+    void (* signalAllMatch)(void * pTransport);
+
+    void (* handleWaitingNotifyResponses)(void * pServer, void *pFile);
+
+    NQ_BOOL (* validateNegotiate)(void * pServer, void *pUser, void *pShare);
+
+    NQ_BOOL (* removeReadWriteMatch)(void * context, void* pServer, NQ_BOOL isReadMatch);
+
     NQ_BOOL     useFullPath;
     /*
         SMB 2 (TRUE) requires to create the file before moving it SMB1 (FALSE) doesn't.
@@ -458,7 +510,8 @@ void ccCifsShutdown(void);
 const CCCifsSmb * ccCifsGetDefaultSmb(void);
 
 /* Description
-   Obtain an array of SMB dialects.
+   Obtain an array of currently active SMB dialects.
+   Caller must free a memory allocated by calling <link cmMemoryFree, cmMemoryFree()>
    Parameters
    dialects :  Buffer for the pointer to an array of dialects.
                Array dimensions are specified by the return
@@ -477,11 +530,11 @@ NQ_INT ccCifsGetDialects(const CCCifsSmb *** dialects);
 NQ_STATUS ccCifsGetError(NQ_UINT32 code, NQ_BOOL isNt);
 
 /* Description
-   This value, when placed in dialect reviison of a particular dialect, means that revision number 
-   is not applicable to this dialect.
-   
-   For innstance, SMB dialect (NT LM 0.12) has illegal revision and it does not
-   participate in SMB2.x negotiations.	*/
-#define CCCIFS_ILLEGALSMBREVISION 0xFFFF
+    This value, when placed in dialect revision of a particular dialect, means that revision number
+    is not applicable to this dialect.
+
+    For instance, SMB dialect (NT LM 0.12) has illegal revision and it does not
+    participate in SMB2.x negotiations.	*/
+#define CCCIFS_ILLEGALSMBREVISION   0xFFFF
 
 #endif /* _CCCIFS_H_	 */

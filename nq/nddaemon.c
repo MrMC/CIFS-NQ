@@ -26,17 +26,14 @@
 #include "ndsespro.h"
 #include "ndinname.h"
 #include "ndexname.h"
+#include "ndllmnr.h"
 
 #ifdef UD_ND_INCLUDENBDAEMON
 
 /* This code implements the main loop of the Name Daemon and also the start-up and the
    shut-down routines
 
-   The Daemon implements three NetBIOS services: Name, Session and Datagram.
-   The Session Service, however may be implemented outside the daemon, providing that
-   there is only one server application on the target machine (CUFS server). This options
-   is controlled by the UD_NB_RETARGETSESSIONS definition. When not defined, the Session
-   Service code is not compiled. */
+   The Daemon implements three NetBIOS services: Name, Session and Datagram. */
 
 /*
     Static data & functions
@@ -50,6 +47,7 @@
 #define ST_EXTERNALSESSION   2   /* external session service */
 #define ST_INTERNALNAME      3   /* internal name service */
 #define ST_INTERNALDATAGRAM  4   /* internal datagram service */
+#define ST_LLMNR_RESPONDER	 5
 
 /* service information */
 
@@ -61,7 +59,7 @@ typedef struct
 }
 Service;
 
-#define MAX_NUMOFSERVICES  5
+#define MAX_NUMOFSERVICES  6
 
 /* we use only one receive buffer and only one send buffer since all daemon operations
    are synchronous */
@@ -70,13 +68,14 @@ typedef struct
 {
     NQ_BOOL exitNow;                        /* TRUE signals to the daemon to stop execution */
     NQ_BOOL configurationChanged;           /* signal that the list of adapters has changed */
+    NDAdapterInfo configChangeRequestorAdapter; /* Adapter info of the requestor requestion configuration change */
     NDAdapterInfo internalAdapter;          /* "dummy" adapter for internal communications  */
     NQ_UINT numOfServices;                  /* actual number of services */
     NQ_BYTE recv[CM_NB_DATAGRAMBUFFERSIZE]; /* receive buffer */
     NQ_BYTE send[CM_NB_DATAGRAMBUFFERSIZE]; /* send buffer */
     Service services[MAX_NUMOFSERVICES];    /* service table */
     NQ_COUNT nextTimeout;                   /* next Select timeout */
-    NQ_TIME lastTime;                       /* timestamp before select */
+    NQ_UINT32 lastTime;                       /* timestamp before select */
     SYMutex mutex;                          /* mutex for cleanup synchronization */
 }
 StaticData;
@@ -109,9 +108,10 @@ createService(
     NQ_BOOL tcp
     )
 {
+    NQ_BOOL result = FALSE;
     Service *s = &staticData->services[index];
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "index:%u type:%u ip:%p port:%u tcp:%s", index, type, ip, port, tcp ? "TRUE" : "FALSE");
 
     s->type = type;
     s->tcp = tcp;
@@ -119,33 +119,41 @@ createService(
     s->socket = syCreateSocket(tcp, CM_IPADDR_IPV4);
     if (!syIsValidSocket(s->socket))
     {
-        TRCERR("NBD: unable to create socket");
-        TRCE();
-        return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "NBD: unable to create socket");
+        goto Exit;
     }
 
     if (syBindSocket(s->socket, ip, syHton16((NQ_UINT16)port)) == NQ_FAIL)
     {
         syCloseSocket(s->socket);
-        TRCERR("Error binding socket");
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error binding socket");
         /* this socket will be closed by calling cleanup() if this function returns FALSE */
-        TRC1P("NBD: unable to bind socket on port %d", port);
-        TRCE();
-        return FALSE;
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBD: unable to bind socket on port %d", port);
+        goto Exit;
     }
+#ifdef UD_NQ_USETRANSPORTIPV4
+    if (type == ST_LLMNR_RESPONDER)
+    {
+    	NQ_IPADDRESS	llmnrIP4;
 
+    	cmAsciiToIp((NQ_CHAR *)"224.0.0.252", &llmnrIP4);
+		sySubscribeToMulticast(s->socket , &llmnrIP4);
+		ndLLMNRSetSocket(s->socket);
+    }
+#endif /* UD_NQ_USETRANSPORTIPV4 */
     if (tcp && syListenSocket(s->socket, 10) == NQ_FAIL)
     {
-        TRC1P("NBD: unable to start listening on port %d", port);
-        TRCE();
-        return FALSE;
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBD: unable to start listening on port %d", port);
+        goto Exit;
     }
 
-    TRC3P("NBD: [%1d] service of type %d, socket %d", index, s->type, s->socket);
-    TRC2P("NBD:     TCP flag: %d, port: %d", s->tcp, port);
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBD: [%1d] service of type %d, socket %d", index, s->type, s->socket);
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBD:     TCP flag: %d, port: %d", s->tcp, port);
+    result = TRUE;
 
-    TRCE();
-    return TRUE;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+    return result;
 }
 
 /*
@@ -167,12 +175,11 @@ cleanup(
 {
     NQ_UINT i;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
     
     if (NULL == staticData)
     {
-        TRCE();
-        return;
+        goto Exit;
     }
 
     /* synchronize: this code should allow ndStop() to finish before
@@ -203,17 +210,18 @@ cleanup(
     ndNameStop();
     syMutexDelete(&staticData->mutex);
 
-    nsExit(FALSE);
-	
-    /* release memory */
+    /* release memory before nsExit which closes memory module */
 #ifdef SY_FORCEALLOCATION
-    if (NULL != staticData)
-        syFree(staticData);
+	if (NULL != staticData)
+		cmMemoryFree(staticData);
 
-    staticData = NULL;
+	staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
     
-    TRCE();
+    nsExit(FALSE);
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 /*
@@ -222,7 +230,7 @@ cleanup(
  *--------------------------------------------------------------------
  * PARAMS:  NONE
  *
- * RETURNS: TRUE if succeded, FALSE otherwise
+ * RETURNS: TRUE if succeeded, FALSE otherwise
  *
  * NOTES:   called when configurationChanged set to TRUE
  *====================================================================
@@ -234,19 +242,19 @@ processConfigChange(
     )
 {
     NDAdapterInfo *adapter;
+    NQ_BOOL result = FALSE;
 
-    TRCB();
-    /* load/relload the list of adapters */
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    /* load/reload the list of adapters */
 
-    TRC("Loading list of adapters:");
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Loading list of adapters:");
 
     staticData->configurationChanged = FALSE;
 
     if (ndAdapterListLoad() == NQ_FAIL)
     {
-        TRCERR("Unable to load the list of adapters");
-        TRCE();
-        return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to load the list of adapters");
+        goto Exit;
     }
 
     /* compose origins: 1) adapter sockets 2) internal communication
@@ -263,16 +271,20 @@ processConfigChange(
 #ifdef UD_NB_RETARGETSESSIONS
         adapter->ssSocket = staticData->services[ST_EXTERNALSESSION].socket;
 #endif /* UD_NB_RETARGETSESSIONS */
-
-        /* register all internal names over a new adapter: NDINNAME will deside
-           whether to register a name (NEW) or just to reorganize structures
-           (OLD) */
-        ndInternalNameRegisterAllNames(NULL, adapter);
     }
 
-    TRCE();    
-    return TRUE;
+    /* Register all names over a new adapter, or new WINS servers:
+     * NDINNAME will decide whether to register a name (NEW) or just to
+     * reorganize structures (OLD) */
+    ndConfigChangeRegisterAllNames(&staticData->configChangeRequestorAdapter);
+
+    result = TRUE;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+    return result;
 }
+
 
 
 /*
@@ -281,7 +293,7 @@ processConfigChange(
  *--------------------------------------------------------------------
  * PARAMS:  NONE
  *
- * RETURNS: TRUE if succeded, FALSE otherwise
+ * RETURNS: TRUE if succeeded, FALSE otherwise
  *
  * NOTES:   creates all the services, initializes names
  *====================================================================
@@ -292,22 +304,26 @@ initialize(
     void
     )
 {
-    NQ_IPADDRESS anyIP = CM_IPADDR_ANY4;
+    NQ_IPADDRESS anyIP = CM_IPADDR_ANY4 , localHost = CM_IPADDR_LOCAL;
     NQ_UINT i;
+    NQ_BOOL result = FALSE;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
-    nsInit(FALSE);
+	if (NQ_FAIL == nsInit(FALSE))
+	{
+		LOGERR(CM_TRC_LEVEL_ERROR, "NS initialization failed");
+		goto Exit;
+	}
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
 
     if (NULL == staticData)
     {
-        TRCERR("Unable to allocate NetBIOS daemon tables");
-        TRCE();
-        return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate NetBIOS daemon tables");
+        goto Exit;
     }
 #endif /* SY_FORCEALLOCATION */
 
@@ -316,27 +332,32 @@ initialize(
     staticData->numOfServices = 0;
     staticData->configurationChanged = TRUE;
     staticData->nextTimeout = UD_ND_DAEMONTIMEOUT;
+    staticData->exitNow = FALSE;
 
     for (i = 0; i < MAX_NUMOFSERVICES; i++)
         staticData->services[i].socket = syInvalidSocket();
 
     if (ndDatagramInit() == NQ_FAIL || ndNameInit() == NQ_FAIL || ndAdapterListInit() == NQ_FAIL)
     {
-        TRCERR("Unable to initialize datagram datagram, name or adapter module");
-        TRCE();
-        return FALSE;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to initialize datagram, name or adapter module");
+        goto Exit;
     }
 
-    TRC("NBD: creating services");
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBD: creating services");
 
     if (createService(staticData->numOfServices++, ST_EXTERNALNAME, &anyIP, CM_IN_NAMESERVICEPORT, FALSE) &&
         createService(staticData->numOfServices++, ST_EXTERNALDATAGRAM, &anyIP, CM_IN_DATAGRAMSERVICEPORT, FALSE) &&
 #ifdef UD_NB_RETARGETSESSIONS
         createService(staticData->numOfServices++, ST_EXTERNALSESSION, &anyIP, CM_IN_SESSIONSERVICEPORT, TRUE) &&
 #endif /* UD_NB_RETARGETSESSIONS */
-        createService(staticData->numOfServices++, ST_INTERNALNAME, &anyIP, CM_IN_INTERNALNSPORT, FALSE) &&
-        createService(staticData->numOfServices++, ST_INTERNALDATAGRAM, &anyIP, CM_IN_INTERNALDSPORT, FALSE))
+        createService(staticData->numOfServices++, ST_INTERNALNAME, &localHost, CM_IN_INTERNALNSPORT, FALSE) &&
+        createService(staticData->numOfServices++, ST_INTERNALDATAGRAM, &localHost, CM_IN_INTERNALDSPORT, FALSE)
+#ifdef UD_NQ_USETRANSPORTIPV4
+        &&	createService(staticData->numOfServices++, ST_LLMNR_RESPONDER, &anyIP , LLMNR_PORT, FALSE)
+#endif /* UD_NQ_USETRANSPORTIPV4 */
+    	)
     {
+    	staticData->internalAdapter.ip = 0;
         staticData->internalAdapter.inMsg = staticData->recv;
         staticData->internalAdapter.outMsg = staticData->send;
         staticData->internalAdapter.nsSocket = staticData->services[staticData->numOfServices - 2].socket;
@@ -345,77 +366,89 @@ initialize(
         staticData->internalAdapter.ssSocket = staticData->services[staticData->numOfServices - 3].socket;
 #endif /* UD_NB_RETARGETSESSIONS */
 
-        TRC("NBD: initializing names");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBD: initializing names");
 
-        staticData->exitNow = FALSE;
-        
         if (!processConfigChange())
         {
-            TRCERR("Unable to load adapters");
-            TRCE();
-            return FALSE;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to load adapters");
+            goto Exit;
         }
 
-        TRC("NBD: calling user processing: udNetBiosDaemonStarted()");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBD: calling user processing: udNetBiosDaemonStarted()");
 
         udNetBiosDaemonStarted();
 
-        TRCE();
-        return TRUE;
+        result = TRUE;
+        goto Exit;
     }
 
-    TRCE();
-    return FALSE;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%s", result ? "TRUE" : "FALSE");
+    return result;
 }
 
 /*
- *====================================================================
- * PURPOSE: main daemon loop
- *--------------------------------------------------------------------
- * PARAMS:  NONE
- *
- * RETURNS: NQ_SUCCESS or NQ_FAIL
- *
- * NOTES:
- *====================================================================
- */
+*====================================================================
+* PURPOSE: main daemon loop
+*--------------------------------------------------------------------
+* PARAMS:  pointer to semaphore
+*
+* RETURNS: NQ_SUCCESS or NQ_FAIL
+*
+* NOTES:
+*====================================================================
+*/
 
 NQ_STATUS
 ndStart(
-    void
-    )
+	SYSemaphore * sem
+)
 {
-    SYSocketSet sockset;       /* the socket set to select from */
-    NQ_UINT i;
+	SYSocketSet sockset;       				/* the socket set to select from */
+	NQ_UINT i;
+	NQ_STATUS result = NQ_FAIL;
+	NQ_BOOL exitNowflg = FALSE;
 
-    TRCB();
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "sem:%p", sem);
 
-    TRC("====> Name Daemon is starting up");
+	LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "====> Name Daemon is starting up");
 
-    /* One-time initialization */
+	/* One-time initialization */
 
-    if (!initialize())
+	if (!initialize())
+	{
+		LOGERR(CM_TRC_LEVEL_ERROR, "NBD: initialization failed");
+		if (NULL != sem)
+		{
+			sySemaphoreGive(*sem);
+		}
+		goto Exit;
+	}
+	if (NULL != sem)
+	{
+		sySemaphoreGive(*sem);
+	}
+
+	/* infinite loop until the application is shut down */
+
+    while(1)
     {
-        cleanup();
-        TRCERR("NBD: initialization failed");
-        TRCE();
-        return NQ_FAIL;
-    }
+        syMutexTake(&staticData->mutex);
+        exitNowflg = staticData->exitNow;
+        syMutexGive(&staticData->mutex);
 
-    /* infinite loop until the application is shut down */
+        if (exitNowflg)
+        {
+            goto Exit;
+        }
 
-    while (!staticData->exitNow)
-    {       
         if (staticData->configurationChanged && !processConfigChange())
         {
-            cleanup();
             udNetBiosDaemonClosed();
-            TRCE();
-            return NQ_FAIL;
+            goto Exit;
         }
 
         /* build socket set */
-
         syClearSocketSet(&sockset);
 
         for (i = 0; i < staticData->numOfServices; i++)
@@ -423,23 +456,21 @@ ndStart(
 
         /* SELECT on the socket set */
 
-        staticData->lastTime = (NQ_TIME)syGetTime();
+        staticData->lastTime = (NQ_UINT32)syGetTimeInSec();
 
-        TRC1P("NBDaemon select (timeout - %d)", staticData->nextTimeout);
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBDaemon select (timeout - %d)", staticData->nextTimeout);
         switch (sySelectSocket(&sockset, staticData->nextTimeout))
         {
             /* error */
             case NQ_FAIL:
-                cleanup();
-                
-                TRCERR("Select error");
-                TRCE();
-                return NQ_FAIL;
+                LOGERR(CM_TRC_LEVEL_ERROR, "Select error");
+                goto Exit;
 
             /* timeout */
             case 0:
                 /* process timeout in name resolving and TTLs */
-                staticData->nextTimeout = ndNameProcessTimeout((NQ_INT)((NQ_TIME)syGetTime() - staticData->lastTime));
+                staticData->nextTimeout = ndNameProcessTimeout((NQ_INT)((NQ_UINT32)syGetTimeInSec() - staticData->lastTime));
+                staticData->lastTime = (NQ_UINT32)syGetTimeInSec();
                 break;
 
             /* data in or socket to accept */
@@ -447,14 +478,15 @@ ndStart(
                 /* call user defined processing */
                 udNetBiosDataIn();
                 
-                if (syGetTime() >= (staticData->lastTime + staticData->nextTimeout))
+                if (syGetTimeInSec() >= (NQ_UINT32)(staticData->lastTime + staticData->nextTimeout))
                 {
                     /* time expired - process timeout in name resolving and TTLs */
-                    staticData->nextTimeout = ndNameProcessTimeout((NQ_INT)((NQ_TIME)syGetTime() - staticData->lastTime));
+                    staticData->nextTimeout = ndNameProcessTimeout((NQ_INT)((NQ_UINT32)syGetTimeInSec() - staticData->lastTime));
+                    staticData->lastTime = (NQ_UINT32)syGetTimeInSec();
                 }
                 else
                 {
-                    staticData->nextTimeout -= (NQ_TIME)syGetTime() - staticData->lastTime; 
+                    staticData->nextTimeout -= (NQ_COUNT)((NQ_UINT32)syGetTimeInSec() - staticData->lastTime);
                 }
                 staticData->nextTimeout = UD_ND_DAEMONTIMEOUT;
                 for (i = 0; i < staticData->numOfServices; i++)
@@ -485,7 +517,7 @@ ndStart(
                                 a->newSocket = h;
                                 a->inIp = CM_IPADDR_GET4(ip);
                                 a->inPort = port;
-                                a->inLen = received;
+                                a->inLen = (NQ_UINT)received;
                                 a->bcastDest = FALSE;
 
                                 TRC1P("TCP: %d bytes received", received);
@@ -515,51 +547,58 @@ ndStart(
                         else
 #endif /* UD_NB_RETARGETSESSIONS */
                         {
-                            if ((received = syRecvFromSocket(s->socket, staticData->recv, sizeof(staticData->recv), &ip, &port)) > 0)
-                            {
-                                NDAdapterInfo *a = ndFindAdapter(CM_IPADDR_GET4(ip), &staticData->internalAdapter);
+						if ((received = syRecvFromSocket(s->socket, staticData->recv, sizeof(staticData->recv), &ip, &port)) > 0)
+						{
+							NDAdapterInfo *a = ndFindAdapter(CM_IPADDR_GET4(ip), &staticData->internalAdapter);
 
-                                a->inIp = CM_IPADDR_GET4(ip);
-                                a->inPort = port;
-                                a->inLen = (NQ_UINT)received;
-                                a->bcastDest = FALSE;
+							a->inIp = CM_IPADDR_GET4(ip);
+							a->inPort = port;
+							a->inLen = (NQ_UINT)received;
+							a->bcastDest = FALSE;
+							switch (s->type)
+							{
+								case ST_EXTERNALNAME:
+									LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBD: UDP external name packet, %d bytes from %s", received, cmIPDump(&ip));
+									ndNameProcessExternalMessage(a);
+									break;
 
-                                switch (s->type)
-                                {
-                                    case ST_EXTERNALNAME:
-                                        TRC2P("NBD: UDP external name packet, %d bytes from %s", received, cmIPDump(&ip));
-                                        ndNameProcessExternalMessage(a);
-                                        break;
+								case ST_EXTERNALDATAGRAM:
+									LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBD: UDP external datagram packet, %d bytes from %s", received, cmIPDump(&ip));
+									ndDatagramProcessExternalMessage(a);
+									break;
 
-                                    case ST_EXTERNALDATAGRAM:
-                                        TRC2P("NBD: UDP external datagram packet, %d bytes from %s", received, cmIPDump(&ip));
-                                        ndDatagramProcessExternalMessage(a);
-                                        break;
+								case ST_INTERNALNAME:
+									LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBD: UDP internal name packet, %d bytes from %s", received, cmIPDump(&ip));
+									ndNameProcessInternalMessage(a);
+									break;
+								case ST_INTERNALDATAGRAM:
+									LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBD: UDP internal datagram packet, %d bytes from %s", received, cmIPDump(&ip));
+									ndDatagramProcessInternalMessage(a);
+									break;
+#ifdef UD_NQ_USETRANSPORTIPV4
+								case ST_LLMNR_RESPONDER:
+									LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBD: LLMNR UDP external name packet, %d bytes from %s", received, cmIPDump(&ip));
+									ndLLMNRProcessExternalMessage(a);
+									break;
+#endif /* UD_NQ_USETRANSPORTIPV4 */
 
-                                    case ST_INTERNALNAME:
-                                        TRC2P("NBD: UDP internal name packet, %d bytes from %s", received, cmIPDump(&ip));
-                                        ndNameProcessInternalMessage(a);
-                                        break;
-                                    case ST_INTERNALDATAGRAM:
-                                        TRC2P("NBD: UDP internal datagram packet, %d bytes from %s", received, cmIPDump(&ip));
-                                        ndDatagramProcessInternalMessage(a);
-                                        break;
-
-                                    default:
-                                        TRC1P("NBD: UDP service type %d", s->type);
-                                        break;
-                                }
-                            }
-                        }
+								default:
+									LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NBD: UDP service type %d", s->type);
+									break;
+							}
+						}
                     }
                 }
         }
     }
+    }
 
+    result = NQ_SUCCESS;
+
+Exit:
     cleanup();
-        
-    TRCE();
-    return NQ_SUCCESS;
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:0x%x", result);
+    return result;
 }
 
 /*
@@ -579,31 +618,16 @@ ndStop(
     void
     )
 {
-    NQ_INDEX i;     /* just an index */
-
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     if (staticData != NULL)
     {
         syMutexTake(&staticData->mutex);
-
         staticData->exitNow = TRUE;
-
-        ndInternalNameReleaseAllNames(TRUE);
-
-        /* close daemon sockets */
-        for (i = 0; i < staticData->numOfServices; i++)
-        {
-            syCloseSocket(staticData->services[i].socket);
-            staticData->services[i].socket = syInvalidSocket();
-        }
-
-        staticData->numOfServices = 0;
-
         syMutexGive(&staticData->mutex);
     }
-    
-    TRCE();
+
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 /*
@@ -620,12 +644,10 @@ ndStop(
 
 void
 ndNotifyConfigurationChange(
-    )
+	NDAdapterInfo* adapter)
 {
-     /* release all names */
-    ndInternalNameReleaseAllNames(FALSE);
-
-    staticData->configurationChanged = TRUE;
+	staticData->configurationChanged = TRUE;
+    staticData->configChangeRequestorAdapter = *adapter;
 }
 
 #endif /* UD_ND_INCLUDENBDAEMON */

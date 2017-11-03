@@ -55,7 +55,7 @@ csChangeFileAttributes(
 NQ_BOOL                             /* TRUE if the file exists */
 csCheckFile(
     const CSShare* pShare,          /* share pointer */
-    NQ_TCHAR* pName,                /* full path pointer */
+    NQ_WCHAR* pName,                /* full path pointer */
     NQ_BOOL preservesCase           /* whether the client's file system preserves case */
     );
 
@@ -64,7 +64,7 @@ csCheckFile(
 NQ_BOOL                             /* TRUE if the path exists */
 csCheckPath(
     const CSShare* pShare,          /* share pointer */
-    NQ_TCHAR* pName,                /* full path pointer */
+    NQ_WCHAR* pName,                /* full path pointer */
     NQ_UINT treeLen,                /* length of the tree map */
     NQ_BOOL preservesCase           /* whether the client's file system preserves case */
     );
@@ -74,7 +74,7 @@ csCheckPath(
 NQ_BOOL                             /* TRUE if the full path exists */
 csCheckPathAndFile(
     const CSShare* pShare,          /* share pointer */
-    NQ_TCHAR* pName,                /* full path pointer */
+    NQ_WCHAR* pName,                /* full path pointer */
     NQ_UINT treeLen,                /* length of the tree map */
     NQ_BOOL preservesCase           /* whether the client's file system preserves case */
     );
@@ -84,7 +84,7 @@ csCheckPathAndFile(
 NQ_STATUS                           /* NQ_SUCCESS or NQ_FAIL */
 csGetFileInformation(
     const CSFile* pFile,            /* file structure pointer */
-    const NQ_TCHAR* pFileName,      /* file name pointer */
+    const NQ_WCHAR* pFileName,      /* file name pointer */
     SYFileInformation* pFileInfo    /* pointer to the file information structure */
     );
 
@@ -93,7 +93,7 @@ csGetFileInformation(
 NQ_STATUS                           /* NQ_SUCCESS or NQ_FAIL */
 csGetFileInformationByName(
     const CSShare* pShare,          /* file structure pointer */
-    const NQ_TCHAR* pFileName,      /* file name pointer */
+    const NQ_WCHAR* pFileName,      /* file name pointer */
     SYFileInformation* pFileInfo    /* pointer to the file information structure */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     ,const CSUser	*			pUser
@@ -105,7 +105,7 @@ csGetFileInformationByName(
 NQ_STATUS                           /* NQ_SUCCESS or NQ_FAIL */
 csSetFileInformation(
     const CSFile* pFile,                /* file structure pointer */
-    const NQ_TCHAR* pFileName,          /* file name pointer */
+    const NQ_WCHAR* pFileName,          /* file name pointer */
     const SYFileInformation* pFileInfo  /* pointer to the file information structure */
     );
 
@@ -113,7 +113,7 @@ csSetFileInformation(
 
 NQ_BOOL                           /* TRUE or FALSE */
 csCanDeleteFile(
-    const NQ_TCHAR* pFileName     /* file name pointer */
+    const NQ_WCHAR* pFileName     /* file name pointer */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     ,const CSUser * pUser,
     const UDFileAccessEvent eventLogInfo
@@ -125,7 +125,7 @@ csCanDeleteFile(
 NQ_UINT32                        /* NQ_SUCCESS or error code */
 csTruncateFile(
     CSFile* pFile,               /* file structure pointer */
-    const NQ_TCHAR* pFileName,   /* file name */
+    const NQ_WCHAR* pFileName,   /* file name */
     NQ_UINT32 sizeLow,           /* low 32 bits of the new size */
     NQ_UINT32 sizeHigh           /* high 32 bits of the new size */
     );

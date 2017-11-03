@@ -245,6 +245,8 @@ csComRead(
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
     UDFileAccessEvent	eventInfo;
     CSUser			*	pUser;
+    NQ_WCHAR noName[] = CM_WCHAR_NULL_STRING;
+    NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     TRCB();
@@ -321,8 +323,8 @@ csComRead(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_SEEK,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name: noName,
+				pUser? pUser->ip : &noIP,
 				0,
 				(const NQ_BYTE*)&eventInfo
 			);
@@ -336,8 +338,8 @@ csComRead(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_SEEK,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				error,
 				(const NQ_BYTE*)&eventInfo
 			);
@@ -352,8 +354,8 @@ csComRead(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_SEEK,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE*)&eventInfo
 		);
@@ -439,6 +441,8 @@ csComReadAndX(
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
     UDFileAccessEvent	eventInfo;
     CSUser			*	pUser;
+    NQ_WCHAR noName[] = CM_WCHAR_NULL_STRING;
+    NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     TRCB();
@@ -513,8 +517,8 @@ csComReadAndX(
     {
     	NQ_UINT16    maxCountHigh;
 		/* use dataCountHigh */
-    	maxCountHigh = cmLtoh16(cmGetSUint16(readRequest->maxCountHigh));
-    	maxCountHigh = maxCountHigh == 0xffff ? 0 : maxCountHigh;
+    	maxCountHigh = (NQ_UINT16)cmLtoh16(cmGetSUint16(readRequest->maxCountHigh));
+    	maxCountHigh = (NQ_UINT16)(maxCountHigh == 0xffff ? 0 : maxCountHigh);
 		dataLength |= ((NQ_UINT32)maxCountHigh << 16);
         /* shift to the read position */
 
@@ -534,14 +538,14 @@ csComReadAndX(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_SEEK,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				0,
 				(const NQ_BYTE*)&eventInfo
 			);
 			eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-            if (sySeekFileStart(pFile->file, offsetLow, offsetHigh) == NQ_FAIL)
+            if (sySeekFileStart(pFile->file, offsetLow, offsetHigh) == (NQ_UINT32) NQ_FAIL)
             {
                 error = csErrorGetLast();
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
@@ -549,8 +553,8 @@ csComReadAndX(
 					UD_LOG_MODULE_CS,
 					UD_LOG_CLASS_FILE,
 					UD_LOG_FILE_SEEK,
-					pUser->name,
-					pUser->ip,
+					pUser? pUser->name : noName,
+					pUser? pUser->ip : &noIP,
 					error,
 					(const NQ_BYTE*)&eventInfo
 				);
@@ -564,8 +568,8 @@ csComReadAndX(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_SEEK,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				0,
 				(const NQ_BYTE*)&eventInfo
 			);
@@ -627,15 +631,16 @@ csComReadAndX(
         else
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
         {
-            NQ_INT32 status = syReadFile(pFile->file, dataPtr, (NQ_COUNT)dataLength);
-            if (status < 0)
+        	NQ_INT result = syReadFile(pFile->file, dataPtr, (NQ_COUNT)dataLength);
+            dataLength = (NQ_UINT32)result;
+            if (result < 0)
             {
                 error = csErrorGetLast();
                 TRCERR("READ failed");
                 TRCE();
                 return error;
             }
-            immediateDataCount = (NQ_UINT32)status;
+            immediateDataCount = dataLength;
         }
         
         /* update file offsets */
@@ -728,6 +733,8 @@ csComWrite(
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
     UDFileAccessEvent	eventInfo;
     CSUser	*			pUser;
+    NQ_WCHAR noName[] = CM_WCHAR_NULL_STRING;
+    NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
 
     TRCB();
@@ -826,7 +833,7 @@ csComWrite(
             written = syWritePrintData(pFile->printerHandle, (NQ_UINT32)pFile->file, (NQ_BYTE*)(pDataBlock + 1), cmLtoh16(cmGetSUint16(pDataBlock->length)), &p);
             rctx =  (CSDcerpcResponseContext *)p;
             
-            if (written != dataCount)
+            if ((NQ_UINT32)written != dataCount)
             {
                 if (written == 0)
                 {
@@ -897,8 +904,8 @@ csComWrite(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_SEEK,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				0,
 				(const NQ_BYTE*)&eventInfo
 			);
@@ -912,8 +919,8 @@ csComWrite(
 						UD_LOG_MODULE_CS,
 						UD_LOG_CLASS_FILE,
 						UD_LOG_FILE_SEEK,
-						pUser->name,
-						pUser->ip,
+						pUser? pUser->name : noName,
+						pUser? pUser->ip : &noIP,
 						error,
 						(const NQ_BYTE*)&eventInfo
 					);
@@ -927,8 +934,8 @@ csComWrite(
 					UD_LOG_MODULE_CS,
 					UD_LOG_CLASS_FILE,
 					UD_LOG_FILE_SEEK,
-					pUser->name,
-					pUser->ip,
+					pUser? pUser->name : noName,
+					pUser? pUser->ip : &noIP,
 					0,
 					(const NQ_BYTE*)&eventInfo
 				);
@@ -942,20 +949,19 @@ csComWrite(
                 else
 #else /* UD_CS_INCLUDEDIRECTTRANSFER */
                 {
-                    NQ_INT32 status;
-                    status = syWriteFile(pFile->file, (NQ_BYTE*)(pDataBlock + 1), cmLtoh16(cmGetSUint16(pDataBlock->length)));
-                    if (status != cmLtoh16(cmGetSUint16(pDataBlock->length)))
+                	NQ_INT result = syWriteFile(pFile->file, (NQ_BYTE*)(pDataBlock + 1), cmLtoh16(cmGetSUint16(pDataBlock->length)));
+                    dataCount = (NQ_UINT32)result;
+                    if (dataCount != cmLtoh16(cmGetSUint16(pDataBlock->length)))
                     {
                         error = csErrorGetLast();
                         TRCERR("WRITE failed");
-                        if (status >= 0)
+                        if (result >= 0)
                         {
-                            TRC2P("Required: %d bytes, written: %d bytes", cmLtoh16(cmGetSUint16(pDataBlock->length)), status);
+                            TRC2P("Required: %d bytes, written: %d bytes", cmLtoh16(cmGetSUint16(pDataBlock->length)), dataCount);
                         }
                         TRCE();
                         return error;
                     }
-                    dataCount = (NQ_UINT32)status;
                 }
 #endif /* UD_CS_INCLUDEDIRECTTRANSFER */
                 csGetNameByNid(pFile->nid)->isDirty = TRUE;
@@ -1020,6 +1026,8 @@ csComWriteAndX(
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
     UDFileAccessEvent	eventInfo;
     CSUser			*	pUser;
+    NQ_WCHAR noName[] = CM_WCHAR_NULL_STRING;
+    NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
     
     TRCB();
@@ -1204,14 +1212,14 @@ csComWriteAndX(
 						UD_LOG_MODULE_CS,
 						UD_LOG_CLASS_FILE,
 						UD_LOG_FILE_SEEK,
-						pUser->name,
-						pUser->ip,
+						pUser? pUser->name : noName,
+						pUser? pUser->ip : &noIP,
 						0,
 						(const NQ_BYTE*)&eventInfo
 					);
 					eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-                    if (sySeekFileStart(pFile->file, offsetLow, offsetHigh) == NQ_FAIL)
+                    if (sySeekFileStart(pFile->file, offsetLow, offsetHigh) == (NQ_UINT32) NQ_FAIL)
                     {
                     	error = csErrorGetLast();
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
@@ -1219,8 +1227,8 @@ csComWriteAndX(
 							UD_LOG_MODULE_CS,
 							UD_LOG_CLASS_FILE,
 							UD_LOG_FILE_SEEK,
-							pUser->name,
-							pUser->ip,
+							pUser? pUser->name : noName,
+							pUser? pUser->ip : &noIP,
 							error,
 							(const NQ_BYTE*)&eventInfo
 						);
@@ -1234,8 +1242,8 @@ csComWriteAndX(
 						UD_LOG_MODULE_CS,
 						UD_LOG_CLASS_FILE,
 						UD_LOG_FILE_SEEK,
-						pUser->name,
-						pUser->ip,
+						pUser? pUser->name : noName,
+						pUser? pUser->ip : &noIP,
 						0,
 						(const NQ_BYTE*)&eventInfo
 					);
@@ -1253,7 +1261,7 @@ csComWriteAndX(
                   dataWritten = dataLength;
                 }
                 else
-#else /* UD_CS_INCLUDEDIRECTTRANSFER */
+#endif /* UD_CS_INCLUDEDIRECTTRANSFER */
                 {
                   dataWritten = (NQ_UINT32)syWriteFile(pFile->file, pData, (NQ_COUNT)dataLength);
                   if ((NQ_INT)dataWritten < 0)
@@ -1264,7 +1272,6 @@ csComWriteAndX(
                     return error;
                   }
                }
-#endif /* UD_CS_INCLUDEDIRECTTRANSFER */
                 csGetNameByNid(pFile->nid)->isDirty = TRUE;   
             }
             
@@ -1303,7 +1310,7 @@ csComWriteAndX(
     writeResponse->andXReserved = 0;
     cmPutSUint16(writeResponse->count, cmHtol16(dataWritten & 0xFFFF));
     cmPutSUint16(writeResponse->remaining, cmHtol16(0xFFFF)); /* should be -1 */
-    cmPutSUint16(writeResponse->countHigh, cmHtol16((dataWritten & 0xFFFF0000) >> 16));
+    cmPutSUint16(writeResponse->countHigh, (NQ_UINT16)cmHtol16((dataWritten & 0xFFFF0000) >> 16));
     cmPutSUint16(writeResponse->reserved, 0);
     cmPutSUint16(writeResponse->byteCount, 0);
 
@@ -1343,6 +1350,8 @@ csComSeek(
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
     UDFileAccessEvent	eventInfo;
     CSUser			*	pUser;
+    NQ_WCHAR noName[] = CM_WCHAR_NULL_STRING;
+    NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     TRCB();
@@ -1402,8 +1411,8 @@ csComSeek(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
 		UD_LOG_FILE_SEEK,
-		pUser->name,
-		pUser->ip,
+		pUser? pUser->name : noName,
+		pUser? pUser->ip : &noIP,
 		0,
 		(const NQ_BYTE*)&eventInfo
 	);
@@ -1434,8 +1443,8 @@ csComSeek(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_SEEK,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			error,
 			(const NQ_BYTE*)&eventInfo
 		);
@@ -1449,8 +1458,8 @@ csComSeek(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
 		UD_LOG_FILE_SEEK,
-		pUser->name,
-		pUser->ip,
+		pUser? pUser->name : noName,
+		pUser? pUser->ip : &noIP,
 		0,
 		(const NQ_BYTE*)&eventInfo
 	);
@@ -1576,7 +1585,7 @@ csComLockingAndX(
     pUser = pFile->user;
     if (pUser == NULL)
     {
-    	pUser = csGetUserByUid((CSUid)cmGetSUint16(pHeaderOut->uid));
+    	 pUser = csGetUserByUid((CSUid)cmGetSUint16(pHeaderOut->uid));
     }
     if (pUser != NULL)
     {
@@ -1595,10 +1604,11 @@ csComLockingAndX(
 #endif	/*UD_NQ_INCLUDEEVENTLOG*/
     /* complete oplock break operation (send late response) if required */
 
-    if (numLocks == 0 && numUnlocks == 0 && pFile->oplockGranted && pFile->pFileOplockBreaker)
+    if (numLocks == 0 && numUnlocks == 0 && pFile->oplockGranted && pFile->isBreakingOpLock)
     {
-        csBreakComplete(&pFile->pFileOplockBreaker->breakContext, NULL);
+        csBreakComplete(pFile, NULL, 0);
         pFile->oplockGranted = FALSE;
+        pFile->isBreakingOpLock = FALSE;
         TRC("Oplock break completed");
         TRCE();
         return SMB_STATUS_NORESPONSE;
@@ -2019,9 +2029,10 @@ writeAndXLateResponseSend(
     writeResponse->andXCommand = 0xFF;
     writeResponse->andXReserved = 0;
     cmPutSUint16(writeResponse->andXOffset, 0);
-    cmPutSUint16(writeResponse->count, (count & 0xFFFF));
-    cmPutSUint32(writeResponse->countHigh, (count / 0x10000));
-    cmPutSUint16(writeResponse->remaining, 0);
+    cmPutSUint16(writeResponse->count, cmHtol16(count & 0xFFFF));
+    cmPutSUint16(writeResponse->remaining, cmHtol16(0xFFFF)); /* should be -1 */
+    cmPutSUint16(writeResponse->countHigh, (NQ_UINT16)cmHtol16((count & 0xFFFF0000) >> 16));
+    cmPutSUint16(writeResponse->reserved, 0);
     cmPutSUint16(writeResponse->byteCount, 0);
 
     return csDispatchSendLateResponse(context, status, sizeof(*writeResponse));

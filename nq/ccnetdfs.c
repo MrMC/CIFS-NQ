@@ -48,7 +48,7 @@ ParamsNetdfsGetInfo;
 
 
 /* pipe descriptor */
-static const NQ_WCHAR pipeName[] = { cmWChar('n'), cmWChar('e'), cmWChar('t'), cmWChar('d'), cmWChar('f'), cmWChar('s'), cmWChar(0) };
+static const NQ_WCHAR pipeName[] = { cmWChar('n'), cmWChar('e'), cmWChar('t'), cmWChar('d'), cmWChar('f'), cmWChar('s'), cmWChar('\0') };
 static const CCDcerpcPipeDescriptor pipeDescriptor =
 { pipeName,
   {cmPack32(0x4fc742e0),cmPack16(0x4a10),cmPack16(0x11cf),{0x82,0x73},{0x00,0xaa,0x00,0x4a,0xe6,0x73}},
@@ -114,22 +114,22 @@ static NQ_UINT32 ccNetdfsGetInfo(
     NQ_UINT32 *flags
     )
 {
-    ParamsNetdfsGetInfo params; 
+    ParamsNetdfsGetInfo params;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "pipeHandle:%p path:%s level:%u state:%p flags:%p", pipeHandle, cmWDump(path), level, state, flags);
 
     params.path = path;
     params.level = level;
     params.state = state;
     params.flags = flags;
     params.status = (NQ_UINT32)syGetLastError();
-    
+
     if (!ccDcerpcCall(pipeHandle, dfsGetInfoRequestCallback, dfsGetInfoResponseCallback, &params))
     {
-        TRCERR("Error in processing NetdfsGetInfo");
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error in processing NetdfsGetInfo");
     }
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%u", params.status);
     return params.status;
 }
 
@@ -145,8 +145,8 @@ dfsGetInfoRequestCallback (
     CMBufferWriter w;
     ParamsNetdfsGetInfo *p = (ParamsNetdfsGetInfo *)params;
     NQ_UINT32 length, sz;
-    
-    TRCB();
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buffer:%p size:%d params:%p moreData:%p", buffer, size, params, moreData);
 
     cmBufferWriterInit(&w, buffer, size);
     cmBufferWriteUint16(&w, NETDFS_GETINFO_OPNUM); /* opcode */
@@ -157,7 +157,7 @@ dfsGetInfoRequestCallback (
     cmBufferWriteUint32(&w, sz);                   /* max count */
     cmBufferWriteUint32(&w, 0);                    /* offset */
     cmBufferWriteUint32(&w, sz);                   /* actual count */
-    cmBufferWriteUnicode(&w, p->path);			   /* path */
+    cmBufferWriteUnicode(&w, p->path);               /* path */
     cmBufferWriterAlign(&w, buffer + 2, 4);        /* 4 byte alignment */
     cmBufferWriteUint32(&w, 0);                    /* null: servername */
     cmBufferWriteUint32(&w, 0);                    /* null: sharename */
@@ -165,7 +165,7 @@ dfsGetInfoRequestCallback (
 
     *moreData = FALSE;
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
     return cmBufferWriterGetDataCount(&w);
 }
 
@@ -183,15 +183,14 @@ dfsGetInfoResponseCallback (
     ParamsNetdfsGetInfo *p = (ParamsNetdfsGetInfo *)params;
     NQ_UINT32 level, refId;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p moreData:%p", data, size, params, moreData);
 
     if (size < 48)
     {
         p->status = (NQ_UINT32)NQ_FAIL;
-        TRCERR("Invalid server response size");
-        TRCE();
-        return (NQ_STATUS)p->status;
-    }    
+        LOGERR(CM_TRC_LEVEL_ERROR, "Invalid server response size");
+        goto Exit;
+    }
 
     cmBufferReaderInit(&r, data, size);
     cmBufferReadUint32(&r, &level);
@@ -201,26 +200,28 @@ dfsGetInfoResponseCallback (
         case 6:
             cmBufferReadUint32(&r, &refId);         /* ref id - struct */
             if (refId != 0)
-            {           
+            {
                 cmBufferReaderSkip(&r, 4);          /* ref id - entry path */
                 cmBufferReaderSkip(&r, 4);          /* ref id - comment */
                 cmBufferReadUint32(&r, p->state);   /* state */
                 cmBufferReaderSkip(&r, 4);          /* timeout */
                 cmBufferReaderSkip(&r, 16);         /* guid */
                 cmBufferReadUint32(&r, p->flags);   /* flags */
-                TRC("state: 0x%x, flags: 0x%x", *p->state, *p->flags);
+                LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "state: 0x%x, flags: 0x%x", *p->state, *p->flags);
             }
             /* read status */
             cmBufferReaderSetPosition(&r, cmBufferReaderGetStart(&r) + size - 4);
             cmBufferReadUint32(&r, &p->status);
-            TRC("status 0x%x", p->status);
+            LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "status 0x%x", p->status);
             break;
         default:
             p->status = (NQ_UINT32)NQ_FAIL;
-            TRCERR("Invalid level");
+            LOGERR(CM_TRC_LEVEL_ERROR, "Invalid level");
+            goto Exit;
     }
 
-    TRCE();
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", p->status);
     return (NQ_STATUS)p->status;
 }
 
@@ -233,22 +234,21 @@ ccNetDfsGetStatus(
     )
 {
     NQ_HANDLE netdfs;
-    NQ_UINT32 status;
+    NQ_UINT32 status = (NQ_UINT32)NQ_FAIL;
 
-    TRCB();
-    
-    TRC("server: %s, path: %s", cmTDump(server), cmTDump(dfsPath));
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "server:%s path:%s state:%p flags:%p", cmWDump(server), cmWDump(dfsPath), state, flags);
+
+    /*LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "server: %s, path: %s", cmWDump(server), cmWDump(dfsPath));*/
     if ((netdfs = ccDcerpcConnect(server, NULL, ccNetdfsGetPipe(), FALSE)) != NULL)
     {
         status = ccNetdfsGetInfo(netdfs, dfsPath, 6, state, flags);
         ccDcerpcDisconnect(netdfs);
-        TRCE();
-        return status;
+        goto Exit;
     }
-    
-    TRCE();       
-    return (NQ_UINT32)NQ_FAIL;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%u", status);
+    return status;
 }
 
-#endif 
-
+#endif

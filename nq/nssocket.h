@@ -23,25 +23,28 @@
 #include "nsapi.h"
 
 /*
- NS keeps trek of all sockets created by means of nsSocket. We use\
+ NS keeps trek of all sockets created by means of nsSocket. We use
  socket descriptor and a pool of socket descriptor.
  */
 
-typedef struct {
-    NQ_UINT             idx;        /* slot index - used for trace purposes, does not affect
-                                       the target performance */
+typedef struct
+{
+	CMItem 				item;		/* inheritance */
     SYSocketHandle      socket;     /* underlying socket's handle */
     NQ_UINT             transport;  /* socket transport type */
-    NQ_BOOL             isNetBios;  /* TRUE for netbios socket, FALSE for TCP */
+    NQ_BOOL             isNetBios;  /* TRUE for NetBIOS socket, FALSE for TCP */
     NQ_UINT             type;       /* socket protocol (stream or datagram) */
     CMNetBiosNameInfo   name;       /* bind name */
     CMNetBiosNameInfo   remoteName; /* name on the other side */
-    NQ_IPADDRESS        ip;         /* this socket IP */
+    NQ_PORT             remotePort; /* port connected to on the other side */
     NQ_IPADDRESS        remoteIP;   /* remote host IP */
-    NQ_PORT             port;       /* dynamic port number */
+    NQ_IPADDRESS        ip;         /* self socket IP */
+    NQ_PORT             port;       /* self dynamic port number */
     NQ_BOOL             isListening;/* in listen() */
     NQ_BOOL             isBind;     /* if TRUE - this socket is bound */
     NQ_BOOL             isDead;     /* */
+    NQ_BOOL 			isAccepted;	/* */
+    SYMutex				guard;		/* making thread-safe - only used on accepted sockets */
 }
 SocketSlot;
 
@@ -58,16 +61,18 @@ nsExitSocketPool(
 SocketSlot*
 getSocketSlot(
     void
-    );           /* take a socket descriptior from the pool */
+    );           /* take a socket descriptor from the pool */
 
 void
 putSocketSlot(
     SocketSlot* sock
-    );  /* return a socket descriptior to the pool */
+    );  /* return a socket descriptor to the pool */
 
 #define checkSocketSlot(_sock)          \
     (_sock!=NULL    &&                  \
      syIsValidSocket((_sock)->socket)   \
     )                                       /* Check that the socket slot is in use */
+
+#define SYSOCK(_s_)         (((SocketSlot *)(_s_))->socket)
 
 #endif  /* _NSSOCKET_H_ */

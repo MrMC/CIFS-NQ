@@ -18,6 +18,7 @@
  ********************************************************************/
 
 #include "nssocket.h"
+#include "cmrepository.h"
 
 /*
  NS module keeps trek of sockets created by means of nsSocket. For this
@@ -43,11 +44,8 @@
 
 typedef struct
 {
-    SocketSlot   sockSlots[UD_NS_NUMSOCKETS];    /* socket pool */
-    SocketSlot*  freeSocks[UD_NS_NUMSOCKETS];    /* array of free socket pointers */
-    NQ_INT       firstFree;                      /* index of the 1st free socket pointer */
-    NQ_INT       lastFree;                       /* index of the last free socket pointer */
-    SYMutex      sockGuard;                      /* mutex for exclusive access */
+	CMRepository socketSlots;
+	NQ_BOOL isUp;
 }
 StaticData;
 
@@ -57,6 +55,21 @@ static StaticData* staticData = NULL;
 static StaticData staticDataSrc;
 static StaticData* staticData = &staticDataSrc;
 #endif /* SY_FORCEALLOCATION */
+
+static void initSlot(CMItem * pItem)
+{
+	SocketSlot * pSlot = (SocketSlot *)pItem;
+
+	pSlot->socket = syInvalidSocket();    /* no socket yet */
+}
+
+static  void disposeSlot(CMItem * pItem)
+{
+	SocketSlot * pSlot = (SocketSlot *)pItem;
+
+	if (syIsValidSocket(pSlot->socket))
+		syCloseSocket(pSlot->socket);
+}
 
 /*
  *====================================================================
@@ -73,30 +86,30 @@ nsInitSocketPool(
     void
     )
 {
-    NQ_INDEX i;
+    NQ_STATUS result = NQ_SUCCESS;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
     if (NULL == staticData)
     {
-        TRCERR("Unable to allocate socket pool");
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate socket pool");
+        result = NQ_FAIL;
+        sySetLastError(NQ_ERR_NOMEM);
+        goto Exit;
     }
 #endif /* SY_FORCEALLOCATION */
 
-    staticData->firstFree = 0;
-    staticData->lastFree = UD_NS_NUMSOCKETS -1;
+    cmRepositoryInit(&staticData->socketSlots, 0, initSlot, disposeSlot);
+    cmRepositoryItemPoolAlloc(&staticData->socketSlots, UD_NS_NUMSOCKETS, sizeof(SocketSlot));
+    staticData->isUp = TRUE;
+    result = NQ_SUCCESS;
 
-    syMutexCreate(&staticData->sockGuard);
-
-    for (i=0; i<UD_NS_NUMSOCKETS; i++)
-    {
-        staticData->freeSocks[i] = &staticData->sockSlots[i];               /* all slots are free */
-        staticData->sockSlots[i].idx = i;                       /* reserved for a future use */
-        staticData->sockSlots[i].socket = syInvalidSocket();    /* no socket yet */
-    }
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -114,11 +127,14 @@ nsExitSocketPool(
     void
     )
 {
-    syMutexDelete(&staticData->sockGuard);
-    /* release memory */
+	if (staticData->isUp)
+	{
+		staticData->isUp = FALSE;
+		cmRepositoryShutdown(&staticData->socketSlots);
+	}
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
-        syFree(staticData);
+        cmMemoryFree(staticData);
     staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
 }
@@ -135,10 +151,7 @@ nsExitSocketPool(
  *====================================================================
  */
 
-SYSocketHandle
-nsGetSySocket(
-    NSSocketHandle socket
-    )
+SYSocketHandle nsGetSySocket(NSSocketHandle socket)
 {
     SocketSlot* slot = (SocketSlot*)socket;
 
@@ -158,29 +171,13 @@ nsGetSySocket(
  *====================================================================
  */
 
-SocketSlot*
-getSocketSlot(
+SocketSlot * getSocketSlot(
     void
     )
 {
-    SocketSlot* res;  /* pointer to return on exit */
+    SocketSlot * res = NULL;  /* pointer to return on exit */
 
-    syMutexTake(&staticData->sockGuard);
-
-    if (staticData->firstFree == staticData->lastFree)
-    {
-        TRCERR("NS no more socket slots");
-
-        syMutexGive(&staticData->sockGuard);
-        return NULL;
-    }
-
-    res = staticData->freeSocks[staticData->firstFree];
-    staticData->firstFree++;
-    staticData->firstFree %= UD_NS_NUMSOCKETS;              /* wrap around */
-
-    syMutexGive(&staticData->sockGuard);
-
+    res = (SocketSlot *)cmRepositoryGetNewItem(&staticData->socketSlots);
     return res;
 }
 
@@ -196,30 +193,21 @@ getSocketSlot(
  *====================================================================
  */
 
-void
-putSocketSlot(
-    SocketSlot* slot
-    )
+void putSocketSlot(SocketSlot * slot)
 {
     if (syIsValidSocket(slot->socket))
     {
         if (syIsSocketAlive(slot->socket) && syShutdownSocket(slot->socket) != NQ_SUCCESS)
         {
-            TRCERR("Unable to shutdown a connection");
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to shutdown a connection");
         }
 
         if (syCloseSocket(slot->socket) != NQ_SUCCESS)
         {
-            TRCERR("Unable to close a socket");
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to close a socket");
         }
 
         slot->socket = syInvalidSocket();
-        syMutexTake(&staticData->sockGuard);
-
-        staticData->lastFree++;                         /* if was -1 will start from index 0 */
-        staticData->lastFree %= UD_NS_NUMSOCKETS;       /* wrap around */
-        staticData->freeSocks[staticData->lastFree] = slot;         /* free it */
-
-        syMutexGive(&staticData->sockGuard);
+        cmRepositoryReleaseItem(&staticData->socketSlots, (CMItem *)slot);
     }
 }

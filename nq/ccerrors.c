@@ -119,6 +119,11 @@ struct cifsNtErrorMap
     NQ_UINT32 nqError;          /* internal error */
     NQ_UINT32 status;           /* SMB status */
 }
+/* Mapping NQ internal errors to SMB errors.
+	When one NQ error is mapped to more than one SMB error (NQ error appears twice or more)
+	please make sure the "best" translation appears first in the table.
+*/
+
 static smbNtToSysErrorMap[] =
 {
     { NQ_ERR_OK,              0},
@@ -126,17 +131,15 @@ static smbNtToSysErrorMap[] =
     { NQ_ERR_ERROR,           SMB_STATUS_UNSUCCESSFUL },
     { NQ_ERR_BADPARAM,        SMB_STATUS_INVALID_PARAMETER },
     { NQ_ERR_BADPARAM,        SMB_STATUS_CTL_FILE_NOT_SUPPORTED },
-    { NQ_ERR_MOREDATA,        SMB_STATUS_MORE_ENTRIES },
     { NQ_ERR_LOGONFAILURE,    SMB_STATUS_LOGON_FAILURE },
+    { NQ_ERR_LOGONFAILURE,	  SMB_STATUS_LOGON_TYPE_NOT_GRANTED},
     { NQ_ERR_BADACCESS,       SMB_STATUS_ACCESS_DENIED },
     { NQ_ERR_BADACCESS,       SMB_STATUS_ACCOUNT_RESTRICTION },
     { NQ_ERR_BADFILE,         SMB_STATUS_OBJECT_NAME_NOT_FOUND },
     { NQ_ERR_BADFILE,         SMB_STATUS_NO_SUCH_FILE },
-    { NQ_ERR_BADPATH,         SMB_STATUS_BAD_NETWORK_PATH },
     { NQ_ERR_BADSHARE,        SMB_STATUS_BAD_NETWORK_NAME },
     { NQ_ERR_BADSHARE,        SMB_STATUS_SHARING_VIOLATION },
     { NQ_ERR_ALREADYEXISTS,   SMB_STATUS_OBJECT_NAME_COLLISION },
-    { NQ_ERR_MOREDATA,        SMB_STATUS_MORE_PROCESSING_REQUIRED },
     { NQ_ERR_PATHNOTCOVERED,  SMB_STATUS_PATH_NOT_COVERED },
     { NQ_ERR_PATHNOTCOVERED,  SMB_STATUS_IO_REPARSE_TAG_NOT_HANDLED },
     { NQ_ERR_INVALIDHANDLE,   SMB_STATUS_INVALID_HANDLE },
@@ -145,21 +148,26 @@ static smbNtToSysErrorMap[] =
     { NQ_ERR_DISKFULL,        SMB_STATUS_DISK_FULL },
     { NQ_ERR_WRONGDISK,       SMB_STATUS_WRONG_VOLUME },
     { NQ_ERR_OBJEXISTS,       SMB_STATUS_OBJECT_NAME_COLLISION },
+    { NQ_ERR_BADMEDIA,        SMB_STATUS_DISK_OPERATION_FAILED },
     { NQ_ERR_BADMEDIA,        SMB_STATUS_DEVICE_POWER_FAILURE },
+    { NQ_ERR_BADMEDIA,        SMB_STATUS_DEVICE_OFF_LINE },
+    { NQ_ERR_BADPATH,         SMB_STATUS_BAD_NETWORK_PATH },
     { NQ_ERR_BADPATH,         SMB_STATUS_OBJECT_PATH_NOT_FOUND },
     { NQ_ERR_BADPATH,         SMB_STATUS_FILE_IS_A_DIRECTORY },
     { NQ_ERR_BADREQ,          SMB_STATUS_INFO_LENGTH_MISMATCH },
+    { NQ_ERR_NOTREADY,		  SMB_STATUS_DEVICE_NOT_READY },
     { NQ_ERR_NOTREADY,        SMB_STATUS_NO_MEDIA_IN_DEVICE },
-    { NQ_ERR_NOTREADY,        SMB_STATUS_DEVICE_NOT_READY },
     { NQ_ERR_BADSECTOR,       SMB_STATUS_NONEXISTENT_SECTOR },
+    { NQ_ERR_MOREDATA,		  SMB_STATUS_MORE_PROCESSING_REQUIRED },
     { NQ_ERR_MOREDATA,        SMB_STATUS_BUFFER_OVERFLOW },
+    { NQ_ERR_MOREDATA,		  SMB_STATUS_MORE_ENTRIES },
     { NQ_ERR_MOREDATA,        SMB_STATUS_BUFFER_TOO_SMALL },
     { NQ_ERR_NOFILES,         SMB_STATUS_NO_MORE_FILES },
     { NQ_ERR_INVALIDNAME,     SMB_STATUS_OBJECT_NAME_INVALID },
     { NQ_ERR_BADFUNC,         SMB_STATUS_NOT_IMPLEMENTED },
     { NQ_ERR_DATA,            SMB_STATUS_DATA_ERROR },
+    { NQ_ERR_LOCK,			  SMB_STATUS_NOT_LOCKED },
     { NQ_ERR_LOCK,            SMB_STATUS_LOCK_NOT_GRANTED },
-    { NQ_ERR_LOCK,            SMB_STATUS_NOT_LOCKED },
     { NQ_ERR_BADPW,           SMB_STATUS_WRONG_PASSWORD },
     { NQ_ERR_GENERAL,         SMB_STATUS_FILE_INVALID },
     { NQ_ERR_NOWRITE,         SMB_STATUS_MEDIA_WRITE_PROTECTED },
@@ -171,7 +179,9 @@ static smbNtToSysErrorMap[] =
     { NQ_ERR_NOSHARE,         SMB_STATUS_BAD_NETWORK_NAME },
     { NQ_ERR_DONTSUPPORTIPC,  SMB_STATUS_BAD_DEVICE_TYPE },
     { NQ_ERR_NOSUPPORT,       SMB_STATUS_NOT_SUPPORTED },
+    { NQ_ERR_NOSUPPORT,       SMB_STATUS_UNMAPPABLE_CHARACTER },
     { NQ_ERR_DIFFDEVICE,      SMB_STATUS_NOT_SAME_DEVICE },
+    { NQ_ERR_DIFFDEVICE,      SMB_STATUS_NO_SUCH_DEVICE },
     { NQ_ERR_NOFIDS,          SMB_STATUS_TOO_MANY_OPENED_FILES },
     { NQ_ERR_INVFID,          SMB_STATUS_ADDRESS_ALREADY_EXISTS },
     { NQ_ERR_BADDIRECTORY,    SMB_STATUS_NOT_A_DIRECTORY },
@@ -179,10 +189,32 @@ static smbNtToSysErrorMap[] =
     { NQ_ERR_ACCOUNTLOCKEDOUT,SMB_STATUS_ACCOUNT_LOCKED_OUT },
     { NQ_ERR_QEOF,            SMB_STATUS_END_OF_FILE },
     { NQ_ERR_USEREXISTS,      SMB_STATUS_USER_EXISTS },
+    { NQ_ERR_USERNOTFOUND,	  SMB_STATUS_NO_TRUST_SAM_ACCOUNT },
     { NQ_ERR_USERNOTFOUND,    SMB_STATUS_NONE_MAPPED },
     { NQ_ERR_VOLUMEDISMOUNTED,SMB_STATUS_VOLUME_DISMOUNTED },
-    { NQ_ERR_USERNOTFOUND,    SMB_STATUS_NO_TRUST_SAM_ACCOUNT },
-    { NQ_ERR_DIRNOTEMPTY,     SMB_STATUS_DIRECTORY_NOT_EMPTY}
+    { NQ_ERR_DIRNOTEMPTY,     SMB_STATUS_DIRECTORY_NOT_EMPTY },
+    { NQ_ERR_NETWORKERROR,	  SMB_STATUS_UNEXPECTED_NETWORK_ERROR },
+    { NQ_ERR_NETWORKERROR,    SMB_STATUS_DUPLICATE_NAME },
+    { NQ_ERR_NETWORKERROR,    SMB_STATUS_NETWORK_NAME_DELETED },
+    { NQ_ERR_NETWORKERROR,    SMB_STATUS_NETWORK_BUSY },   
+    { NQ_ERR_NETWORKERROR,    SMB_STATUS_NETWORK_UNREACHABLE },
+    { NQ_ERR_NETWORKERROR,    SMB_STATUS_HOST_UNREACHABLE },
+    { NQ_ERR_BADCONNECTION,   SMB_STATUS_CONNECTION_DISCONNECTED },
+    { NQ_ERR_BADCONNECTION,   SMB_STATUS_CONNECTION_REFUSED },
+    { NQ_ERR_BADCONNECTION,   SMB_STATUS_CONNECTION_RESET },
+    { NQ_ERR_BADCONNECTION,   SMB_STATUS_VIRTUAL_CIRCUIT_CLOSED },    
+    { NQ_ERR_BADCONNECTION,   SMB_STATUS_REMOTE_NOT_LISTENING },
+    { NQ_ERR_BADCONNECTION,   SMB_STATUS_INVALID_NETWORK_RESPONSE },
+    { NQ_ERR_BADCONNECTION,   SMB_STATUS_REQUEST_NOT_ACCEPTED },
+    { NQ_ERR_BADCONNECTION,   SMB_STATUS_NETLOGON_NOT_STARTED },
+    { NQ_ERR_BADCONNECTION,   SMB_STATUS_NO_SUCH_LOGON_SESSION },
+	{ NQ_ERR_TRYAGAIN,        SMB_STATUS_USER_SESSION_DELETED },
+	{ NQ_ERR_TRYAGAIN,        SMB_STATUS_FILE_CLOSED },
+    { NQ_ERR_BADDFS,          SMB_STATUS_FS_DRIVER_REQUIRED },
+    { NQ_ERR_BADDFS,          SMB_STATUS_DFS_UNAVAILABLE },
+    { NQ_ERR_SHARINGPAUSED,   SMB_STATUS_SHARING_PAUSED },
+    { NQ_ERR_IOTIMEOUT,       SMB_STATUS_IO_TIMEOUT },
+    { NQ_ERR_NORESOURCE,      SMB_STATUS_INSUFFICIENT_RESOURCES }
 };
 
 /* -- API Functions */
@@ -193,7 +225,9 @@ NQ_UINT32 ccErrorsStatusToNq(NQ_UINT32 status, NQ_BOOL isNt)
     NQ_COUNT mapSize;           /* its size */
     NQ_UINT32 nqErr;            /* internal (intermediate) error code */
 
-    TRC2P("Error response, is NT==%d, code=%8lx", isNt, status);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "status:0x%8x isNt:%s", status, isNt ? "TRUE" : "FALSE");
+    /*LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "status = %8lx, isNt == %d", status, isNt);*/
+
     if (isNt)
     {
         mapSize = sizeof(smbNtToSysErrorMap) / sizeof(smbNtToSysErrorMap[0]);
@@ -202,8 +236,7 @@ NQ_UINT32 ccErrorsStatusToNq(NQ_UINT32 status, NQ_BOOL isNt)
             if ((smbNtToSysErrorMap + i)->status == status)
             {
                 nqErr = (smbNtToSysErrorMap + i)->nqError;
-                TRC1P("NQ error code=%ld (0x%X)", nqErr, nqErr);
-                return nqErr;
+                goto Exit;
             }
         }
     }
@@ -216,15 +249,62 @@ NQ_UINT32 ccErrorsStatusToNq(NQ_UINT32 status, NQ_BOOL isNt)
                )
             {
                 nqErr = (smbDosToSysErrorMap + i)->nqError;
-                TRC1P("NQ error code=%ld (0x%X)", nqErr, nqErr);
-                return nqErr;
+                goto Exit;
             }
         }
     }
 
     nqErr = NQ_ERR_GENERAL;     /* default */
 
-    TRC1P("NQ error code=%ld (0x%X)", nqErr, nqErr);
+Exit:
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NQ error code=%ld (0x%X)", nqErr, nqErr);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", nqErr);
     return nqErr;
 }
+
+NQ_UINT32 ccGetNTStatus(void)
+{
+    NQ_UINT32 result = SMB_STATUS_INVALID;
+    CMThread *pThread = cmThreadGetCurrent();
+
+    if (NULL == pThread)
+        goto Exit;
+
+    result = pThread->status;
+
+Exit:
+    return result;
+}
+
+NQ_UINT32 ccErrorToSmbStatus(NQ_UINT32 nqError)
+{
+    NQ_COUNT mapSize, i;                      /* error map size */
+    NQ_UINT32 SMBStatus = SMB_STATUS_INVALID; /* SMB error code */		
+
+
+    mapSize = sizeof(smbNtToSysErrorMap) / sizeof(smbNtToSysErrorMap[0]);
+    for (i = 0; i < mapSize; ++i)
+    {
+        if ((smbNtToSysErrorMap + i)->nqError == nqError)
+        {
+            SMBStatus = (smbNtToSysErrorMap + i)->status;
+            goto Exit;
+        }        
+    }
+    
+    if (IS_NQ_ERROR(nqError))
+    {
+        SMBStatus = SMB_STATUS_UNSUCCESSFUL;
+        goto Exit;
+    }
+
+	/* the error code isn't NQ error code - no translation exists. */
+    SMBStatus = SMB_STATUS_INVALID;
+
+Exit:
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "NQ error code=%ld (0x%X), SMB status=%d", nqError, nqError, SMBStatus);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result - SMB status: %d, (0x%X) ", SMBStatus, SMBStatus);
+    return SMBStatus; 
+}
+
 

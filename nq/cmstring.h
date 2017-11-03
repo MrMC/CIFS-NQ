@@ -28,7 +28,7 @@
     For ASCII string buffer is allocated as 2 * N + 1 bytes because
     of two-byte ASCII encoding */
 #define CM_BUFFERLENGTH(_type, _num)  \
-   (sizeof(_type)==sizeof(NQ_CHAR)? (2 * _num + 2) : _num + 1)
+   (sizeof(_type) * (_num + 1))
 
 /* Calculate buffer size in bytes */
 #define CM_DATALENGTH(_type, _num)  \
@@ -37,65 +37,24 @@
 /* According to whether the host filesystem supports UNICODE, define character type
    for filenames and the appropriate functions. */
 
+#define cmAnsiToUnicodeN(_to, _from, _size)   syAnsiToUnicodeN(_to, _from, _size)
+
 #ifdef UD_CM_UNICODEAPPLICATION
 
-#define cmTStrlen      syWStrlen
-#define cmTStrcpy      syWStrcpy
-#define cmTStrcat      syWStrcat
-#define cmTStrncpy     syWStrncpy
-#define cmTStrcmp      syWStrcmp
-#define cmTStrncmp     syWStrncmp
-#define cmTStrincmp    cmWStrincmp
-#define cmTStricmp     cmWStricmp
-#define cmTStrchr      syWStrchr
-#define cmTStrrchr     syWStrrchr
-#define cmTStrupr(_s)  cmWStrupr(_s)
-#define cmTToupper(_to, _from)    cmWToupper(_to, _from)
-#define cmTChar(c)     cmHtol16((NQ_WCHAR)(c&0xff))
-#define cmTcharToAnsi(_to, _from)  syUnicodeToAnsi(_to, _from)
-#define cmAnsiToTchar(_to, _from)  syAnsiToUnicode(_to, _from)
 #define cmTcharToUnicode(_to, _from)    syWStrcpy(_to, _from)
 #define cmUnicodeToTchar(_to, _from)    syWStrcpy(_to, _from)
-#define cmTcharToAnsiN(_to, _from, _size)   syUnicodeToAnsiN(_to, _from, _size)
-#define cmAnsiToTcharN(_to, _from, _size)   syAnsiToUnicodeN(_to, _from, _size)
-#define cmTcharToUnicodeN(_to, _from, _size)   syWStrncpy(_to, _from, _size)
-#define cmUnicodeToTcharN(_to, _from, _size)   syWStrncpy(_to, _from, _size)
+
+#else /* UD_CM_UNICODEAPPLICATION */
+
+#define cmTcharToUnicode(_to, _from)    cmAnsiToUnicode(_to, _from)
+#define cmUnicodeToTchar(_to, _from)    cmUnicodeToAnsi(_to, _from)
+
+#endif /* UD_CM_UNICODEAPPLICATION */
+
 #ifdef UD_CC_INCLUDELDAP
-#define cmTcharToUTF8N(_to, _from, _size)   syUnicodeToUTF8N(_to, _from, _size)
-#define cmUTF8ToTcharN(_to, _from, _size)   syUTF8ToUnicodeN(_to, _from, _size)
-#endif
-#define cmTDump(_str)               cmWDump(_str)
-
-#else
-
-#define cmTStrlen      syStrlen
-#define cmTStrcpy      syStrcpy
-#define cmTStrcat      syStrcat
-#define cmTStrncpy     syStrncpy
-#define cmTStrcmp      syStrcmp
-#define cmTStrncmp     syStrncmp
-#define cmTStricmp     cmAStricmp
-#define cmTStrincmp    cmAStrincmp
-#define cmTStrchr      cmAStrchr
-#define cmTStrrchr     cmAStrrchr
-#define cmTStrupr(_s)  cmAStrupr(_s)
-#define cmTToupper(_to, _from) cmAToupper(_to, _from)
-#define cmTChar(_c)    _c
-#define cmTcharToAnsi(_to, _from)       syStrcpy(_to, _from)
-#define cmAnsiToTchar(_to, _from)     syStrcpy(_to, _from)
-#define cmTcharToUnicode(_to, _from)    syAnsiToUnicode(_to, _from)
-#define cmUnicodeToTchar(_to, _from)  syUnicodeToAnsi(_to, _from)
-#define cmTcharToAnsiN(_to, _from, _size)         syStrncpy(_to, _from, _size)
-#define cmAnsiToTcharN(_to, _from, _size)       syStrncpy(_to, _from, _size)
-#define cmTcharToUnicodeN(_to, _from, _size)      syAnsiToUnicodeN(_to, _from, _size)
-#define cmUnicodeToTcharN(_to, _from, _size)    syUnicodeToAnsiN(_to, _from, _size)
-#ifdef UD_CC_INCLUDELDAP
-#define cmTcharToUTF8N(_to, _from, _size)   syStrncpy(_to, _from, _size)
-#define cmUTF8ToTcharN(_to, _from, _size)   syStrncpy(_to, _from, _size)
-#endif
-#define cmTDump(_str)               _str
-
-#endif
+#define cmUnicodeToUTF8N(_to, _from, _size)   syUnicodeToUTF8N(_to, _from, _size)
+#define cmUTF8ToUnicodeN(_to, _from, _size)   syUTF8ToUnicodeN(_to, _from, _size)
+#endif /* UD_CC_INCLUDELDAP */
 
 #ifdef UD_NQ_INCLUDECODEPAGE
 
@@ -111,12 +70,14 @@
 
 #define cmWChar(c)     cmHtol16((NQ_WCHAR)(c&0xff))
 
-/* copy TCHAR string to either ASCII or UNICODE */
+#define CM_WCHAR_NULL_STRING {cmWChar('/'), cmWChar(0)}
+
+/* copy WCHAR string to either ASCII or UNICODE */
 
 NQ_BYTE*                    /* returns address of the first byte after the result */
-cmTcharToStr(
+cmWcharToStr(
     NQ_BYTE *pp,            /* destination */
-    const NQ_TCHAR *str,    /* source */
+    const NQ_WCHAR *str,    /* source */
     NQ_BOOL useUnicode      /* unicode flag */
     );
 

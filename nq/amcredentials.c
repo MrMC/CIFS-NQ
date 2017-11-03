@@ -25,13 +25,4 @@ void amCredentialsAsciiiToW(AMCredentialsW * to, const AMCredentialsA *from)
     cmAnsiToUnicode(to->password, from->password); 
 }
 
-void amCredentialsTcharToW(AMCredentialsW * to, const AMCredentials *from)
-{
-    cmTcharToUnicode(to->domain.name, from->domain.name);
-    cmWStrupr(to->domain.name);
-    cmTcharToUnicode(to->domain.realm, from->domain.realm);
-    cmTcharToUnicode(to->user, from->user); 
-    cmTcharToUnicode(to->password, from->password); 
-}
-
 

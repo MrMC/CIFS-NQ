@@ -46,7 +46,8 @@ csSmb2DispatchRequest(
  */
 NQ_UINT32                       /* response length */
 csSmb2OnSmb1Negotiate(
-    NQ_BYTE **response          /* double pointer to the response buffer */
+    NQ_BYTE **response,          /* double pointer to the response buffer */
+    NQ_BOOL anySmb2				 /* TRUE when dialect SMB2.??? FALSE otherwise*/
     );
 
 /**
@@ -133,6 +134,12 @@ NQ_UINT32 csSmb2OnChangeNotify(CMSmb2Header *in, CMSmb2Header *out, CMBufferRead
 NQ_UINT32 csSmb2OnQueryInfo(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *reader, CSSession *connection, CSUser *session, CSTree *tree, CMBufferWriter *writer);
 NQ_UINT32 csSmb2OnSetInfo(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *reader, CSSession *connection, CSUser *session, CSTree *tree, CMBufferWriter *writer);
 NQ_UINT32 csSmb2OnOplockBreak(CMSmb2Header *in, CMSmb2Header *out, CMBufferReader *reader, CSSession *connection, CSUser *session, CSTree *tree, CMBufferWriter *writer);
+NQ_BOOL cs2TransformHeaderEncrypt(	CSUser	*	user,
+									NQ_BYTE * response,
+									NQ_COUNT length);
+NQ_BOOL cs2TransformHeaderDecrypt(	NSRecvDescr * recvDescr,
+									NQ_BYTE * request,
+									NQ_COUNT length);
 
 #endif
 

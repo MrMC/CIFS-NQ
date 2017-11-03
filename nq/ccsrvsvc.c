@@ -27,23 +27,25 @@
 
 #define NETRSHAREENUM_OPNUM 15                      /* NetrShareEnum */
 #define NETRSHAREINFO_OPNUM 0x10                    /* NetGetShareInfo */
-#define MAXSHARE_LEN 100                            /* max length of share name */
-#define SHARESTRUCT_LEN   (3 * 4)   /* length of share struct */
+#define MAXSHARE_LEN        260                     /* max length of share name */
+#define SHARESTRUCT_LEN     (3 * 4)                 /* length of share struct */
 
 /* parameters share enumeration for callbacks */
 
 typedef struct
 {
-    const NQ_WCHAR * hostName;                  /* server name */
-    NQ_UINT state;                              /* parse state (see below) */
-    NQ_UINT32 numShares;                        /* number of shares in response */
-    NQ_COUNT sharesParsed;                      /* number of shares already parsed */
-    NQ_COUNT bytesToDo;                         /* number of bytes to skip or copy at the beginning of next portion */
-    NQ_BOOL stuctParsed;                        /* TRUE when share structures were already parsed */
-    NQ_UINT32 strDesc[3];                       /* current string descriptor */
-    NQ_BYTE* pData;                             /* pointer to the currently parsed data in either strDesc or currentName */
-    CCSrvsvcEnumerateCallback callBack;         /* callback function for placing one share name */
-    void* params;                               /* parameters for this callback */
+    const NQ_WCHAR * hostName;              /* server name */
+    NQ_UINT state;                          /* parse state (see below) */
+    NQ_UINT32 numShares;                    /* number of shares in response */
+    NQ_COUNT sharesParsed;                  /* number of shares already parsed */
+    NQ_COUNT bytesToDo;                     /* number of bytes to skip or copy at the beginning of next portion */
+    										/* when this number > 0 it means we stopped in the middle of a name or description and the rest is in the next packet. */
+    NQ_UINT32 strDesc[3];                   /* current string descriptor */
+    NQ_BYTE* pData;                         /* pointer to the currently parsed data in either strDesc or currentName */
+    CCSrvsvcEnumerateCallback callBack;     /* callback function for placing one share name */
+    void* params;                           /* parameters for this callback */
+    ShareEnumItem *resList;					/* result list is allocated upon receiving result size */
+    NQ_COUNT lastNameLength;				/* when a name should be saved in local pointer - "remember" its length */
 } NetrShareEnumParams;
 
 /* parameters share for information callbacks */
@@ -61,21 +63,21 @@ typedef struct
 
 /* buffer for parsing share name and its protection */
 static SYMutex guard;
-static NQ_WCHAR currentName[MAXSHARE_LEN];
+static NQ_WCHAR currentName[MAXSHARE_LEN + 2];
 
 /* parse state values */
-#define STATE_START     1   /* before parsing */
-#define STATE_STRUCT    2   /* parsing structures */
-#define STATE_NAMEDESC  3   /* parsing name desriptor */
-#define STATE_NAME      4   /* parsing name */
-#define STATE_COMMENTDESC  5   /* parsing comment desriptor */
-#define STATE_COMMENT      6   /* parsing comment */
+#define STATE_START         1   /* before parsing */
+#define STATE_STRUCT        2   /* parsing structures */
+#define STATE_NAMEDESC      3   /* parsing name descriptor */
+#define STATE_NAME          4   /* parsing name */
+#define STATE_COMMENTDESC   5   /* parsing comment descriptor */
+#define STATE_COMMENT       6   /* parsing comment */
 
 /* share enumeration request callback */
 
 NQ_COUNT                /* count of outgoing data */
 netShareEnumRequestCallback (
-    NQ_BYTE* buffer,    /* ougoing data buffer */
+    NQ_BYTE* buffer,    /* outgoing data buffer */
     NQ_COUNT size,      /* room in the buffer */
     void* params,       /* abstract parameters */
     NQ_BOOL* moreData   /* put here TRUE when more outgoing data available */
@@ -95,7 +97,7 @@ netShareEnumResponseCallback (
 
 NQ_COUNT                /* count of outgoing data */
 netShareInfoRequestCallback (
-    NQ_BYTE* buffer,    /* ougoing data buffer */
+    NQ_BYTE* buffer,    /* outgoing data buffer */
     NQ_COUNT size,      /* room in the buffer */
     void* params,       /* abstract parameters */
     NQ_BOOL* moreData   /* put here TRUE when more outgoing data available */
@@ -171,7 +173,7 @@ const CCDcerpcPipeDescriptor * ccSrvsvcGetPipe(
  *
  * RETURNS: NQ_SUCCESS or NQ_FAIL
  *
- * NOTES:   Sends SRVSVC NetrShareEnum request with SHARE_INFO_1 leve;.
+ * NOTES:   Sends SRVSVC NetrShareEnum request with SHARE_INFO_1 level.
  *          Since we are interested in share names only, we skip all
  *          SHARE_INFO_1 structures in response until the first name.
  *          Then we parse share names, skipping comments. On each share
@@ -190,7 +192,7 @@ ccSrvsvcEnumerateShares(
     NQ_COUNT res;               /* response byte count */
     NetrShareEnumParams params; /* parameters for callbacks */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "pipe:%p host:%s callback:%p params:%p", pipeHandle, cmWDump(hostName), callback, callParams);
 
     /* setup parameters */
     params.hostName = hostName;
@@ -199,12 +201,11 @@ ccSrvsvcEnumerateShares(
     params.bytesToDo = 0;
     params.numShares = 0;
     params.sharesParsed = 0;
-    params.stuctParsed = 0;
     params.state = STATE_START;
 
     res = (NQ_COUNT)ccDcerpcCall(pipeHandle, netShareEnumRequestCallback, netShareEnumResponseCallback, &params);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res? NQ_SUCCESS : NQ_FAIL);
     return res? NQ_SUCCESS : NQ_FAIL;
 }
 
@@ -229,20 +230,21 @@ NQ_COUNT netShareEnumRequestCallback(NQ_BYTE* buffer, NQ_COUNT size, void * para
     NQ_UINT32 refId;                    /* running referent ID */
     NetrShareEnumParams* callParams;    /* casted parameters for callback */
     NQ_WCHAR * hostName;				/* hostname prefixed */
+	NQ_COUNT result = 0;                /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
     callParams = (NetrShareEnumParams*)params;
-    hostName = cmMemoryAllocate((NQ_UINT)(sizeof(NQ_WCHAR) * (cmWStrlen(callParams->hostName) + 4)));
+    hostName = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)(sizeof(NQ_WCHAR) * (cmWStrlen(callParams->hostName) + 4)));
     if (NULL == hostName)
     {
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    	return NQ_ERR_OUTOFMEMORY;
+		LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+		goto Exit;
     }
     refId = 1;
     cmRpcSetDescriptor(&desc, buffer, FALSE);
     cmRpcPackUint16(&desc, NETRSHAREENUM_OPNUM);
-    desc.origin = desc.current;     /* for alligment to 4 bytes */
+    desc.origin = desc.current;     /* for alignment to 4 bytes */
     cmRpcPackUint32(&desc, refId);
     refId++;
     cmAnsiToUnicode(hostName, "\\\\");
@@ -259,9 +261,11 @@ NQ_COUNT netShareEnumRequestCallback(NQ_BYTE* buffer, NQ_COUNT size, void * para
     *moreData = FALSE;
     
     cmMemoryFree(hostName);
+    result =(NQ_COUNT)((desc.current - desc.origin) + 2);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return (NQ_COUNT)((desc.current - desc.origin) + 2);
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 
@@ -287,16 +291,22 @@ netShareEnumResponseCallback(
     NQ_BOOL moreData
     )
 {
-    CMRpcPacketDescriptor desc;         /* descriptor for SRVSVC request */
-    NetrShareEnumParams* callParams;    /* casted parameters for callback */
-    NQ_UINT32 value;                    /* parsed long value */
-    NQ_UINT32 len;                      /* name length in bytes including padding */
-    NQ_BYTE* savedPtr;                  /* saved pointer of the descriptor */
-    
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    CMRpcPacketDescriptor 	desc;         /* descriptor for SRVSVC request */
+    NetrShareEnumParams* 	callParams;   /* casted parameters for callback */
+    NQ_UINT32 				value;        /* parsed long value */
+    NQ_UINT32 				len;          /* name length in bytes including padding */
+    NQ_BYTE* 				savedPtr;     /* saved pointer of the descriptor */
+    ShareEnumItem 	*		resList;
+    ShareCallbackItem  		pItem;
+	NQ_STATUS res = NQ_FAIL;
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "data:%p size:%d params:%p more:%s", data, size, params, moreData ? "TRUE" : "FALSE");
    
     callParams = (NetrShareEnumParams*)params;
+
+    resList = callParams->resList;
     cmRpcSetDescriptor(&desc, (NQ_BYTE*)data, FALSE);
+    pItem.params = callParams->params;
     
     while (TRUE)
     {
@@ -306,36 +316,44 @@ netShareEnumResponseCallback(
                 if (size < 6 * 4)   /* portion too small */
                 {
                     LOGERR(CM_TRC_LEVEL_ERROR, "The 1st portion of NetrShareEnum response is too small");
-                    TRC1P("  size: %d", size);
-                    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                    return NQ_ERR_GETDATA;
+                    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "  size: %d", size);
+                    res = NQ_ERR_GETDATA;
+                    goto Exit;
                 }
                 cmRpcParseUint32(&desc, &value); /* info level */
                 if (1 != value)                  /* unexpected info level */
                 {
-                    LOGERR(CM_TRC_LEVEL_ERROR, "Unexpect info level");
-                    TRC1P("  expected 1, value: %ld", value);
-                    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                    return NQ_ERR_GETDATA;
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected info level");
+                    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "  expected 1, value: %ld", value);
+                    res = NQ_ERR_GETDATA;
+                    goto Exit;
                 }
                 cmRpcParseUint32(&desc, &value); /* info level (once again)*/
                 if (1 != value)                  /* unexpected info level */
                 {
-                    LOGERR(CM_TRC_LEVEL_ERROR, "Unexpect info level");
-                    TRC1P("  expected 1, value: %ld", value);
-                    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                    return NQ_ERR_GETDATA;
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected info level");
+                    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "  expected 1, value: %ld", value);
+                    res = NQ_ERR_GETDATA;
+                    goto Exit;
                 }
                 cmRpcParseUint32(&desc, &value); /* ref id for response container */
                 cmRpcParseUint32(&desc, &callParams->numShares); /* num entries */
+                LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Enumerate shares. reported number of entries: %d", callParams->numShares);
                 cmRpcParseUint32(&desc, &value); /* ref id for share array */
                 cmRpcParseUint32(&desc, &value); /* max count */
                 callParams->state = STATE_STRUCT;
                 callParams->sharesParsed = 0;
                 callParams->bytesToDo = 0;
                 size -= (NQ_COUNT)(desc.current - desc.origin);
-                
-                /* continue to the next case */
+                resList = (ShareEnumItem *)cmMemoryAllocate((NQ_UINT)(sizeof(ShareEnumItem) * (callParams->numShares * 105 / 100))); /* to be on the safe side. add a few shares */
+                if (resList == NULL)
+                {
+                	LOGMSG(CM_TRC_LEVEL_MESS_NORMAL," Out of Memory");
+                    res = NQ_ERR_OUTOFMEMORY;
+                    goto Exit;
+                }
+                callParams->resList = resList;
+                /* no break */
             case STATE_STRUCT:
                 if (callParams->bytesToDo > 0)
                 {
@@ -348,23 +366,31 @@ netShareEnumResponseCallback(
                 {
                     callParams->bytesToDo = SHARESTRUCT_LEN - size;
                     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL,"Struct: end of fragment");
-                    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                    return NQ_SUCCESS;
+                    res = NQ_SUCCESS;
+                    goto Exit;
                 }
                 else
                 {
-                    cmRpcParseSkip(&desc, SHARESTRUCT_LEN);
+                	cmRpcParseSkip(&desc, 4);
+                	if (NULL!= resList)
+                		cmRpcParseUint32(&desc, &resList[callParams->sharesParsed].type);
+
+                	cmRpcParseSkip(&desc, 4);
                     callParams->sharesParsed++;
                     size -= SHARESTRUCT_LEN;
                 }
                 
                 if (callParams->sharesParsed >= callParams->numShares)
                 {
+                	/* in state struct we iterate all shares and save share type in reslist array */
                     callParams->state = STATE_NAMEDESC;
                     callParams->sharesParsed = 0;
                 }
                 break;
             case STATE_NAMEDESC:
+            	/* in state name description we start receiving share name and share comment
+            	 * before each name we receive name description before each comment we receive command description
+            	 * This 4 repeat until we iterate all shares */
                 if (callParams->bytesToDo > 0)
                 {
                     cmRpcParseBytes(&desc, callParams->pData, callParams->bytesToDo);
@@ -383,47 +409,78 @@ netShareEnumResponseCallback(
                     cmRpcParseBytes(&desc, (NQ_BYTE *)callParams->strDesc, size);
                     callParams->bytesToDo = (NQ_COUNT)(sizeof(callParams->strDesc) - size);
                     callParams->pData = (NQ_BYTE*)callParams->strDesc + size;
-                    
                     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL,"Name desc: end of fragment");
-                    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                    return NQ_SUCCESS;
+                    res = NQ_SUCCESS;
+                    goto Exit;
                 }
                 break;
             case STATE_NAME:
+            	if (NULL == resList)
+            	{
+            		res = NQ_FAIL;
+            		LOGERR(CM_TRC_LEVEL_ERROR, "resList NULL.");
+            		goto Exit;
+            	}
                 len = cmLtoh32(callParams->strDesc[0]);
                 len = (len + 1) & (NQ_UINT32)(~1);
-                
+
+                if (len > MAXSHARE_LEN)
+                {
+                	res = NQ_ERR_BADFORMAT;
+                	LOGERR(CM_TRC_LEVEL_ERROR, "Malformed packet, share name length too long: %d.", len);
+                	goto Exit;
+                }
+
                 if (callParams->bytesToDo > 0)
                 {
-                    cmRpcParseBytes(&desc, callParams->pData, callParams->bytesToDo);
+                	/* Beginning of name was parsed into local buffer current name. point on this buffer. */
+                	resList[callParams->sharesParsed].name = (NQ_BYTE *)currentName;
+
+                	/* parse remaining name portion */
+                	cmRpcParseBytes(&desc, callParams->pData, callParams->bytesToDo);
+
                     size -= callParams->bytesToDo;
                     callParams->bytesToDo = 0;
-                    (*callParams->callBack)(currentName, callParams->params);   
                 }
                 else if (size >= sizeof(NQ_WCHAR) * len) 
                 {
-                    cmRpcParseBytes(&desc, (NQ_BYTE *)currentName, (NQ_UINT32)(sizeof(NQ_WCHAR) * len));  
+                	resList[callParams->sharesParsed].name = desc.current;
+                	callParams->lastNameLength = len;
+                    cmRpcParseSkip(&desc, (NQ_UINT32)(sizeof(NQ_WCHAR) * len));
                     size -= (NQ_COUNT)(sizeof(NQ_WCHAR) * len);
-                    (*callParams->callBack)(currentName, callParams->params);
                 }
                 else
                 {
-                    cmRpcParseBytes(&desc, (NQ_BYTE *)currentName, size);  
-                    callParams->bytesToDo = (NQ_COUNT)(sizeof(NQ_WCHAR) * (len - 1) - size); 
+                	/* name is cut in the middle. parse first portion to local buffer */
+                	cmRpcParseBytes(&desc, (NQ_BYTE *)currentName, size);
+                    callParams->bytesToDo = (NQ_COUNT)(sizeof(NQ_WCHAR) * (len - 1) - size);
                     callParams->pData = (NQ_BYTE*)currentName + size;
-                                  
-                    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL,"Name text: end of fragment");
-                    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                    return NQ_SUCCESS;
+                    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL,"Name text: end of fragment. copied bytes: %d remaining: %d", size, callParams->bytesToDo);
+                    res = NQ_SUCCESS;
+                    goto Exit;
                 }
                 savedPtr = desc.current;
                 cmRpcAllign(&desc, 4);
                 size -=  (NQ_COUNT)(desc.current - savedPtr);  
                 callParams->state = STATE_COMMENTDESC;
+                break;
             case STATE_COMMENTDESC:
-                if (callParams->bytesToDo > 0)
+            	if (NULL == resList)
+				{
+					res = NQ_FAIL;
+					LOGERR(CM_TRC_LEVEL_ERROR, "resList NULL.");
+					goto Exit;
+				}
+
+            	if (callParams->bytesToDo > 0)
                 {                   
-                    cmRpcParseBytes(&desc, callParams->pData, callParams->bytesToDo);
+                    if (callParams->bytesToDo > size)
+                    {
+                    	res = NQ_FAIL;
+						LOGERR(CM_TRC_LEVEL_ERROR, "Malformed packet. Recieved size: %d smaller then expected: %d.", size, callParams->bytesToDo);
+						goto Exit;
+                    }
+            		cmRpcParseBytes(&desc, callParams->pData, callParams->bytesToDo);
                     size -= callParams->bytesToDo;
                     callParams->bytesToDo = 0;
                     callParams->state = STATE_COMMENT;
@@ -436,39 +493,80 @@ netShareEnumResponseCallback(
                 }
                 else
                 {
-                    cmRpcParseBytes(&desc, (NQ_BYTE *)callParams->strDesc, size);
+                	cmRpcParseBytes(&desc, (NQ_BYTE *)callParams->strDesc, size);
                     callParams->bytesToDo = (NQ_COUNT)(sizeof(callParams->strDesc) - size);
                     callParams->pData = (NQ_BYTE*)callParams->strDesc + size;
-                    
-                    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL,"Comment desc: end of fragment");
-                    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                    return NQ_SUCCESS;
+                    /* requesting another packet, save name to local buffer */
+                    syMemcpy((NQ_BYTE*)&currentName, resList[callParams->sharesParsed].name, callParams->lastNameLength * sizeof(NQ_WCHAR));
+                    resList[callParams->sharesParsed].name = (NQ_BYTE *)currentName;
+
+                    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL,"Comment desc: end of fragment. copied name to local buffer. len: %d", callParams->lastNameLength);
+                    res = NQ_SUCCESS;
+                    goto Exit;
                 }
                 break;
             case STATE_COMMENT:
-                len = cmLtoh32(callParams->strDesc[0]);
+            	if (NULL == resList)
+				{
+					res = NQ_FAIL;
+					LOGERR(CM_TRC_LEVEL_ERROR, "resList NULL.");
+					goto Exit;
+				}
+
+            	len = cmLtoh32(callParams->strDesc[0]);
                 len = (len + 1) & (NQ_UINT32)(~1);
-               
+
+                if (len > MAXSHARE_LEN)
+				{
+					res = NQ_ERR_BADFORMAT;
+					LOGERR(CM_TRC_LEVEL_ERROR, "Malformed packet, share name length too long: %d.", len);
+					goto Exit;
+				}
+
                 if (callParams->bytesToDo > 0)
                 {
-                    cmRpcParseSkip(&desc, callParams->bytesToDo); 
-                    size -= callParams->bytesToDo;   
-                    callParams->bytesToDo = 0;
+                	if (callParams->bytesToDo > size)
+					{
+						res = NQ_FAIL;
+						LOGERR(CM_TRC_LEVEL_ERROR, "Malformed packet. Recieved size: %d smaller then expected: %d.", size, callParams->bytesToDo);
+						goto Exit;
+					}
+
+					pItem.comment = desc.current;
+
+					pItem.type = resList[callParams->sharesParsed].type;
+					cmRpcParseSkip(&desc, callParams->bytesToDo);
+					size -= callParams->bytesToDo;
+					callParams->bytesToDo = 0;
+					res = (*callParams->callBack)((NQ_WCHAR *)resList[callParams->sharesParsed].name, &pItem);
                 }
                 else if (size >= sizeof(NQ_WCHAR) * len) 
                 {
-                    cmRpcParseSkip(&desc, (NQ_UINT32)(sizeof(NQ_WCHAR) * len));
-                    size -= (NQ_COUNT)(sizeof(NQ_WCHAR) * len);
+					pItem.comment = NULL;
+					if (len > 0)
+						pItem.comment = desc.current;
+					pItem.type = resList[callParams->sharesParsed].type;
+					cmRpcParseSkip(&desc, (NQ_UINT32)(sizeof(NQ_WCHAR) * len));
+					size -= (NQ_COUNT)(sizeof(NQ_WCHAR) * len);
+					res = (*callParams->callBack)((NQ_WCHAR *)resList[callParams->sharesParsed].name, &pItem);
                 }
                 else
                 {
-                    callParams->bytesToDo = (NQ_COUNT)(sizeof(NQ_WCHAR) * (len - 1) - size); 
-                                        
-                    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL,"Comment text: end of fragment");
-                    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                    return NQ_SUCCESS;
+                    callParams->bytesToDo = (NQ_COUNT)(sizeof(NQ_WCHAR) * (len - 1) - size);
+
+                    /* requesting another packet, save name to local buffer */
+                    syMemcpy((NQ_BYTE*)&currentName, resList[callParams->sharesParsed].name, callParams->lastNameLength * sizeof(NQ_WCHAR));
+                    resList[callParams->sharesParsed].name = (NQ_BYTE *)currentName;
+
+                    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL,"Comment text: end of fragment. copy name to Local buffer.");
+                    res = NQ_SUCCESS;
+                    goto Exit;
                 }
                 
+                if (NQ_SUCCESS != res)
+				{
+					goto Exit;
+				}
                 savedPtr = desc.current;
                 cmRpcAllign(&desc, 4);
                 size -=  (NQ_COUNT)(desc.current - savedPtr);
@@ -478,17 +576,25 @@ netShareEnumResponseCallback(
                 if ((int)size <= 0)
                 {
                     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL,"End of fragment and end of comment share");
-                    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                    return NQ_SUCCESS;
+                    res = NQ_SUCCESS;
+                    goto Exit;
                 }  
                 if (callParams->sharesParsed >= callParams->numShares)
                 {
-                    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-                    return NQ_SUCCESS;
+                    res = NQ_SUCCESS;
+                    goto Exit;
                 }
                 break;
         }
     }
+
+Exit:
+	if ((FALSE == moreData) || (res != NQ_SUCCESS))
+	{
+		cmMemoryFree(callParams->resList);
+	}
+	LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
+	return res;
 }
 
 /*====================================================================
@@ -519,7 +625,7 @@ ccSrvsvcGetShareInfo(
     NQ_COUNT res;                 /* response byte count */
     NetShareInfoParams params;    /* parameters for callbacks */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "pipe:%p host:%s share:%s type:%p remark:%p maxRemarkSize:%d unicode:%s", pipeHandle, cmWDump(hostName), cmWDump(share), type, remark, maxRemarkSize, unicodeResult ? "TRUE" : "FALSE");
 
     params.serverName = hostName;
     params.shareName = share;
@@ -530,7 +636,7 @@ ccSrvsvcGetShareInfo(
     res = (NQ_COUNT)ccDcerpcCall(pipeHandle, netShareInfoRequestCallback, netShareInfoResponseCallback, &params);
     *type = (NQ_UINT16)params.type;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res? (params.result? NQ_SUCCESS : NQ_FAIL): NQ_FAIL);
     return res? (params.result? NQ_SUCCESS : NQ_FAIL): NQ_FAIL;
 }
 
@@ -560,21 +666,30 @@ netShareInfoRequestCallback (
     CMRpcPacketDescriptor desc;         /* descriptor for SRVSVC request */
     NQ_UINT32 refId = 1;                /* running referent ID */
     NetShareInfoParams* p = (NetShareInfoParams*)params;    /* casted parameters for callback */
-    NQ_WCHAR * hostName;				/* hostname prefixed */
+    NQ_WCHAR * hostName = NULL;			/* hostname prefixed */
+    NQ_WCHAR * shareName = NULL;		/* share name */
+    NQ_COUNT result = 0;                /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "buff:%p size:%d params:%p more:%p", buffer, size, params, moreData);
 
-    hostName = cmMemoryAllocate((NQ_UINT)(sizeof(NQ_WCHAR) * (cmWStrlen(p->serverName) + 4)));
+    hostName = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)(sizeof(NQ_WCHAR) * (cmWStrlen(p->serverName) + 4)));
     if (NULL == hostName)
     {
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    	return NQ_ERR_OUTOFMEMORY;
+		LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+		goto Exit;
+    }
+
+    shareName = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)(sizeof(NQ_WCHAR) * (cmWStrlen(p->shareName) + 1)));
+    if (NULL == shareName)
+    {
+		LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+		goto Exit;
     }
 
     *moreData = FALSE;
     cmAnsiToUnicode(hostName, "\\\\");
     cmWStrcpy(hostName + 2, p->serverName);
-    cmWStrcpy(currentName, p->shareName);
+    cmWStrcpy(shareName, p->shareName);
 
     cmRpcSetDescriptor(&desc, buffer, FALSE);
     cmRpcPackUint16(&desc, NETRSHAREINFO_OPNUM);
@@ -585,14 +700,17 @@ netShareInfoRequestCallback (
     cmRpcPackUint32(&desc, refId++);
     cmRpcPackUnicode(&desc, hostName, (CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
     /* share name */
-    cmRpcPackUnicode(&desc, currentName, (CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
+    cmRpcPackUnicode(&desc, shareName, (CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM));
     /* info level 1 */
     cmRpcPackUint32(&desc, 1);
-    
+
+    result = (NQ_COUNT)((desc.current - desc.origin) + 2);
+
+Exit:
     cmMemoryFree(hostName);
-    
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return (NQ_COUNT)((desc.current - desc.origin) + 2);
+    cmMemoryFree(shareName);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*====================================================================
@@ -621,6 +739,7 @@ netShareInfoResponseCallback (
     NetShareInfoParams* p = (NetShareInfoParams*)params;  /* casted parameters for callback */
     CMRpcUnicodeString remark;                            /* descriptor for share remark */
     NQ_UINT32 count;                                      /* text counter */
+    NQ_STATUS result = NQ_SUCCESS;                        /* return value */
 
     cmRpcSetDescriptor(&desc, (NQ_BYTE*)data, FALSE);
 
@@ -632,7 +751,7 @@ netShareInfoResponseCallback (
     {
         p->result = FALSE;
         LOGERR(CM_TRC_LEVEL_ERROR, "No share found");
-        return NQ_SUCCESS;
+        goto Exit;
     }
     p->result = TRUE;
     /* skip share name ref ID */
@@ -646,23 +765,30 @@ netShareInfoResponseCallback (
     cmRpcParseSkip(&desc, count * 2);
     cmRpcAllign(&desc, 4);
 
-    cmRpcParseUnicode(&desc, &remark, CM_RP_SIZE32 | CM_RP_FRAGMENT32 | CM_RP_NULLTERM);
+    cmRpcParseUnicode(&desc, &remark, CM_RP_SIZE32 | CM_RP_FRAGMENT32);
 
     if (p->maxRemarkSize < (NQ_INT)remark.size)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Insufficient buffer for share remark");
         sySetLastError(NQ_ERR_MOREDATA);
-        return (NQ_STATUS)NQ_FAIL;
+        result = NQ_FAIL;
+        goto Exit;
     }
 
     if (p->unicodeResult)
-        cmWStrcpy((NQ_WCHAR *)p->remark, remark.text);
+    {
+        cmWStrncpy((NQ_WCHAR *)p->remark, remark.text, remark.length);
+        p->remark[remark.length] = cmWChar(0);
+    }
     else
-        cmUnicodeToAnsi((NQ_CHAR *)p->remark, remark.text);
+    {
+        cmUnicodeToAnsiN((NQ_CHAR *)p->remark, remark.text, (NQ_UINT)(remark.length * sizeof(NQ_WCHAR)));
+        p->remark[remark.length] = '\0';
+    }
 
-    return (NQ_STATUS)NQ_SUCCESS;
+Exit:
+    return result;
 }
 
 
 #endif /* UD_NQ_INCLUDECIFSCLIENT */
-

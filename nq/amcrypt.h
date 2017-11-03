@@ -40,18 +40,19 @@ typedef struct {
    crypt2 : second crypter
    encryptionKey : key to use for encryption.
    names : Blob of names as returned from server. This value may be NULL.
+   timeStamp : Time stamp to be used in blob.
    crypt :        Pointer to the result structure. The blob data
                   pointers will point to newly allocated data
                   blocks. Application should deallocate them
                   later using <link amCryptDispose@AMCrypt *, amCryptDispose()>.
    Returns
    TRUE on success, FALSE on failure. This function may fail because of lack of memory.                                                                                        */
-NQ_BOOL amCryptEncrypt(const AMCredentialsW * credentials, NQ_UINT crypt1, NQ_UINT crypt2, const NQ_BYTE * encryptionKey, CMBlob * names, AMCrypt * crypt);
+NQ_BOOL amCryptEncrypt(const AMCredentialsW * credentials, NQ_UINT crypt1, NQ_UINT crypt2, const NQ_BYTE * encryptionKey, CMBlob * names, NQ_UINT64 timeStamp, AMCrypt * crypt);
 
 /* Description
-   Convert ASCII cedentaisl to Unicode
+   Convert ASCII credential to Unicode
    Parameters
-   crypy : Pointer to the crypt structure. This structure is
+   crypt : Pointer to the crypt structure. This structure is
            expected to be created in <link amCryptCreateHash2@AMCredentialsW *@AMCryptHash2 *, amCryptCreateHash2()>.
    Returns
    None.                                                                                                              */

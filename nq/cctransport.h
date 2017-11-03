@@ -53,18 +53,22 @@ typedef void (* CCTransportCleanupCallback)(void * transport);
 */
 typedef struct _cctransport
 {
-	CMItem item;							/* List item. */
-	NSSocketHandle socket;					/* Socket to listen on. */
-	NSRecvDescr recv;						/* Receive descriptor. */
-	CCTransportResponseCallback callback;	/* Function to call when data is available on this socket. */
-	void * context;							/* Context to pass. */
-	NQ_BOOL connected;						/* TRUE when the transport is connected. */
-    NQ_TIME lastTime;                       /* last tramsit/receive timestamp for connection timeout */
-	CCTransportCleanupCallback cleanupCallback;	
-                                            /* Function to call on unexpected connection break. */
-    void * cleanupContext;                  /* Context for the callback above. */
-    NQ_BOOL isReceiving;                    /* TRUE when this transport is in receiving an SMB */
-    SYMutex guard;                          /* Critical section guard for this transport. */
+	CMItem item;								/* List item. */
+	NSSocketHandle socket;						/* Socket to listen on. */
+	NSRecvDescr recv;							/* Receive descriptor. */
+	CCTransportResponseCallback callback;		/* Function to call when data is available on this socket. */
+	void * context;								/* Context to pass. */
+    NQ_TIME lastTime;                       	/* last transmit/receive time stamp for connection timeout */
+	CCTransportCleanupCallback cleanupCallback;	/* Function to call on unexpected connection break. */
+    void * 	cleanupContext;                  	/* Context for the callback above. */
+    void *	server;
+	NQ_BOOL connected;							/* TRUE when the transport is connected. */
+    NQ_BOOL isReceiving;                    	/* TRUE when this transport is in receiving an SMB */
+    NQ_BOOL isSettingUp;						/* TRUE when this transport is in use by Negotiate step */
+    NQ_BOOL	doDisconnect;
+    NQ_BOOL isWaitingDisconectCond;
+    CMThreadCond disconnectCond;
+    SYMutex guard;                          	/* Critical section guard for this transport. */
 }
 CCTransport;	/* Transport entry */	
 
@@ -99,7 +103,7 @@ void ccTransportInit(CCTransport * transport);
    ips :     Pointer to an array of IP addresses to try. 
    numIps :  Number of IP addresses.
    host : 	 Server host name.
-   cleanupCallback : callback fucntion to call for connection cleanup
+   cleanupCallback : callback function to call for connection cleanup
    cleanupContext : context for the function above
    Returns
    TRUE on success and FALSE on error.   */
@@ -110,6 +114,12 @@ NQ_BOOL ccTransportConnect(
     const NQ_WCHAR * host, 
     CCTransportCleanupCallback cleanupCallback,
     void * cleanupContext
+#ifdef UD_NQ_USETRANSPORTNETBIOS
+	,NQ_BOOL forceNBSocket
+#endif /* UD_NQ_USETRANSPORTNETBIOS */
+#ifdef UD_NQ_INCLUDESMBCAPTURE
+    ,CMCaptureHeader	*	captureHdr
+#endif /* UD_NQ_INCLUDESMBCAPTURE */
     );
 
 /* Description
@@ -137,7 +147,7 @@ NQ_BOOL ccTransportIsTimeoutExpired(CCTransport * transport);
 NQ_BOOL ccTransportDisconnect(CCTransport * transport);
 
 /* Description
-   Lock transport so that it will be a critical section. No other thread will use it and all sends/receives will be contigous.
+   Lock transport so that it will be a critical section. No other thread will use it and all sends/receives will be contiguous.
    
    transport :  Pointer to the transport object being used for
                 this connection.
@@ -146,7 +156,7 @@ NQ_BOOL ccTransportDisconnect(CCTransport * transport);
 void ccTransportLock(CCTransport * transport);
 
 /* Description
-   Unlock the transport thus ending a critical section on it so that other ttreads can use it.
+   Unlock the transport thus ending a critical section on it so that other threads can use it.
    
    transport :  Pointer to the transport object being used for
                 this connection.
@@ -215,14 +225,6 @@ NQ_BOOL ccTransportSendTail(CCTransport * transport, const NQ_BYTE * data, NQ_CO
 void ccTransportSetResponseCallback(CCTransport * transport, CCTransportResponseCallback callback, void * context);
 
 /* Description
-   Remove callback for response on the given socket.
-   Parameters
-   transport : Pointer to the transport object being used for this connection.
-   Returns
-   None. */
-void ccTransportRemoveResponseCallback(CCTransport * transport);
-
-/* Description
    Receive NetBIOS header and the packet. The packet is received
    in an allocated buffer.
    
@@ -231,7 +233,7 @@ void ccTransportRemoveResponseCallback(CCTransport * transport);
    Parameters
    transport : Pointer to the transport object being used for this connection.
    buffer :   Buffer to read data in.
-   dataLen :  OUT\: buffer for the lengh of the received packet,
+   dataLen :  OUT\: buffer for the length of the received packet,
               not including NBT header.
    Returns
    Pointer to received buffer or NULL on error.                  */
@@ -253,7 +255,7 @@ NQ_BYTE * ccTransportReceiveAll(CCTransport * transport, NQ_COUNT * dataLen);
 NQ_INT ccTransportReceivePacketLength(CCTransport * transport);
 
 /* Description
-   Receive part of thge response in an outside buffer.
+   Receive part of the response in an outside buffer.
    
    This function assumes that <link ccTransportReceiveEnd@NSRecvDescr, ccTransportReceiveEnd()>
    will be called.
@@ -262,7 +264,7 @@ NQ_INT ccTransportReceivePacketLength(CCTransport * transport);
    buffer :   Buffer to read data in.
    dataLen :  Number of bytes to receive.
    Returns
-   Number of bytes reeceived or NQ_FAIL on error.                                                  */
+   Number of bytes received or NQ_FAIL on error.                                                  */
 NQ_COUNT ccTransportReceiveBytes(CCTransport * transport, NQ_BYTE * buffer, NQ_COUNT dataLen);
 
 /* Description
@@ -275,7 +277,7 @@ NQ_COUNT ccTransportReceiveBytes(CCTransport * transport, NQ_BYTE * buffer, NQ_C
    buffer :   Buffer to read data in.
    dataLen :  Number of bytes to receive.
    Returns
-   Number of bytes reeceived or NQ_FAIL on error.                                                  */
+   Number of bytes received or NQ_FAIL on error.                                                  */
 NQ_COUNT ccTransportReceiveEnd(CCTransport * transport);
 
 /* Description
@@ -284,11 +286,21 @@ NQ_COUNT ccTransportReceiveEnd(CCTransport * transport);
    Protocol calls this function when a response is not an expected one. For instance,
    this happens on SMB2 interim response.
    
-   This fucntion should be only called in the receive thread. 
+   This function should be only called in the receive thread.
    Parameters
    transport : Pointer to the transport object being used for this connection.
    Returns
    None.                                                  */
 void ccTransportDiscardReceive(CCTransport * transport);
+
+/* Description
+   Discard the state of transport when is is not available for receiving thread,
+   Called at the end of establishing connection to a server.
+
+   Parameters
+   transport : Pointer to the transport object being used for this connection.
+   Returns
+   None.                                                  */
+void ccTransportDiscardSettingUp(CCTransport * pTransport);
 
 #endif /* _CCTRANSPORT_H_ */

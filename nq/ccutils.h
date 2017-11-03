@@ -130,9 +130,13 @@ NQ_WCHAR * ccUtilsMountPointFromLocalPath(const NQ_WCHAR * path);
    Parameters
    path :  Local path in the form of\: <i>\<mount point\>\<file
            path\></i>.
+   pathPrefix : Remote home directory, sub folder of remote share
+           if available.
+   makeCanonic : Make canonicalized path (add leading backslash) - relevant for SMB only
+   isLocalPath : Whether path is of local form
    Returns
    Pointer to a newly created string or NULL on failure.         */
-NQ_WCHAR * ccUtilsFilePathFromLocalPath(const NQ_WCHAR * path);
+NQ_WCHAR * ccUtilsFilePathFromLocalPath(const NQ_WCHAR * path, const NQ_WCHAR * pathPrefix, NQ_BOOL makeCanonic, NQ_BOOL isLocalPath);
 
 /* Description
    This function creates network path from server name and share name. 
@@ -174,10 +178,26 @@ NQ_WCHAR * ccUtilsComposeRemotePathToFile(const NQ_WCHAR * server, const NQ_WCHA
    caller's responsibility to free that memory.
    Parameters
    server :  Pointer to server name and share name (mount path). 
+   file :  Pointer to file path. This path should be local to the share.
+   isPathLocal : Whether path is of local form.
+   Returns
+   Pointer to a newly created path string or NULL on failure. */
+NQ_WCHAR * ccUtilsComposeRemotePathToFileByMountPath(const NQ_WCHAR * mountPath, const NQ_WCHAR * file, NQ_BOOL isPathLocal);
+
+/* Description
+   This function creates local path from mount point name and a 
+   path to file. 
+   
+   Path syntax is <i>\<mount point\>\<file path\></i>.
+   
+   It creates network path string in an allocated memory and it is
+   caller's responsibility to free that memory.
+   Parameters
+   mountPoint :  Pointer to mount point. 
    file :  Pointer to file path. This path should be local to the share. 
    Returns
    Pointer to a newly created path string or NULL on failure. */
-NQ_WCHAR * ccUtilsComposeRemotePathToFileByMountPath(const NQ_WCHAR * mountPath, const NQ_WCHAR * file);
+NQ_WCHAR * ccUtilsComposeLocalPathToFileByMountPoint(const NQ_WCHAR * mountPoint, const NQ_WCHAR * file);
 
 /* Description
    This function checks widlcards in a path.
@@ -242,7 +262,7 @@ NQ_WCHAR * ccUtilsComposePath(const NQ_WCHAR * dir, const NQ_WCHAR * file);
 
 /* Description
    This function withdraws directory path from full path by taking the path component
-   before the last delimiter. If there is no deleimiter - it returns an empty string, 
+   before the last delimiter. If there is no delimiter - it returns an empty string, 
    
    It creates new path string in an allocated memory and it is
    caller's responsibility to free that memory.
@@ -272,5 +292,17 @@ NQ_WCHAR * ccUtilsFileFromPath(const NQ_WCHAR * path);
    Returns
    TRUE if the path is local or FALSE otherwise. */
 NQ_BOOL ccUtilsPathIsLocal(const NQ_WCHAR * path);
+
+/* Description
+   This function makes a canonicalized path by adding a leading backslash, 
+   relevant for SMB only.
+   
+   It creates new path string in an allocated memory and it is
+   caller's responsibility to free that memory.
+   Parameters
+   path :  Path. 
+   Returns
+   Pointer to a newly created path or NULL on failure. */
+NQ_WCHAR * ccUtilsCanonicalizePath(const NQ_WCHAR * path);
 
 #endif /* _CCUTILS_H_ */

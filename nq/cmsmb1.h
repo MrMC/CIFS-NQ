@@ -1,5 +1,5 @@
 /*************************************************************************
- * Copyright 2011-2012 by Visuality Systems, Ltd.
+ * Copyright 20011-2012 by Visuality Systems, Ltd.
  *
  *                     All Rights Reserved
  *
@@ -20,6 +20,8 @@
 #include "cmbuf.h"
 
 #define SMB_SECURITY_SIGNATURE_OFFSET 14	/* shift from header start to signature */
+
+extern const NQ_BYTE cmSmbProtocolId[4];
 
 /* SMB header */
 typedef struct

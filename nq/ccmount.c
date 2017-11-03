@@ -35,34 +35,54 @@ static CMList mounts;
 #if SY_DEBUGMODE
 static void dumpOne(CMItem * pItem)
 {
-#ifdef UD_NQ_INCLUDETRACE
+#if defined (UD_NQ_EXTERNALTRACE) || defined (NQ_INTERNALTRACE)
     CCMount * pMount = (CCMount *)pItem;
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "  Mount:: path: %s server %p share %p", cmWDump(pMount->path), pMount->server, pMount->share);
-#endif /* UD_NQ_INCLUDETRACE */
+#endif /* defined (UD_NQ_EXTERNALTRACE) || defined (NQ_INTERNALTRACE) */
 }
 #endif /* SY_DEBUGMODE */
 
 /*
- * Explicitely dispose mount point:
- * 	- disconnects from the server
+ * Explicitly dispose mount point:
+ *     - disconnects from the server
  *  - disposes private data  
  */
 static void disposeMount(CCMount * pMount)
 {
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+#ifdef UD_CC_INCLUDEDFS
+	CMIterator shareLinkIter;
+	CCShareLink *pShareLink;
+#endif
+
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "mount:%p", pMount);
     LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "About to dispose mount %s", cmWDump(pMount->item.name));
 
-    if (NULL!= pMount->credentials)
-            cmMemoryFree(pMount->credentials);
-    if (NULL!= pMount->path)
+    if (NULL != pMount->credentials)
+        cmMemoryFree(pMount->credentials);
+    if (NULL != pMount->path)
         cmMemoryFree(pMount->path);
+    if (NULL != pMount->pathPrefix)
+        cmMemoryFree(pMount->pathPrefix);
+
+#ifdef UD_CC_INCLUDEDFS
+    cmListIteratorStart(&pMount->shareLinks, &shareLinkIter);
+
+    while(cmListIteratorHasNext(&shareLinkIter))
+    {
+    	pShareLink = (CCShareLink *)cmListIteratorNext(&shareLinkIter);
+    	cmListItemUnlock((CMItem *)pShareLink->pShare);
+    }
+    cmListIteratorTerminate(&shareLinkIter);
+    cmListShutdown(&pMount->shareLinks);
+#endif
+
     cmListItemRemoveAndDispose((CMItem *)pMount);
     LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 /*
  * Callback for share unlock and disposal:
- * 	- disconnects from the share
+ *     - disconnects from the share
  *  - disposes private data  
  */
 static NQ_BOOL unlockCallback(CMItem * pItem)
@@ -84,21 +104,26 @@ static NQ_BOOL isValidMountPointName(const NQ_WCHAR * name)
 
     NQ_INT length;
     NQ_UINT i;
+    NQ_BOOL result = FALSE;
 
     length = (NQ_INT)cmWStrlen(name);
-    
+
     /* check length */
     if ((length < 2) || (length >= MOUNTNTPATH_SIZE) || (name[0] != cmWChar('\\')))
-        return FALSE;
-
+    {
+        goto Exit;
+    }
     /* skip the first character */
     name++;
 
     for (i = 0; i < sizeof(illegal)/sizeof(NQ_WCHAR); i++)
         if (cmWStrchr(name, illegal[i]) != NULL)
-            return FALSE;
+            goto Exit;
 
-    return TRUE;
+    result = TRUE;
+
+Exit:
+    return result;
 }
 
 /*
@@ -109,16 +134,21 @@ static NQ_BOOL isValidRemotePathName(const NQ_WCHAR * name)
 {
     NQ_COUNT i; 
     const NQ_WCHAR * p;   
+    NQ_BOOL result = FALSE;
 
     if (!name || cmWStrlen(name) >= SHAREPATH_SIZE)
-        return FALSE;
+        goto Exit;
     
     for (i = 0, p = name; *p != cmWChar('\0'); p++)
     {
         if (*p == cmWChar('\\'))
             i++;
     }
-    return (i == 3);      
+
+    result = (i >= 3);
+
+Exit:
+    return result;
 }
 
 
@@ -167,9 +197,9 @@ void ccMountDump(void)
 
 NQ_INT nqAddMountA(const NQ_CHAR * mountPoint, const NQ_CHAR * remotePath, NQ_BOOL connect)
 {
-    NQ_WCHAR * wPoint;
-    NQ_WCHAR * wPath;
-    NQ_INT res;
+    NQ_WCHAR * wPoint = NULL;
+    NQ_WCHAR * wPath = NULL;
+    NQ_INT res = NQ_FAIL;
 
     LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
 
@@ -177,77 +207,75 @@ NQ_INT nqAddMountA(const NQ_CHAR * mountPoint, const NQ_CHAR * remotePath, NQ_BO
     wPath = cmMemoryCloneAString(remotePath);
     if (NULL == wPoint || NULL == wPath)
     {
-        cmMemoryFree(wPoint);   /* handles NULL */
-        cmMemoryFree(wPath);    /* handles NULL */
         sySetLastError(NQ_ERR_OUTOFMEMORY);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return NQ_FAIL;
+        goto Exit;
     }
     res = nqAddMountW(wPoint, wPath, connect);
+
+Exit:
     cmMemoryFree(wPoint);
     cmMemoryFree(wPath);
-
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%d", res);
     return res;
 }
 
 NQ_INT nqAddMountW(const NQ_WCHAR * mountPoint, const NQ_WCHAR * remotePath, NQ_BOOL connect)
 {
-    CCMount * pMount;       /* pointer to mount */
-    CCShare * pShare;       /* pointer to share */
+    CCMount * pMount = NULL;       /* pointer to mount */
+    CCShare * pShare = NULL;       /* pointer to share */
+    NQ_WCHAR * mountFilePath = NULL;
+    NQ_WCHAR * filePathFromRemotePath = NULL;
+    NQ_INT result = NQ_FAIL;       /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "point:%s path:%s connect:%s", cmWDump(mountPoint), cmWDump(remotePath), connect ? "TRUE" : "FALSE");
 
     if (!isValidMountPointName(mountPoint))
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Illegal mount point name: %s", cmWDump(mountPoint));
         sySetLastError(NQ_ERR_BADPARAM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return NQ_FAIL;
+        goto Exit;
     }
 
     if (!isValidRemotePathName(remotePath))
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Illegal share path: %s", cmWDump(remotePath));
         sySetLastError(NQ_ERR_BADPARAM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return NQ_FAIL;
+        goto Exit;
     }
     pMount = (CCMount *)cmListItemFind(&mounts, mountPoint + 1, TRUE , TRUE);
     if (NULL != pMount)
     {
-        cmListItemUnlock((CMItem *)pMount);
         LOGERR(CM_TRC_LEVEL_ERROR, "Duplicate mount point");
         sySetLastError(NQ_ERR_BADPARAM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return NQ_FAIL;
+        goto Error;
     }
-    pMount = (CCMount *)cmListItemCreateAndAdd(&mounts, sizeof(CCMount), mountPoint + 1, unlockCallback, TRUE);
+    pMount = (CCMount *)cmListItemCreateAndAdd(&mounts, sizeof(CCMount), mountPoint + 1, unlockCallback, CM_LISTITEM_LOCK);
     if (NULL == pMount)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_OUTOFMEMORY);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return NQ_FAIL;
+        goto Exit;
     }
+
+#ifdef UD_CC_INCLUDEDFS
+    cmListStart(&pMount->shareLinks);
+#endif
+
     pMount->path = cmMemoryCloneWString(remotePath);
     if (NULL == pMount->path)
     {
-        cmListItemUnlock((CMItem *)pMount);
         LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_OUTOFMEMORY);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return NQ_FAIL;
+        goto Error;
     }
     cmWStrupr(pMount->path);
+    pMount->pathPrefix = NULL;
     pMount->credentials = NULL; /* will be set later */
-    pShare = ccShareConnect(pMount->path, &pMount->credentials, TRUE);
+    pShare = ccShareConnect(pMount->path, pMount, &pMount->credentials, TRUE);
     if (NULL == pShare)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Failed to connect");
-        cmListItemUnlock((CMItem *)pMount);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return NQ_FAIL;
+        goto Error;
     }
 
     if (NULL != pShare->dfsReferral)
@@ -263,143 +291,204 @@ NQ_INT nqAddMountW(const NQ_WCHAR * mountPoint, const NQ_WCHAR * remotePath, NQ_
         pMount->server = pShare->user->server;
     }
     cmListItemUnlock((CMItem *)pShare);
-    
+
+    /* check sub folder path existence */
+    {
+        filePathFromRemotePath = ccUtilsFilePathFromRemotePath(remotePath, TRUE);
+
+        if (NULL != filePathFromRemotePath)
+        {
+            FileInfo_t fileInfo;
+            
+            if (cmWStrlen(filePathFromRemotePath) == 0)
+            {
+                cmMemoryFree(filePathFromRemotePath);
+            }
+            else
+            {
+                mountFilePath = ccUtilsComposeLocalPathToFileByMountPoint(pMount->item.name, filePathFromRemotePath);            
+                if (NULL == mountFilePath)
+                {
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+                    sySetLastError(NQ_ERR_OUTOFMEMORY);
+                    goto Error;
+                }
+                if (!ccGetFileInformationByNameW(mountFilePath, &fileInfo))
+                {
+                    LOGERR(CM_TRC_LEVEL_ERROR, "Failed to connect to sub folder");
+                    goto Error;
+                }
+                pMount->pathPrefix = filePathFromRemotePath;
+            }
+        }   
+    }
 #if SY_DEBUGMODE
     pMount->item.dump = dumpOne; 
-#endif /* SY_DEBUGMODE */        
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-    return NQ_SUCCESS;
+#endif /* SY_DEBUGMODE */
+
+    result = NQ_SUCCESS;
+    goto Exit;
+
+Error:
+    cmMemoryFree(filePathFromRemotePath);
+    cmListItemUnlock((CMItem *)pMount);
+
+Exit:
+    cmMemoryFree(mountFilePath);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%d", result);
+    return result;
 }
 
 NQ_INT nqRemoveMountA(const NQ_CHAR * mountPoint)
 {
-    NQ_WCHAR * pointW;	/* mount pint in Unicode */
-    NQ_INT res;			/* Unicode operation result */
+    NQ_WCHAR * pointW = NULL; /* mount point in Unicode */
+    NQ_INT res = NQ_FAIL;     /* return value */
 
     LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
 
     pointW = cmMemoryCloneAString(mountPoint);
     if (NULL == pointW)
     {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_OUTOFMEMORY);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return NQ_FAIL;
+        goto Exit;
     }
     res = nqRemoveMountW(pointW);
-    cmMemoryFree(pointW);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+Exit:
+    cmMemoryFree(pointW);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%d", res);
     return res;
 }
 
 NQ_INT nqRemoveMountW(const NQ_WCHAR * mountPoint)
 {
-    CCMount * pMount;       /* mount point pointer */
+    CCMount * pMount = NULL;     /* mount point pointer */
+    NQ_INT result = NQ_FAIL;     /* return value */
+#ifdef UD_CC_INCLUDEDFS
+    CMIterator shareLinkIter;
+    CCShareLink *pShareLink;
+#endif
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "point:%s", cmWDump(mountPoint));
 
     pMount = (CCMount *)cmListItemFind(&mounts, mountPoint + 1, TRUE , FALSE); /*no need to lock*/
     if (NULL == pMount)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Mount point not found");
         sySetLastError(NQ_ERR_BADPARAM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return NQ_FAIL;
+        goto Exit;
     }
-    cmListItemUnlock((CMItem *)pMount);               
-    
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-    return NQ_SUCCESS;
+
+#ifdef UD_CC_INCLUDEDFS
+    cmListIteratorStart(&pMount->shareLinks, &shareLinkIter);
+
+    while(cmListIteratorHasNext(&shareLinkIter))
+    {
+    	pShareLink = (CCShareLink *)cmListIteratorNext(&shareLinkIter);
+    	cmListItemUnlock((CMItem *)pShareLink->pShare);
+    }
+    cmListIteratorTerminate(&shareLinkIter);
+    cmListShutdown(&pMount->shareLinks);
+#endif
+
+    cmListItemUnlock((CMItem *)pMount);
+
+    result = NQ_SUCCESS;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%d", result);
+    return result;
 }
 
 CCMount * ccMountFind(const NQ_WCHAR * path)
 {
-    CCMount * pMount;           /* mount point pointer */
-    const NQ_WCHAR * mpName;    /* mount point name */
+    CCMount * pMount = NULL;           /* mount point pointer */
+    const NQ_WCHAR * mpName = NULL;    /* mount point name */
+    CCMount * pResult = NULL;          /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "path:%s", cmWDump(path));
 
     mpName = ccUtilsMountPointFromLocalPath(path);
     if (NULL == mpName)
     {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_OUTOFMEMORY);
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NULL;
+        goto Exit;
     }
     pMount = (CCMount *)cmListItemFind(&mounts, mpName, TRUE , TRUE);
     cmMemoryFree(mpName);
     if (NULL == pMount)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Mount point not found");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NULL;
+        goto Exit;
     }
     if (NULL == pMount->server || NULL == pMount->share)
     {
-        cmListItemUnlock((CMItem *)pMount);
         LOGERR(CM_TRC_LEVEL_ERROR, "Mount point not connected");
-        LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-        return NULL;
+        goto Exit;
     }
-    cmListItemUnlock((CMItem *)pMount);
-    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
-    return pMount;
+    pResult = pMount;
+
+Exit:
+    if (NULL != pMount)
+        cmListItemUnlock((CMItem *)pMount);
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pResult);
+    return pResult;
 }
 
 NQ_BOOL ccResetCredentailsA(const NQ_CHAR * mountPoint)
 {
-    NQ_WCHAR * pointW;	/* mount pint in Unicode */
-    NQ_BOOL res;		/* Unicode operation result */
+    NQ_WCHAR * pointW = NULL;    /* mount pint in Unicode */
+    NQ_BOOL res = FALSE;         /* return value */
 
     LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
 
     pointW = cmMemoryCloneAString(mountPoint);
     if (NULL == pointW)
     {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
         sySetLastError(NQ_ERR_OUTOFMEMORY);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return NQ_FAIL;
+        goto Exit;
     }
     res = ccResetCredentailsW(pointW);
-    cmMemoryFree(pointW);
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+Exit:
+    cmMemoryFree(pointW);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%s", res ? "TRUE" : "FALSE");
     return res;
 }
 
 NQ_BOOL ccResetCredentailsW(const NQ_WCHAR * mountPoint)
 {
-    CCMount * pMount;       /* mount point pointer */
-    CCUser * pUser;         /* user structure pointer */
-    CMIterator iServer;     /* servers iterator */
+    CCMount * pMount = NULL;       /* mount point pointer */
+    CCUser * pUser = NULL;         /* user structure pointer */
+    CMIterator iServer;            /* servers iterator */
+    NQ_BOOL result = FALSE;        /* return value */
 
-    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL);
+    LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "point:%s", cmWDump(mountPoint));
 
     pMount = (CCMount *)cmListItemFind(&mounts, mountPoint + 1, TRUE , TRUE);
     if (NULL == pMount)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Mount point not found");
         sySetLastError(NQ_ERR_BADPARAM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;
+        goto Exit;
     }
     if (NULL == pMount->share)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Mount point not connected to share");
         sySetLastError(NQ_ERR_BADPARAM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;
+        goto Exit;
     }
     pUser = pMount->share->user;
     if (NULL == pUser)
     {
         LOGERR(CM_TRC_LEVEL_ERROR, "Associated share is not connected");
         sySetLastError(NQ_ERR_BADPARAM);
-        LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-        return FALSE;
+        goto Exit;
     }
     pMount->credentials = NULL;
-    cmListItemUnlock((CMItem *)pMount);
     ccServerIterateServers(&iServer);
     while (cmListIteratorHasNext(&iServer))
     {
@@ -423,9 +512,62 @@ NQ_BOOL ccResetCredentailsW(const NQ_WCHAR * mountPoint)
         cmListIteratorTerminate(&iUser);
     }
     cmListIteratorTerminate(&iServer);
+    result = TRUE;
 
-    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
-    return TRUE;
+Exit:
+    if (NULL != pMount)
+        cmListItemUnlock((CMItem *)pMount);
+    LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL, "result:%s", result ? "TRUE" : "FALSE");
+    return result;
 }
 
+/* Description
+ * Per each mount, shares that are mounted as part of DFS
+ * are kept in a list so they can be unlocked on remove mount.
+ * Each share should appear once only, so if an existing share is
+ * again listed, one item unlock should be performed. *
+ */
+void ccMountAddShareLink(CCMount *pMount, CCShare *pShare)
+{
+#ifdef UD_CC_INCLUDEDFS
+	CMIterator shareLinkIter;
+	CCShareLink *pShareLink;
+	NQ_BOOL shareExists = FALSE;
+#endif
+
+	LOGFB(CM_TRC_LEVEL_FUNC_PROTOCOL, "Share: %s, pMount: %p", cmWDump((const NQ_WCHAR *)pShare->item.name), pMount);
+
+#ifdef UD_CC_INCLUDEDFS
+	if (NULL == pMount)
+	{
+		goto Exit;
+	}
+
+	/* first check if this share is already in this mounts list */
+	cmListIteratorStart(&pMount->shareLinks, &shareLinkIter);
+
+	while(cmListIteratorHasNext(&shareLinkIter))
+	{
+		pShareLink = (CCShareLink *)cmListIteratorNext(&shareLinkIter);
+		if (pShare == pShareLink->pShare)
+		{
+			/* each connect the share is locked. if this share connect is related to this mount and lokced by this mount. one time is enough. */
+			cmListItemUnlock((CMItem *)pShare);
+			shareExists = TRUE;
+			break;
+		}
+	}
+	cmListIteratorTerminate(&shareLinkIter);
+
+	if (FALSE == shareExists)
+	{
+		pShareLink = (CCShareLink *)cmListItemCreateAndAdd(&pMount->shareLinks, sizeof(CCShareLink), pShare->item.name, NULL,  CM_LISTITEM_NOLOCK);
+		pShareLink->pShare = pShare;
+	}
+
+Exit:
+#endif
+
+	LOGFE(CM_TRC_LEVEL_FUNC_PROTOCOL);
+}
 #endif /* UD_NQ_INCLUDECIFSCLIENT */

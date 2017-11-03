@@ -50,18 +50,25 @@ nsListen(
     )
 {
     SocketSlot* pSock;      /* pointer to the socket descriptor */
+    NQ_STATUS result = NQ_FAIL;
+#ifdef UD_ND_INCLUDENBDAEMON
+    void*       msgBuf;     /* buffer for Cancel Listen packet */
+    NQ_INT      msgLen;     /* length of the message in this buffer */
+#endif /* UD_ND_INCLUDENBDAEMON */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "sockHandle:%p backlog:%d", sockHandle, backlog);
 
+#ifdef UD_ND_INCLUDENBDAEMON
+    msgBuf = (void *)nsGetSendDatagramBuffer();
+#endif /* UD_ND_INCLUDENBDAEMON */
 
     pSock = (SocketSlot*)sockHandle;
 #if SY_DEBUGMODE
     if (!checkSocketSlot(pSock))    /* Is a valid slot (used)? */
-    {
+    {        
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal slot");
         sySetLastError(CM_NBERR_ILLEGALSOCKETSLOT);
-        TRCERR("Illegal slot");
-        TRCE();
-        return NQ_FAIL;
+        goto Exit;
     }
 #endif
 
@@ -69,19 +76,18 @@ nsListen(
 
     if (!pSock->isBind)
     {
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal slot");
         sySetLastError(CM_NBERR_NOBINDBEFORELISTEN);
-        TRCERR("Illegal slot");
-        TRCE();
-        return NQ_FAIL;
+        goto Exit;
     }
 
     /* if name was previously registered with the DD - do nothing */
 
     if (pSock->isListening)
     {
-        TRC("Socket is already listening");
-        TRCE();
-        return NQ_SUCCESS;
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "Socket is already listening");
+        result = NQ_SUCCESS;
+        goto Exit;
     }
 
     /* for non-NetBIOS socket - just perform listen */
@@ -92,13 +98,12 @@ nsListen(
 
         if (syListenSocket(pSock->socket, backlog) == NQ_FAIL)
         {
-            TRCERR("Unable to start listening");
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to start listening");
+            sySetLastError(CM_NBERR_LISTENFAIL);
+            goto Exit;
         }
-
-        TRCE();
-        return NQ_SUCCESS;
+        result = NQ_SUCCESS;
+        goto Exit;
     }
 
     /* we listen directly to stream sockets,
@@ -112,13 +117,13 @@ nsListen(
 
         if (syListenSocket(pSock->socket, backlog) == NQ_FAIL)
         {
-            TRCERR("Unable to start listening");
-            TRCE();
-            return NQ_FAIL;
+            LOGERR(CM_TRC_LEVEL_ERROR, "Unable to start listening");
+            sySetLastError(CM_NBERR_LISTENFAIL);
+            goto Exit;
         }
 #ifndef UD_NB_RETARGETSESSIONS
-        TRCE();
-        return NQ_SUCCESS;
+        result = NQ_SUCCESS;
+        goto Exit;
 #else
         break;
 #endif
@@ -127,55 +132,43 @@ nsListen(
         break;
 
     default:
-        TRCERR("Internal error - illegal socket type");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Internal error - illegal socket type");
+        goto Exit;
     }
 
     /* create Listen Request and send it to DD thus registering our socket
        with the DD */
 
 #ifdef UD_ND_INCLUDENBDAEMON
-    {
-        void*       msgBuf;         /* buffer for Cancel Listen packet */
-        NQ_INT        msgLen;       /* length of the message in this buffer */
+	if ((msgLen = frameInternalListenRequest((NQ_BYTE*)msgBuf, pSock))==NQ_FAIL)
+	{
+	    LOGERR(CM_TRC_LEVEL_ERROR, "Unable to create Cancel Listen packet");
+        sySetLastError(CM_NBERR_CANCELLISTENFAIL);
+	    goto Exit;
+	}
 
-        msgBuf = (void *)nsGetSendDatagramBuffer();
-
-        if ((msgLen = frameInternalListenRequest((NQ_BYTE*)msgBuf, pSock))==NQ_FAIL)
-        {
-            sySetLastError(CM_NBERR_CANCELLISTENFAIL);
-            nsPutSendDatagramBuffer();
-
-            TRCERR("Unable to create Cancel Listen packet");
-            TRCE();
-            return NQ_FAIL;
-        }
-
-        /* send the Cancel Listen packet to the DD and wait for response */
-        if (nsProceedRequestToDD((NQ_BYTE*)msgBuf, (NQ_UINT)msgLen, pSock->name.name) == NQ_FAIL)
-        {
-            nsPutSendDatagramBuffer();
-
-            syShutdownSocket(pSock->socket);    /* close the connection */
-            sySetLastError(CM_NBERR_TIMEOUT);   /*the functin timed out */
-
-            TRCERR("Failed to register the socket with the DD: timeout");
-            TRCE();
-            return NQ_FAIL;
-        }
-        nsPutSendDatagramBuffer();
-
-     }
+	/* send the Cancel Listen packet to the DD and wait for response */
+	if (nsProceedRequestToDD((NQ_BYTE*)msgBuf, (NQ_UINT)msgLen, pSock->name.name) == NQ_FAIL)
+	{
+	    syShutdownSocket(pSock->socket);    /* close the connection */
+	    LOGERR(CM_TRC_LEVEL_ERROR, "Failed to register the socket with the DD: timeout");
+        sySetLastError(CM_NBERR_TIMEOUT);   /*the functin timed out */
+	    goto Exit;
+	}
 #endif /* UD_ND_INCLUDENBDAEMON */
 
     /* this socket will listen to any client */
 
     syMemcpy(pSock->remoteName.name, CM_NB_NETBIOSANYNAME, sizeof(CM_NB_NETBIOSANYNAME));
     pSock->remoteName.isGroup = FALSE;
+    result = NQ_SUCCESS;
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+#ifdef UD_ND_INCLUDENBDAEMON
+    nsPutSendDatagramBuffer();
+#endif /* UD_ND_INCLUDENBDAEMON */
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -200,27 +193,26 @@ nsAccept(
     NQ_IPADDRESS *peerIp
     )
 {
-
     SocketSlot* pSock;      /* pointer to the socket descriptor */
     SocketSlot* pNew;       /* pointer to a socket descriptor for a dynamically created socket */
     SYSocketHandle newSock; /* dynamically created socket */
     NQ_PORT port;           /* accepted port */
     NQ_IPADDRESS ipAddr;    /* accepted IP */
+    NSSocketHandle resultHdl = NULL;
 
-    TRCB();
+	LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "sockHandle:%p peerIp:%p %s", sockHandle, peerIp, peerIp ? cmIPDump(peerIp) : "");
 
     pSock = (SocketSlot*)sockHandle;
 #if SY_DEBUGMODE
     if (!checkSocketSlot(pSock))    /* Is a valid slot (used)? */
     {
         sySetLastError(CM_NBERR_ILLEGALSOCKETSLOT);
-        TRCERR("Illegal slot");
-        TRCE();
-        return NULL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal slot");
+        goto Exit;
     }
 #endif
 
-    if (pSock->type==NS_SOCKET_DATAGRAM)
+	if (pSock->type==NS_SOCKET_DATAGRAM)
     {
         sySetDatagramSocketOptions(pSock->socket);
     }
@@ -233,10 +225,10 @@ nsAccept(
 
     if (!syIsValidSocket(newSock))
     {
-        TRCERR("Accept did not create a new socket");
-        TRCE();
-        return NULL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Accept did not create a new socket");
+        goto Exit;
     }
+	LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, "sock: %d", newSock);
 
     sySetClientSocketOptions(newSock);
 
@@ -247,10 +239,8 @@ nsAccept(
     if (pNew == NULL)
     {
         syCloseSocket(newSock);
-
-        TRCERR("Failed to allocate a socket slot");
-        TRCE();
-        return NULL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Failed to allocate a socket slot");
+        goto Exit;
     }
 
     /* set up the new socket's data */
@@ -267,12 +257,15 @@ nsAccept(
     pNew->isListening = FALSE;
     pNew->isBind = FALSE;
     pNew->remoteIP = ipAddr;
+    pNew->isAccepted = TRUE;
+    syMutexCreate(&pNew->guard);
     *peerIp = ipAddr;
     syGetSocketPortAndIP(newSock, &pNew->ip, &pNew->port);
+    resultHdl = pNew;    /* new socket descriptor */
 
-    TRCE();
-
-    return pNew;    /* new socket descriptor */
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", resultHdl);
+    return resultHdl;
 
 }/* end of nsAccept */
 
@@ -307,29 +300,35 @@ nsPostAccept(
     NQ_BYTE* pCurr;         /* temporary pointer to the currently parsed clause in the
                                message */
     CMNetBiosName   inName; /* for parsing incoming names (called and caller) */
-    NQ_CHAR inScope[10];    /* for parsing incoming scopes (called and caller)
-                               not used meanwhile */
+    NQ_CHAR inScope[10];    /* for parsing incoming scopes (called and caller) not used meanwhile */
+#ifndef CM_NQ_STORAGE
     SYSocketSet socketSet;  /* read set */
+#endif
+
 #ifdef UD_NB_CHECKCALLEDNAME
     NQ_CHAR asciiIp[16];    /* for socket ip */
 #endif
+    NQ_STATUS result = NQ_FAIL;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "sockHandle:%p", sockHandle);
 
+    inBuf = nsGetRecvDatagramBuffer();     /* allocate a buffer */
     pSock = (SocketSlot*)*sockHandle;
+
 #if SY_DEBUGMODE
     if (!checkSocketSlot(pSock))    /* Is a valid slot (used)? */
     {
         sySetLastError(CM_NBERR_ILLEGALSOCKETSLOT);
-        TRCERR("Illegal slot");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Illegal slot");
+        goto Exit;
     }
 #endif
 
     /* read incoming packet */
+#ifndef CM_NQ_STORAGE
     syClearSocketSet(&socketSet);
     syAddSocketToSet(pSock->socket, &socketSet);
+
 
     switch (sySelectSocket(&socketSet, CM_NB_UNICASTREQRETRYTIMEOUT))
     {
@@ -344,17 +343,17 @@ nsPostAccept(
     }
 
     inBuf = nsGetRecvDatagramBuffer();     /* allocate a buffer */
+
+
     inLen = syRecvSocket(pSock->socket, (NQ_BYTE*)inBuf, CM_NB_DATAGRAMBUFFERSIZE);
+#else /* == CM_NQ_STORAGE */
+    inLen = syRecvSocketWithTimeout(pSock->socket, (NQ_BYTE*)inBuf, CM_NB_DATAGRAMBUFFERSIZE, CM_NB_UNICASTREQRETRYTIMEOUT);
+#endif
 
     if (inLen == 0 || inLen == NQ_FAIL)
     {
-        nsPutRecvDatagramBuffer();
-        nsClose(*sockHandle);
-        *sockHandle = NULL;
-
-        TRCERR("Error during reading from an accepted socket");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Error during reading from an accepted socket");
+        goto Error;
     }
 
     /* parse the message header */
@@ -363,14 +362,9 @@ nsPostAccept(
 
     if (sessionHeader->type != CM_NB_SESSIONREQUEST)    /* we expect just a Session Request */
     {
-        nsPutRecvDatagramBuffer();
-        nsClose(*sockHandle);
-        *sockHandle = NULL;
-
-        TRCERR("Unexpected Session Message - Session Request expected");
-        TRC1P(" packet code - %d", sessionHeader->type);
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected Session Message - Session Request expected");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " packet code - %d", sessionHeader->type);
+        goto Error;
     }
 
     /* parse the called name */
@@ -379,13 +373,8 @@ nsPostAccept(
 
     if (pCurr == NULL)  /* name parsing error */
     {
-        nsPutRecvDatagramBuffer();
-        nsClose(*sockHandle);
-        *sockHandle = NULL;
-
-        TRCERR("Failed to parse the called name");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Failed to parse the called name");
+        goto Error;
     }
 
 #ifdef UD_NB_CHECKCALLEDNAME
@@ -394,8 +383,8 @@ nsPostAccept(
     {
         /* not a name bound to the socket and not *SMBSERV */
 
-        TRCERR("Unexpected called name");
-        TRC(" expected - %s or %s, called - %s", pSock->name.name, asciiIp, inName);
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unexpected called name");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " expected - %s or %s, called - %s", pSock->name.name, asciiIp, inName);
 
         /* generate and send a Negative Session Response */
 
@@ -403,13 +392,9 @@ nsPostAccept(
         inLen = sySendSocket(pSock->socket, (NQ_BYTE*)inBuf, (NQ_UINT)inLen);
         if (inLen <= 0)
         {
-            TRCERR("Failed to send negative session response");
+            LOGERR(CM_TRC_LEVEL_ERROR, "Failed to send negative session response");
         }
-        nsPutRecvDatagramBuffer();
-/*        syCloseSocket(pSock->socket); */
-
-        TRCE();
-        return NQ_FAIL;
+        goto Error;
     }
 #endif /* UD_NB_CHECKCALLEDNAME */
 
@@ -419,13 +404,8 @@ nsPostAccept(
 
     if (pCurr == NULL)  /* name parsing error */
     {
-        nsPutRecvDatagramBuffer();
-        nsClose(*sockHandle);
-        *sockHandle = NULL;
-
-        TRCERR("Failed to parse the calling name");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Failed to parse the calling name");
+        goto Error;
     }
 
     /* generate and send a Positive Session Response */
@@ -435,23 +415,23 @@ nsPostAccept(
     inLen = sySendSocket(pSock->socket, (NQ_BYTE*)inBuf, (NQ_UINT)inLen);
     if (inLen <= 0)
     {
-        nsPutRecvDatagramBuffer();
-        nsClose(*sockHandle);
-        *sockHandle = NULL;
-
-        TRCERR("Failed to send positive session response");
-        TRCE();
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Failed to send positive session response");
+        goto Error;
     }
-
-    nsPutRecvDatagramBuffer();    /* release the buffer */
 
     syMemcpy(pSock->remoteName.name, inName, sizeof(inName));
     pSock->remoteName.isGroup = FALSE;
+    result = NQ_SUCCESS;
+    goto Exit;
 
-    TRCE();
+Error:
+    nsClose(*sockHandle);
+    *sockHandle = NULL;
 
-    return NQ_SUCCESS;
+Exit:
+    nsPutRecvDatagramBuffer();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 
 }/* end of nsPostAccept */
 
@@ -475,16 +455,16 @@ nsPostAccept(
 NQ_INT
 nsSelect(
     NSSocketSet* set,
-    NQ_TIME timeout
+	NQ_UINT32 timeout
     )
 {
     NQ_INT res;
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "set:%p timeout:%u", set, timeout);
 
     res = sySelectSocket(set, timeout);
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", res);
     return res;      /* number of ready-to-read descriptors in the set */
 }
 

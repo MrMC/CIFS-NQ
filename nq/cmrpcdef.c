@@ -179,6 +179,35 @@ cmRpcParseUint32(
 }
 
 /*====================================================================
+ * PURPOSE: read UINT64 from a descriptor
+ *--------------------------------------------------------------------
+ * PARAMS:  IN  pointer to the descriptor
+ *          IN  address to place UINT64 value in
+ *
+ * RETURNS: NONE
+ *
+ * NOTES:
+ *====================================================================
+ */
+void
+cmRpcParseUint64(
+    CMRpcPacketDescriptor *pDesc,
+    NQ_UINT64 *pRes
+    )
+{
+    if (pDesc->nbo)
+    {
+        cmRpcParseUint32(pDesc, &pRes->high);
+        cmRpcParseUint32(pDesc, &pRes->low);
+    }
+    else
+    {
+        cmRpcParseUint32(pDesc, &pRes->low);
+        cmRpcParseUint32(pDesc, &pRes->high);
+    }
+}
+
+/*====================================================================
  * PURPOSE: read unicode string from a descriptor
  *--------------------------------------------------------------------
  * PARAMS:  IN  pointer to the descriptor
@@ -523,12 +552,7 @@ void cmRpcPackTimeAsUTC(
  * NOTES:
  *====================================================================
  */
-void
-cmRpcPackUnicode(
-    CMRpcPacketDescriptor *pDesc,
-    const NQ_WCHAR *str,
-    NQ_UINT16 flags
-    )
+NQ_UINT32 cmRpcPackUnicode(CMRpcPacketDescriptor *pDesc, const NQ_WCHAR *str, NQ_UINT16 flags)
 {
     NQ_UINT32 size = cmWStrlen(str),
               fullSize = (flags & CM_RP_NULLTERM)? size + 1 : size;
@@ -575,6 +599,7 @@ cmRpcPackUnicode(
     {
         cmRpcAllignZero(pDesc, 4);
     }
+    return 0;
 }
 
 /*====================================================================
@@ -653,7 +678,7 @@ cmRpcPackBytes(
  * PURPOSE: skip bytes in a descriptor
  *--------------------------------------------------------------------
  * PARAMS:  IN  pointer to the descriptor
- *          IN  nuber of bytes to skip
+ *          IN  number of bytes to skip
  *
  * RETURNS: NONE
  *
@@ -669,6 +694,27 @@ cmRpcPackSkip(
     pDesc->current += num;
 }
 
+
+/*====================================================================
+* PURPOSE: pack zeroes in a descriptor
+*--------------------------------------------------------------------
+* PARAMS:  IN  pointer to the descriptor
+*          IN  number of zeroes to pack
+*
+* RETURNS: NONE
+*
+* NOTES:
+*====================================================================
+*/
+void
+    cmRpcPackZeroes(
+    CMRpcPacketDescriptor *pDesc,
+    NQ_UINT32 num
+    )
+{
+    for (; num > 0; num--)
+        *(pDesc->current)++ = 0;
+}
 
 /*====================================================================
  * PURPOSE: align and write zeros
@@ -747,18 +793,23 @@ NQ_UINT32 cmRpcPackAsciiAsUnicode(
     )
 {
     NQ_WCHAR * temp = cmMemoryCloneAString(source);
+    NQ_UINT32 result = (NQ_UINT32)NQ_FAIL;
 
     if (NULL == temp)
     {
-        return (NQ_UINT32)NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Out of memory");
+        goto Exit;
     }
     cmRpcPackUnicode(desc, temp, (NQ_UINT16)flags);
     cmMemoryFree(temp);
-    return NQ_SUCCESS;
+    result = NQ_SUCCESS;
+
+Exit:
+    return result;
 }
 
 /*====================================================================
- * PURPOSE: pack TCHAR string as Unicode string
+ * PURPOSE: pack WCHAR string as Unicode string
  *--------------------------------------------------------------------
  * PARAMS:  IN/OUT packet descriptor to use
  *          IN string to pack
@@ -770,28 +821,21 @@ NQ_UINT32 cmRpcPackAsciiAsUnicode(
  *====================================================================
  */
 
-NQ_UINT32 cmRpcPackTcharAsUnicode(
+NQ_UINT32 cmRpcPackWcharAsUnicode(
     CMRpcPacketDescriptor * desc,
-    const NQ_TCHAR * source,
+    const NQ_WCHAR * source,
     NQ_INT flags
     )
 {
-    NQ_WCHAR * temp;
+    const NQ_WCHAR * temp = source;
 
     if (source != NULL)
     {
-        temp = cmMemoryAllocate((NQ_UINT)(sizeof(NQ_WCHAR) * (1 + cmTStrlen(source))));
-        if (NULL == temp)
-        {
-            return (NQ_UINT32)NQ_FAIL;
-        }
-        cmTcharToUnicode(temp, source);
         cmRpcPackUnicode(desc, temp, (NQ_UINT16)flags);
-        cmMemoryFree(temp);
     }
     else
     {
-        static NQ_WCHAR nullStr[] = {0};
+        static const NQ_WCHAR nullStr[] = {0};
         temp = nullStr;
         cmRpcPackUnicode(desc, temp, (NQ_UINT16)flags);
     }
@@ -810,15 +854,15 @@ NQ_UINT32 cmRpcPackTcharAsUnicode(
  */
 
 NQ_UINT32 cmRpcTcharAsUnicodeLength(
-    const NQ_TCHAR* source
+    const NQ_WCHAR* source
     )
 {
     NQ_UINT32 len;
-    NQ_WCHAR *temp = cmMemoryAllocate((NQ_UINT)(8 * (cmTStrlen(source) + 1)));   
+    NQ_WCHAR *temp = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)(8 * (syWStrlen(source) + 1)));
 
     if (NULL == temp)
         return (NQ_UINT32)NQ_FAIL;
-    cmTcharToUnicode(temp, source);    
+    syWStrcpy(temp, source);
     len = cmWStrlen(temp);
     cmMemoryFree(temp);
     return len;

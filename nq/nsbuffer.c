@@ -54,14 +54,16 @@ typedef struct
 {
     NQ_INT       firstFree;             /* Index of the 1st free buf pointer */
     NQ_INT       lastFree;              /* Index of the last free buf pointer */
-    MessageBuffer* freeBufs[NUM_BUFFERS];    /* Array of free buffer pointers */
-    SYMutex      bufGuard;              /* Mutex for exclusive access to data */
     SYMutex      sendDatagramGuard;     /* Mutex for exclusive access to the datagram buffer */
     SYMutex      recvDatagramGuard;     /* Mutex for exclusive access to the datagram buffer */
+#ifndef CM_NQ_STORAGE
+    SYMutex      bufGuard;              /* Mutex for exclusive access to data */
+    MessageBuffer* freeBufs[NUM_BUFFERS];    /* Array of free buffer pointers */
     SYSemaphore  overflowGuard;         /* Binary semaphore for resolving pool
                                            overflow. If pool is empty, a task waits
                                            for this semaphore until another task
                                            releases a buffer. */
+#endif
     NQ_BYTE sendDatagramBuffer[CM_NB_DATAGRAMBUFFERSIZE];   /* send buffer */
     NQ_BYTE recvDatagramBuffer[CM_NB_DATAGRAMBUFFERSIZE];   /* receive buffer */
 }
@@ -89,24 +91,29 @@ nsInitMessageBufferPool(
     void
     )
 {
+#ifndef CM_NQ_STORAGE
     NQ_INT i;
+#endif
+    NQ_STATUS result = NQ_FAIL;
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
     if (NULL == staticData)
     {
-        TRCERR("Unable to allocate buffers");
-        return NQ_FAIL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "Unable to allocate buffers");
+        sySetLastError(NQ_ERR_NOMEM); 
+        goto Exit;
     }
 #endif /* SY_FORCEALLOCATION */
 
     staticData->firstFree = 0;
     staticData->lastFree = -1;
 
-    syMutexCreate(&staticData->bufGuard);
     syMutexCreate(&staticData->sendDatagramGuard);
     syMutexCreate(&staticData->recvDatagramGuard);
+#ifndef CM_NQ_STORAGE
+    syMutexCreate(&staticData->bufGuard);
     sySemaphoreCreate(&staticData->overflowGuard, NUM_BUFFERS);
 
     for (i=0; i<NUM_BUFFERS; i++)
@@ -115,7 +122,11 @@ nsInitMessageBufferPool(
                                         /* set free buffer pointers to the respective buffers
                                            all buffers are still free */
     }
-    return NQ_SUCCESS;
+#endif
+    result = NQ_SUCCESS;
+
+Exit:
+	return result;
 }
 
 /*
@@ -133,6 +144,7 @@ nsReleaseMessageBufferPool(
     void
     )
 {
+#ifndef CM_NQ_STORAGE
     NQ_INT i;
 
     for (i=0; i<NUM_BUFFERS; i++)
@@ -140,42 +152,18 @@ nsReleaseMessageBufferPool(
         udReleaseBuffer(i, NUM_BUFFERS, (NQ_BYTE*)staticData->freeBufs[i], UD_NS_BUFFERSIZE);
     }
     syMutexDelete(&staticData->bufGuard);
+    sySemaphoreDelete(staticData->overflowGuard);
+#endif
     syMutexDelete(&staticData->sendDatagramGuard);
     syMutexDelete(&staticData->recvDatagramGuard);
-    sySemaphoreDelete(staticData->overflowGuard);
 
     /* release memory */
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
-        syFree(staticData);
+        cmMemoryFree(staticData);
     staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
 }
-
-/*
- *====================================================================
- * PURPOSE: Reset buffer pool to its initial state
- *--------------------------------------------------------------------
- * PARAMS:  NONE
- *
- * RETURNS: NONE
- *====================================================================
- */
-
-void
-nsResetBufferPool(
-    void
-    )
-{
-    syMutexTake(&staticData->bufGuard);
-
-    staticData->firstFree = 0;
-    staticData->lastFree = -1;
-    sySemaphoreDelete(staticData->overflowGuard);
-    sySemaphoreCreate(&staticData->overflowGuard, NUM_BUFFERS);
-
-    syMutexGive(&staticData->bufGuard);
-} 
 
 
 /*
@@ -252,6 +240,33 @@ nsPutRecvDatagramBuffer(
     syMutexGive(&staticData->recvDatagramGuard);
 }
 
+#ifndef CM_NQ_STORAGE
+
+/*
+ *====================================================================
+ * PURPOSE: Reset buffer pool to its initial state
+ *--------------------------------------------------------------------
+ * PARAMS:  NONE
+ *
+ * RETURNS: NONE
+ *====================================================================
+ */
+
+void
+nsResetBufferPool(
+    void
+    )
+{
+    syMutexTake(&staticData->bufGuard);
+
+    staticData->firstFree = 0;
+    staticData->lastFree = -1;
+    sySemaphoreDelete(staticData->overflowGuard);
+    sySemaphoreCreate(&staticData->overflowGuard, NUM_BUFFERS);
+
+    syMutexGive(&staticData->bufGuard);
+} 
+
 /*
  *====================================================================
  * PURPOSE: Get a buffer from the pool
@@ -309,6 +324,6 @@ nsPutBuffer(
 
     sySemaphoreGive(staticData->overflowGuard);
 }
-
+#endif
 
 

@@ -76,6 +76,13 @@
 
 #define CS_ILLEGALID (NQ_UINT16)-1 /* illegal value for <whatever>ID */
 
+#define CS_DIALECT_SMB1		1
+#define CS_DIALECT_SMB2		2
+#define CS_DIALECT_SMB210	4
+#define CS_DIALECT_SMB30        6
+#define CS_DIALECT_SMB311	8
+
+
 typedef NQ_UINT32 CSSessionKey;    /* session key - an index in the session table */
 typedef NQ_UINT16 CSUid;           /* UID - an index in the users table */
 typedef NQ_UINT16 CSTid;           /* TID - an index in the tree table */
@@ -89,13 +96,16 @@ typedef struct                  /* share descriptor */
 {
     NQ_UINT16 idx;                                  /* share index */
     NQ_BOOL isFree;                                 /* whether the slot is in use */
-    NQ_TCHAR name[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXSHARELEN)];                /* share name */
-    NQ_TCHAR map[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXPATHLEN)];                  /* share mapping */
-    NQ_TCHAR description[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_MAXDESCRIPTIONLEN)];   /* share description */
+    NQ_WCHAR name[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXSHARELEN)];                /* share name */
+    NQ_WCHAR map[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXPATHLEN)];                  /* share mapping */
+    NQ_WCHAR description[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_MAXDESCRIPTIONLEN)];   /* share description */
     NQ_BOOL ipcFlag;                                /* TRUE if this is a pseudo-tree */
     NQ_BOOL isPrintQueue;                           /* TRUE if this is a print queue */
     NQ_BOOL isDevice;                               /* TRUE if this is a device */
     NQ_BOOL isHidden;                               /* TRUE is this is a hidden share (C$) */
+#ifdef UD_NQ_INCLUDESMB3
+    NQ_BOOL	isEncrypted;						    /* TRUE if this share requires encrypted data transfer (SMB3)*/
+#endif /* UD_NQ_INCLUDESMB3 */
 #ifdef UD_CS_INCLUDESECURITYDESCRIPTORS
     CMSdSecurityDescriptor sd;                      /* security descriptor */
 #endif /* UD_CS_INCLUDESECURITYDESCRIPTORS */
@@ -106,27 +116,33 @@ typedef struct                  /* server session */
     NSSocketHandle socket;      /* the session's client socket */
     NQ_UINT16 vc;               /* session VC */
     CSSessionKey key;           /* "self" index and session key */
-    NQ_BYTE encryptionKey[SMB_ENCRYPTION_LENGTH];  /* a key for data encryption between
-                                                   client and server */
-#if defined(UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_INCLUDEEXTENDEDSECURITY) || defined(UD_CS_MESSAGESIGNINGPOLICY)
-    NQ_BYTE sessionNonce[SMB_SESSIONKEY_LENGTH]; /* a key used for session security */
-#endif /* defined(UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_INCLUDEEXTENDEDSECURITY) || defined(UD_CS_MESSAGESIGNINGPOLICY) */   
+    NQ_BYTE encryptionKey[SMB_ENCRYPTION_LENGTH];  /* a key for data encryption between client and server */
+
+#ifdef UD_NQ_INCLUDESMB3
+    NQ_BOOL isAesGcm;           /* AES-128-CCM or AES_128_GCM */ 
+    NQ_BYTE preauthIntegHashVal[SMB3_PREAUTH_INTEG_HASH_LENGTH]; /* array to hold hash results of negotiate packets */
+    NQ_BOOL preauthIntegOn;		/* for smb 311 and higher pre authentication integrity is on during negotiation and session setup stages */
+#endif
     NQ_IPADDRESS ip;            /* next side IP address */
+    NQ_UINT32 capabilities;     /* capabilities */
+    NQ_INT 	dialect;			/* which dialect the session uses */
 #ifdef UD_CS_INCLUDEPASSTHROUGH
     NQ_BOOL usePassthrough;     /* whether to use pass-through */
-#endif  /* UD_CS_INCLUDEPASSTHROUGH      */  
-    NQ_BOOL smb2;
+#endif  /* UD_CS_INCLUDEPASSTHROUGH      */
 #ifdef UD_NQ_INCLUDESMB2
     NQ_UINT credits;            /* remaining credits */
+    NQ_UINT creditsToGrant;     /* credits to grant in interim response */
 #endif /* UD_NQ_INCLUDESMB2 */
+#if defined(UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_INCLUDEEXTENDEDSECURITY) || defined(UD_CS_MESSAGESIGNINGPOLICY)
+    NQ_BYTE sessionNonce[SMB_SESSIONKEY_LENGTH]; /* a key used for session security */
+#endif /* defined(UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_INCLUDEEXTENDEDSECURITY) || defined(UD_CS_MESSAGESIGNINGPOLICY) */
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
-    NQ_BOOL isBsrspyl;          /* whether messages are signed with BSRSPYL */
-    NQ_BYTE sessionKey[SMB_SESSIONKEY_LENGTH]; /* session key for signing of all messages in this session */
     NQ_BOOL signingOn;          /* whether message signing is enabled for this session */
-    NQ_UINT32 sequenceNum;      /* message sequence number, used for message signing calculation */
-    NQ_UINT32 sequenceNumRes;   /* sequence number for response */
+    NQ_BYTE sessionKey[SMB_SESSIONKEY_LENGTH]; /* session key for signing of all messages in this session */
+    NQ_BOOL isBsrspyl;          /* whether messages are signed with BSRSPYL */
+    NQ_UINT32 sequenceNum;      /* sequence number for the next incoming request */
+    NQ_UINT32 sequenceNumRes;   /* sequence number for the response*/
 #endif /* UD_CS_MESSAGESIGNINGPOLICY */
-    NQ_UINT32 capabilities;     /* capabilities */ 
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
     const void * securityMech;  /* abstract pointer to security mechanism */
 #endif /* UD_CS_INCLUDEEXTENDEDSECURITY */
@@ -147,7 +163,7 @@ typedef struct                  /* server session */
     NQ_BOOL preservesCase;      /* TRUE for case preserving file system (of a client) */
     NQ_BOOL supportsReadAhead;  /* TRUE for case a client supporting read ahead */
     NQ_BOOL isAnonymous;        /* TRUE for an anonymous user */
-    NQ_TCHAR name[CM_BUFFERLENGTH(NQ_TCHAR, CM_USERNAMELENGTH)];    /* user name */
+    NQ_WCHAR name[CM_BUFFERLENGTH(NQ_WCHAR, CM_USERNAMELENGTH)];    /* user name */
     NQ_BYTE credentials[SMB_SESSIONSETUPANDX_CREDENTIALS_LENGTH];   /* saved user credentials */
     NQ_BOOL isDomainUser;       /* TRUE for domain user */
     CMSdAccessToken token;      /* security token for the session user */
@@ -156,21 +172,31 @@ typedef struct                  /* server session */
 #endif /* defined (UD_CS_INCLUDELOCALUSERMANAGEMENT) || defined(UD_CS_INCLUDEEXTENDEDSECURITY) || defined(UD_CS_MESSAGESIGNINGPOLICY) */
     NQ_BOOL supportsNotify;     /* this client properly supports NOTIFY */
     NQ_BOOL supportsNtErrors;   /* this client understands NT errors */
-#ifdef UD_NQ_INCLUDESMB2
-    NQ_TIME createdTime;        /* creation timestamp, used for session expiration in smb2 */
     NQ_BOOL authenticated;      /* user authentication process status */
-#endif /* UD_NQ_INCLUDESMB2 */
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
     NQ_BOOL isExtendSecAuth;    /* whether extended security authentication was performed */
 #endif /* UD_CS_INCLUDEEXTENDEDSECURITY */
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
-    MD5Context signingCtx;      /* MD5 context used for message signing */
+    CMBlob  password;
 #endif /* UD_CS_MESSAGESIGNINGPOLICY */
 #ifdef UD_CS_INCLUDEPASSTHROUGH
      NQ_BOOL authBySamlogon;    /* whether user was authenticated by Netlogon SamLogon */ 
 #endif /* UD_CS_INCLUDEPASSTHROUGH */
-    NQ_BOOL isGuest;           /* whether user has no password and authenticated as guest */
-    NQ_UINT32	rid;			/* user RID*/
+    NQ_BOOL isGuest;            /* whether user has no password and authenticated as guest */
+    NQ_UINT32 rid;              /* user RID*/
+#ifdef UD_NQ_INCLUDESMB2
+    NQ_UINT32 createdTime;      /* creation timestamp, used for session expiration in smb2 */
+    NQ_BYTE signingKey[SMB_SESSIONKEY_LENGTH];      /* a key for signing packets*/
+#ifdef UD_NQ_INCLUDESMB3
+    NQ_BOOL isEncrypted;                            /* encrypted session */
+    NQ_BYTE encryptionKey[SMB_SESSIONKEY_LENGTH];   /* a key for encrypting packets*/
+    NQ_BYTE decryptionKey[SMB_SESSIONKEY_LENGTH];   /* a key for decrypting packets*/
+	NQ_BYTE applicationKey[SMB_SESSIONKEY_LENGTH];  /* a key for RPC packets*/
+    NQ_BYTE encryptNonce[SMB2_ENCRYPTION_HDR_NONCE_SIZE];
+    NQ_BYTE preauthIntegHashVal[SMB3_PREAUTH_INTEG_HASH_LENGTH]; /* array to hold hash results of negotiate packets */
+    NQ_BOOL preauthIntegOn;		/* for smb 311 and higher pre authentication integrity is on during negotiation and session setup stages */
+#endif /* UD_NQ_INCLUDESMB3 */
+#endif /* UD_NQ_INCLUDESMB2 */
 }
 CSUser;
 
@@ -180,6 +206,7 @@ typedef struct                  /* tree descriptor */
     CSUid uid;                  /* master UID */
     CSTid tid;                  /* "self" index */
     CSShare* share;             /* pointer to the share */
+    NQ_UINT32 maxAccessRights;  /* max access rights */
 } CSTree;
 
 #define CS_DURABLE_REQUIRED     0x1     /* this flag is set when FID is requested to be durable */
@@ -205,7 +232,7 @@ typedef struct _CSFile                  /* file descriptor */
     CSNid nid;                          /* file name descriptor */
     CSUser *user;                       /* user that opened this file */
     struct _CSFile* prev;               /* back link in the chain of file name */
-    struct _CSFile* next;               /* forward link in the chanin of file name */
+    struct _CSFile* next;               /* forward link in the chain of file name */
     SYDirectory directory;              /* underlying directory handle */
     NQ_UINT16 mode;                     /* file open mode */
     NQ_BOOL isDirectory;                /* directory flag */
@@ -227,7 +254,8 @@ typedef struct _CSFile                  /* file descriptor */
 #endif
     CSLateResponseContext breakContext; /* context for oplock breaks */
     NQ_BOOL oplockGranted;              /* TRUE when oplock was granted */
-    struct _CSFile *pFileOplockBreaker; /* file that breaks oplock */
+    NQ_BOOL isBreakingOpLock;			/* this file is breaking its oplock */
+    NQ_BOOL isCreatePending;			/* this file caused oplock break - waiting for late create response */
 }CSFile;
 
 typedef struct
@@ -245,7 +273,7 @@ typedef struct
 typedef struct                          /* file name descriptor */
 {
     CSNid nid;                          /* self ID */
-    NQ_TCHAR name[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN)];    /* file name */
+    NQ_WCHAR name[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];    /* file name */
     CSFile* first;                      /* file chain */
     CSUid uid;                          /* first client UID */
     NQ_BOOL markedForDeletion;          /* whether file was marked for deletion */
@@ -287,7 +315,7 @@ typedef struct
     NQ_UINT32 disposition;      /* IN create disposition */
     NQ_UINT32 desiredAccess;    /* IN desired access */
     NQ_UINT32 sharedAccess;     /* IN shared access */
-    NQ_TCHAR * fileName;        /* IN file name pointer - localized and normalized */
+    NQ_WCHAR * fileName;        /* IN file name pointer - localized and normalized */
     SYFileInformation fileInfo; /* IN OUT file information */
     CSFile * file;              /* OUT file pointer */
     NQ_UINT32 takenAction;      /* OUT response action */
@@ -349,7 +377,7 @@ csGetSessionBySocket(
 
 CSSession*                  /* pointer or NULL */
 csGetSessionBySpecificSocket(
-    NSSocketHandle* socket
+    NSSocketHandle socket
     );
 
 
@@ -407,7 +435,7 @@ csGetUserByUid(
 
 CSUser*                     /* pointer or NULL */
 csGetUserByNameAndCredentials(
-    const NQ_TCHAR* name,       /* user name */
+    const NQ_WCHAR* name,       /* user name */
     const NQ_BYTE* credentials, /* credentials */
     NQ_INT credentialsLen       /* total credentials length */
     );
@@ -416,7 +444,7 @@ csGetUserByNameAndCredentials(
 
 CSUser*                     /* pointer or NULL */
 csGetUserByNameAndSession(
-    const NQ_TCHAR* name,       /* user name */
+    const NQ_WCHAR* name,       /* user name */
     CSSessionKey sessKey        /* session key */
     );
 
@@ -535,7 +563,7 @@ csLoadShareSecurityDescriptor(
 
 CSName*                     /* pointer or NULL */
 csGetNewName(
-    const NQ_TCHAR* name,    /* file name */
+    const NQ_WCHAR* name,    /* file name */
     CSUid uid               /* first client UID */
     );
 
@@ -550,14 +578,14 @@ csGetNameByNid(
 
 CSName*                     /* pointer or NULL */
 csGetNameByName(
-    const NQ_TCHAR* name     /* name to look for */
+    const NQ_WCHAR* name     /* name to look for */
     );
 
 /* determine if a file was marked for delition */
 
 NQ_BOOL                      /* TRUE or FALSE */
 csFileMarkedForDeletion(
-    const NQ_TCHAR* name     /* name to look for */
+    const NQ_WCHAR* name     /* name to look for */
     );
 
 /* find a file providing its name descriptor and prevoius FID */
@@ -610,6 +638,11 @@ csGetFileByJustFid(
     CSFid fid
     );
 
+CSFile*                     /* pointer or NULL */
+csGetFileByIndex(
+    NQ_UINT idx             /* file index */
+    );
+
 /* find a file providing PID */
 
 CSFile*                     /* pointer or NULL */
@@ -634,7 +667,7 @@ cs2GetFileByContext(
 
 /* obtain file providing FID */
 
-const NQ_TCHAR*              /* pointer or NULL */
+const NQ_WCHAR*              /* pointer or NULL */
 csGetFileName(
     CSFid fid               /* file ID */
     );
@@ -672,7 +705,7 @@ csGetFilesCount(
 
 CSShare*                    /* pointer to descriptor or NULL */
 csGetShareByName(
-    const NQ_TCHAR* name    /* share to find */
+    const NQ_WCHAR* name    /* share to find */
     );
 
 /* find share mapping b UID and TID */
@@ -766,7 +799,13 @@ csEnumerateNotifyRequest(
 #ifdef UD_NQ_INCLUDESMB2
 const CMUuid *cs2GetServerUuid(void);
 const CMTime *cs2GetServerStartTime(void);
-#endif
+
+#ifdef UD_NQ_INCLUDESMB3
+NQ_BOOL csIsServerEncrypted();
+void csSetServerEncryption(NQ_BOOL encrypt);
+#endif /* UD_NQ_INCLUDESMB3 */
+
+#endif /* UD_NQ_INCLUDESMB2 */
 
 /* whether hidden administrative share (e.g. C$) is present */
 
@@ -778,7 +817,7 @@ csHasAdminShare(
 
 CSShare*
 csGetHiddenShareByMap(
-        const NQ_TCHAR* map
+        const NQ_WCHAR* map
     );    
 
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
@@ -786,24 +825,12 @@ csGetHiddenShareByMap(
 
 NQ_BOOL
 csIsMessageSigningEnabled(
-    void
   );
 
 /* whether message signing is enabled and required */
 
 NQ_BOOL
 csIsMessageSigningRequired(
-    void
-  );
-
-void
-csSetMessageSigningRequired(
-    NQ_BOOL isTRUE
-    );
-
-void
-csSetMessageSigningEnabled(
-    NQ_BOOL isTRUE
   );
 
 void

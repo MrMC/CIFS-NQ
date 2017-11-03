@@ -31,7 +31,7 @@
 
 /* buffer size - determined as maximum of all protocol messages */
 #define CS_CONTROL_MAXMSG   (   \
-    sizeof(NQ_TCHAR) *          \
+    sizeof(NQ_WCHAR) *          \
     (UD_FS_MAXSHARELEN +        \
      UD_FS_MAXPATHLEN +         \
      UD_FS_MAXDESCRIPTIONLEN    \
@@ -156,13 +156,13 @@ NQ_STATUS csCtrlCleanUserConnectionsW(const NQ_WCHAR *name, NQ_BOOL isDomainUser
 /* This structure contains user information and is used for
    enumerating users on NQ Server.
    Note
-   The string parameters in this structure have NQ_TCHAR type
+   The string parameters in this structure have NQ_WCHAR type
    which depends on the NQ compilation parameters. See <link References, Referenced Documents>. */
 typedef struct 
 {
-    NQ_TCHAR name[256];        /* user name */
-    NQ_TCHAR fullName[256];    /* full user name */
-    NQ_TCHAR description[256]; /* user description */
+    NQ_WCHAR name[256];        /* user name */
+    NQ_WCHAR fullName[256];    /* full user name */
+    NQ_WCHAR description[256]; /* user description */
     NQ_BOOL isAdmin;           /* TRUE for Administrator rights, FALSE for a regular user */
 } 
 CsCtrlUser;
@@ -185,14 +185,14 @@ NQ_STATUS csCtrlEnumUsers(CsCtrlUser * userEntry, NQ_INDEX index);
 /* This structure contains share information and is used for
    enumerating shares on NQ Server.
    Note
-   The string parameters in this structure have NQ_TCHAR type
+   The string parameters in this structure have NQ_WCHAR type
    which depends on the NQ compilation parameters. See <link References, Referenced Documents>. */
 typedef struct 
 {
-    NQ_TCHAR name[UD_FS_MAXSHARELEN ];              /* share name */
-    NQ_TCHAR path[UD_FS_MAXPATHLEN ];               /* the path on which the share is mapped  */
+    NQ_WCHAR name[UD_FS_MAXSHARELEN ];              /* share name */
+    NQ_WCHAR path[UD_FS_MAXPATHLEN ];               /* the path on which the share is mapped  */
     NQ_BOOL isPrinter;                              /* TRUE for print queue, FALSE for a file share */
-    NQ_TCHAR comment[UD_FS_MAXDESCRIPTIONLEN ];     /* share description */
+    NQ_WCHAR comment[UD_FS_MAXDESCRIPTIONLEN ];     /* share description */
 } 
 CsCtrlShare;
 
@@ -215,7 +215,7 @@ NQ_STATUS csCtrlEnumShares(CsCtrlShare * shareEntry, NQ_INDEX index);
 typedef struct 
 {
     NQ_IPADDRESS ip;    /* client IP */
-    NQ_BOOL isSmb2;     /* TRUE for an SMB2 connection, FALSE for an SMB connection */
+    NQ_UINT16 	 dialect;     /* TRUE for an SMB2 connection, FALSE for an SMB connection */
 } 
 CsCtrlClient;
 
@@ -231,6 +231,27 @@ CsCtrlClient;
    Returns
    This function returns NQ_SUCCESS or an error code.                                                    */
 NQ_STATUS csCtrlEnumClients(CsCtrlClient * clientEntry, NQ_INDEX index);
+
+typedef struct
+{
+	NQ_WCHAR 		name[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)]; /*share-local path to the file*/
+	NQ_WCHAR 		userName[CM_BUFFERLENGTH(NQ_WCHAR, CM_USERNAMELENGTH)];
+	NQ_IPADDRESS 	ip;
+	NQ_BOOL 		isDirectory; /* TRUE for a Directory, FALSE for regular file*/
+}CsCtrlFile;
+
+/* Description
+   This function is called to get information on an open file from NQ Server.
+
+   Parameters
+   fileEntry :  Pointer to a file information structure. See <link CsCtrlFile, CsCtrlFile Structure>
+                 for details.
+   index :       Zero-based index. When index exceeds the number of open files, this function
+                 returns error.
+   Returns
+   This function returns NQ_SUCCESS or an error code.                                                    */
+NQ_STATUS csCtrlEnumFiles(CsCtrlFile * fileEntry, NQ_INDEX index);
+
 
 /* 
 ## Bitmap flags for enabling/disabling encryption methods 
@@ -291,6 +312,7 @@ NQ_STATUS csCtrlSetEncryptionMethods(NQ_UINT mask);
 #ifdef UD_CS_MESSAGESIGNINGPOLICY
 #define CS_CONTROL_CHANGEMSGSIGN 12
 #endif /* UD_CS_MESSAGESIGNINGPOLICY*/
+#define CS_CONTROL_ENUMFILES 13
 
 /* 
  * Protocol definition (IDL)

@@ -154,7 +154,7 @@ csDcerpcTransact(
 /* core CIFS (NTCreateAndX) calls this point to open a pipe */
 NQ_BOOL                             /* pipe identifier or RP_INVALIDPIPE */
 csDcerpcOpenPipe(
-    const NQ_TCHAR* pipeName,       /* pipe name */
+    const NQ_WCHAR* pipeName,       /* pipe name */
     CSFile* file                    /* file descriptor */
     );
 

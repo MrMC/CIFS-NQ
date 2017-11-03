@@ -27,6 +27,18 @@
    command or in the <i>Create </i>(SMB2) command.                        */
 #define CCFILE_ACCESSMASK_SPECIAL 0x8000000	
 
+/* Description
+ * What is the durable file state.
+ */
+#define DURABLE_REQUIRED 		1
+#define DURABLE_NOTREQUIRED		2
+#define DURABLE_GRANTED			3 /* granted durable handle by server */
+#define DURABLE_CANCELED		4 /* durable handle canceled by server via break */
+
+#define FILE_OPLOCK_LEVEL_NONE 	1
+#define FILE_OPLOCK_LEVEL_II 	2
+#define FILE_OPLOCK_LEVEL_BATCH	3
+
 /* -- Structures -- */
 
 /* Description
@@ -52,11 +64,28 @@ typedef struct _ccfile
 	NQ_UINT16 maxRpcXmit;		/* Maximum length of RPC transmit fragment */
 	NQ_UINT16 maxRpcRecv;		/* Maximum length of RPC receive fragment */
     NQ_BOOL isPipe;             /* TRUE when this is a pipe */
-    NQ_BYTE oplockLevel;      /* Level of the oplock that has been granted*/
+    NQ_BYTE grantedOplock;      /* Level of the oplock that has been granted*/
+    NQ_BOOL disconnected;       /* TRUE when connection was disconnected */
+#ifdef UD_NQ_INCLUDESMB2
+    NQ_UINT durableState;       /* States: durable required / durable not required / durable granted. see above */
+    NQ_Uuid durableHandle;      /* Durable handle. */
+    NQ_UINT32 durableTimeout;   /* Timeout for durable or persistent handle granted by server. */
+    NQ_UINT32 durableFlags;     /* Durable or persistent flag granted by server. */
+#endif /* UD_NQ_INCLUDESMB2 */
 } 
 CCFile; /* Open file descriptor. */
 
 /* -- API Functions */
+NQ_HANDLE ccCreateFileNoBatch(
+    const NQ_WCHAR * fileName,
+    NQ_INT access,
+    NQ_INT shareMode,
+    NQ_INT locality,
+    NQ_BOOL writeThrough,
+    NQ_UINT16 attributes,
+    NQ_INT createAction,
+    NQ_INT openAction
+    );
 
 /* Description
    Initialize this module.
@@ -141,7 +170,8 @@ CCFile * ccFileCreateOnServer(
 	    NQ_UINT16 attributes, 
 	    NQ_INT createAction, 
 	    NQ_INT openAction,
-	    NQ_BOOL isPipe
+	    NQ_BOOL isPipe,
+		NQ_INT oplockLevel
 	    );
 
 /* Description
@@ -191,5 +221,13 @@ NQ_BOOL ccFileReportDisconnect(CCFile * pFile);
        loss;
      * Re&#45;opening failed;                                                                                            */ 
 NQ_BOOL ccFileRestore(CCFile * pFile);
+
+NQ_BOOL ccValidateFileHandle(NQ_HANDLE handle);
+
+void ccFileTake(NQ_HANDLE handle);
+
+void ccFileGive(NQ_HANDLE handle);
+
+NQ_HANDLE ccGetFileHandleByName(const NQ_CHAR *path, NQ_INT desiredAccess, NQ_UINT32 desiredSharedAccess, NQ_BYTE desiredOpLock, NQ_UINT16 attributes);
 
 #endif /* _CCFILE_H_ */

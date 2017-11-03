@@ -21,7 +21,7 @@
 #include "cmnbname.h"
 
 /*
-  This file implements NetBIOS functions for processing and repreenting NetBIOS names
+  This file implements NetBIOS functions for processing and representing NetBIOS names
 
   NetBIOS name and NetBIOS name encoding is implemented according to RFC-1001 and
   RFC-1002.
@@ -44,8 +44,8 @@ typedef struct
     NQ_BOOL hasFullDomainName;
     NQ_CHAR fullDomainName[CM_NQ_HOSTNAMESIZE + 1];
     NQ_CHAR fullHostName[CM_NQ_HOSTNAMESIZE + 1];
-    NQ_TCHAR tempScope[CM_BUFFERLENGTH(NQ_TCHAR, UD_NS_SCOPEIDLEN)];
-    NQ_TCHAR tempHost[CM_DATALENGTH(NQ_TCHAR, CM_NQ_HOSTNAMESIZE)];
+    NQ_WCHAR tempScope[CM_BUFFERLENGTH(NQ_WCHAR, UD_NS_SCOPEIDLEN)];
+    NQ_WCHAR tempHost[CM_DATALENGTH(NQ_WCHAR, CM_NQ_HOSTNAMESIZE)];
 }
 StaticData;
 
@@ -61,12 +61,12 @@ static StaticData* staticData = &staticDataSrc;
 static
 NQ_BYTE*                   /* returns a pointer to the 1st byte (size) of an actual label */
 resolveLabel(
-    const void* msg,    /* pointer tp the beginning of the message */
+    const void* msg,       /* pointer to the beginning of the message */
     NQ_BYTE** origin       /* address of a pointer the original label, that may be a pointer
                            this pointer will be shifted to the next label */
     );
 
-/* asks system for the host name, converts it to uppercase and padds with a special
+/* asks system for the host name, converts it to upper case and pads with a special
    symbol */
 
 static void
@@ -93,15 +93,17 @@ cmNetBiosNameInit(
     void
     )
 {
-    TRCB();
+    NQ_STATUS result = NQ_SUCCESS;
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = (StaticData *)syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData *)cmMemoryAllocate(sizeof(*staticData));
     if (NULL == staticData)
     {
-       TRCE();
-       return NQ_FAIL;
+        result = NQ_FAIL;
+        sySetLastError(NQ_ERR_NOMEM);
+        goto Exit;
     }
 #endif /* SY_FORCEALLOCATION */
 
@@ -111,42 +113,42 @@ cmNetBiosNameInit(
     syMemset(staticData->domainInfo.name, 0, sizeof(staticData->domainInfo.name)); 
     syMemset(staticData->domainInfoAuth.name, 0, sizeof(staticData->domainInfoAuth.name));
     syMemset(staticData->fullHostName, 0, sizeof(staticData->fullHostName)); 
-    
+    syMemset(staticData->fullDomainName, 0, sizeof(staticData->fullDomainName));
     /* scope ID is defined in UD */
 
     syStrncpy(staticData->scopeID, CM_NB_DEFAULT_SCOPEID, UD_NS_SCOPEIDLEN);
 
     udGetScopeID(staticData->tempScope);
 
-    if (0 != cmTStrlen(staticData->tempScope))
+    if (0 != cmWStrlen(staticData->tempScope))
     {
-        cmTcharToAnsi(staticData->scopeID, staticData->tempScope);
+        cmUnicodeToAnsi(staticData->scopeID, staticData->tempScope);
     }
 
-    TRC1P("Init scope id: %s\n", staticData->scopeID);
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " Init scope id: %s", staticData->scopeID);
 
     staticData->scopeLength = (NQ_UINT)syStrlen(staticData->scopeID);
     getHostName(staticData->hostNameInfo.name, CM_NB_NAMELEN - 1, ' ');
     staticData->hostNameInfo.isGroup = FALSE;
-    TRC(" NetBIOS host name: %s\n", staticData->hostNameInfo.name);
+    LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " NetBIOS host name: %s", staticData->hostNameInfo.name);
     getHostName((NQ_CHAR*)staticData->hostNameZeroed, CM_NB_NAMELEN - 1, '\0');
     getHostName((NQ_CHAR*)staticData->hostNameSpaced, CM_NB_NAMELEN - 1, ' ');
 	if (staticData->hostNameSpaced[0] == '\0')
 		syMemset(staticData->hostNameSpaced, ' ', sizeof(staticData->hostNameSpaced));
     {
-        NQ_TCHAR *s;
+        NQ_WCHAR *s;
         NQ_UINT i;
 
         udGetDomain(staticData->tempHost, &staticData->domainInfo.isGroup);
-        s = cmTStrchr(staticData->tempHost, cmTChar('.'));
+        s = cmWStrchr(staticData->tempHost, cmWChar('.'));
         if (s)
-            cmTcharToAnsiN(
+            cmUnicodeToAnsiN(
                 staticData->domainInfo.name,
                 staticData->tempHost,
-                (NQ_UINT)(s - staticData->tempHost)
+                (NQ_UINT)(s - staticData->tempHost) * 2
                 );
         else
-            cmTcharToAnsi(staticData->domainInfo.name, staticData->tempHost);
+            cmUnicodeToAnsi(staticData->domainInfo.name, staticData->tempHost);
 
         i = (NQ_UINT)syStrlen(staticData->domainInfo.name);
 
@@ -162,22 +164,22 @@ cmNetBiosNameInit(
             staticData->domainInfo.name[i++] = 0;
 
         syMemcpy(&staticData->domainInfoAuth, &staticData->domainInfo, sizeof(staticData->domainInfoAuth));
-        TRC(" NetBIOS domain name: %s", staticData->domainInfo.name);
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " NetBIOS domain name: %s", staticData->domainInfo.name);
     }
 
     {
         NQ_BOOL isGroup;
         udGetDomain(staticData->tempHost, &isGroup);
-        if (!isGroup && cmTStrchr(staticData->tempHost, cmTChar('.')))
+        if (!isGroup && cmWStrchr(staticData->tempHost, cmWChar('.')))
         {
-            cmTcharToAnsi(staticData->fullDomainName, staticData->tempHost);
+            cmUnicodeToAnsi(staticData->fullDomainName, staticData->tempHost);
             staticData->hasFullDomainName = TRUE;
         }
         else
         {
             staticData->hasFullDomainName = FALSE;
         }
-        TRC(" FQDN domain name: %s", staticData->hasFullDomainName ? staticData->fullDomainName : "<none>");
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " FQDN domain name: %s", staticData->hasFullDomainName ? staticData->fullDomainName : "<none>");
     }
     {
         getHostName((NQ_CHAR*)staticData->fullHostName, CM_NB_NAMELEN - 1, '\0');
@@ -186,11 +188,12 @@ cmNetBiosNameInit(
             syStrcat(staticData->fullHostName, ".");
             syStrcat(staticData->fullHostName, staticData->fullDomainName);
         }
-        TRC(" FQDN host name: %s", staticData->fullHostName);
+        LOGMSG(CM_TRC_LEVEL_MESS_NORMAL, " FQDN host name: %s", staticData->fullHostName);
     }
 
-    TRCE();
-    return NQ_SUCCESS;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", result);
+    return result;
 }
 
 /*
@@ -210,15 +213,15 @@ cmNetBiosNameExit(
     void
     )
 {
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 
     /* release memory */
 #ifdef SY_FORCEALLOCATION
     if (NULL != staticData)
-        syFree(staticData);
+        cmMemoryFree(staticData);
     staticData = NULL;
 #endif /* SY_FORCEALLOCATION */
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON);
 }
 
 /*
@@ -227,7 +230,7 @@ cmNetBiosNameExit(
  *--------------------------------------------------------------------
  * PARAMS:  OUT name to create
  *          IN text name
- *          IN name postfix
+ *          IN name suffix
  *
  * RETURNS: NONE
  *
@@ -245,7 +248,7 @@ cmNetBiosNameCreate(
     NQ_CHAR *dot;
     NQ_UINT len;
 
-    if ((dot = syStrchr(textName, '.')) != NULL && (dot - textName) < CM_NB_NAMELEN)
+    if ((dot = (NQ_CHAR *)syStrchr(textName, '.')) != NULL && (dot - textName) < CM_NB_NAMELEN)
         len = (NQ_UINT)(dot - textName);
     else
         len = (CM_NB_NAMELEN - 1);
@@ -303,8 +306,9 @@ cmNetBiosNameFormat(
 	if (syStrlen(name) != 0)
 	{
 		name[CM_NB_NAMELEN - 1] = (NQ_CHAR)0;   /* terminator for printouts */
-		for (i = 0; i<syStrlen(name); i++)
-			name[i] = syToupper(name[i]);
+/*		for (i = 0; i<syStrlen(name); i++)
+			name[i] = syToupper(name[i]);*/
+		cmAStrupr(name);
 		for (i = (NQ_UINT)syStrlen(name); i < sizeof(CMNetBiosName); i++)
 			name[i] = ' ';
 		name[CM_NB_NAMELEN] = (NQ_CHAR)0;       /* terminator for printouts */
@@ -392,7 +396,7 @@ cmNetBiosEncodeName(
     NQ_UINT  i;             /* just a counter */
     const NQ_CHAR* scopePtr;   /* pointer to the next name in the scope id */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "name:%p encodedName:%p", name, encodedName);
 
     curPtr = (NQ_BYTE*)encodedName;
 
@@ -415,7 +419,7 @@ cmNetBiosEncodeName(
         NQ_CHAR* dotPtr;   /* pointer to the next dot symbol if any */
         NQ_UINT labelLen;  /* current label length */
 
-        dotPtr = syStrchr(scopePtr, '.');
+        dotPtr = (NQ_CHAR *)syStrchr(scopePtr, '.');
 
         if (dotPtr == NULL)
         {
@@ -440,7 +444,7 @@ cmNetBiosEncodeName(
     if (*(curPtr - 1)!=0)
         *curPtr++ = 0;        /* place a zero label as a terminator */
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", ((NQ_BYTE*)curPtr - (NQ_BYTE*)encodedName));
 
     return (NQ_COUNT)((NQ_BYTE*)curPtr - (NQ_BYTE*)encodedName);
 }
@@ -476,7 +480,7 @@ cmNetBiosEncodeNamePointer(
     NQ_BYTE* curPtr;   /* pointer to the current place */
     NQ_BYTE* labelPtr; /* pointer to the refrenced label, may be a resolved label pointer */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "msg:%p encodedName:%p oldName:%p", msg, encodedName, oldName);
 
     offsetPtr = (CMNetBiosNameOffset*)encodedName;
     curPtr = (NQ_BYTE*)oldName;
@@ -484,7 +488,7 @@ cmNetBiosEncodeNamePointer(
     cmPutSUint16(offsetPtr->offset, syHton16((NQ_UINT16)((NQ_BYTE*)labelPtr - (NQ_BYTE*)msg) | (CM_NB_NAMEOFFSET<<8)));
     labelPtr = (NQ_BYTE*)(offsetPtr + 1);
 
-    TRCE();
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%d", (labelPtr - (NQ_BYTE*)encodedName));
 
     return (NQ_COUNT)(labelPtr - (NQ_BYTE*)encodedName);
 }
@@ -507,14 +511,15 @@ cmNetBiosEncodeNamePointer(
 NQ_BYTE*
 cmNetBiosSkipName(
     const void* msg,
-    const void *encodedName
+    const void* encodedName
     )
 {
     NQ_UINT length;    /* length of name fragments */
     NQ_BYTE* curPtr;   /* pointer to the current place in the encoded name */
     NQ_BYTE* labelPtr; /* pointer to the current label, may be a resolved label pointer */
+    NQ_BYTE* pResult = NULL; /* return value */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "msg:%p encodedName:%p", msg, encodedName);
 
     curPtr = (NQ_BYTE*)encodedName;
 
@@ -526,14 +531,14 @@ cmNetBiosSkipName(
 
     if (length  != CM_NB_ENCODEDNAMELEN)
     {
-        TRCERR("NetBIOS name is not 32 bytes long");
-        return NULL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "NetBIOS name is not 32 bytes long");
+        goto Exit;
     }
 
     if (curPtr == ((NQ_BYTE*)encodedName + sizeof(CMNetBiosNameOffset)))   /* label encountered */
     {
-        TRCE();
-        return curPtr;
+        pResult = curPtr;
+        goto Exit;
     }
 
     /* parse the labels of the scope ID */
@@ -543,8 +548,11 @@ cmNetBiosSkipName(
         resolveLabel(msg, &curPtr); /* skip a label */
     }
 
-    TRCE();
-    return curPtr + 1;
+    pResult = curPtr + 1;
+
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pResult);
+    return pResult;
 }
 
 /*
@@ -578,8 +586,9 @@ cmNetBiosParseName(
     NQ_BYTE* curPtr;   /* pointer to the current place in the encoded name */
     NQ_BYTE* labelPtr; /* pointer to the current label, may be a resolved label pointer */
     NQ_UINT i;         /* just an index */
+    NQ_BYTE* pResult = NULL; /* return value */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "msg:%p encodedName:%p decodedName:%p scope:%p scopeSize:%u", msg, encodedName, decodedName, scope, scopeSize);
 
     curPtr = (NQ_BYTE*)encodedName;
 
@@ -591,8 +600,8 @@ cmNetBiosParseName(
 
     if (length  != CM_NB_ENCODEDNAMELEN)
     {
-        TRCERR("NetBIOS name is not 32 bytes long");
-        return NULL;
+        LOGERR(CM_TRC_LEVEL_ERROR, "NetBIOS name is not 32 bytes long");
+        goto Exit;
     }
 
     /* decode the NetBIOS name skipping two bytes at once */
@@ -601,8 +610,8 @@ cmNetBiosParseName(
     {
         NQ_BYTE nextByte;  /* for composing a char from two bytes of the encoded name */
 
-        nextByte = (NQ_BYTE)((*labelPtr++ - (NQ_BYTE)'A') << 4);  /* the high half-octet */
-        nextByte |= (NQ_BYTE)(*labelPtr++ - (NQ_BYTE)'A');      /* the low half-octet */
+        nextByte = 	(NQ_BYTE)((*labelPtr++ - (NQ_BYTE)'A') << 4);  	/* the high half-octet */
+        nextByte |= (NQ_BYTE)(*labelPtr++ - (NQ_BYTE)'A');      	/* the low half-octet */
 
         decodedName[i] = (NQ_CHAR)nextByte;
     }
@@ -630,9 +639,11 @@ cmNetBiosParseName(
     else
         *scope = (NQ_CHAR)0;
 
-    TRCE();
+    pResult = curPtr + 1;
 
-    return curPtr + 1;
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pResult);
+    return pResult;
 }
 
 /*
@@ -730,11 +741,11 @@ cmNetBiosGetDomain(
 
 void
 cmNetBiosSetDomainAuth(
-	NQ_TCHAR *name
+	NQ_WCHAR *name
 	)
 {
 	syMemset(staticData->domainInfoAuth.name, 0, sizeof(staticData->domainInfoAuth.name));
-	cmTcharToAnsi(staticData->domainInfoAuth.name, name);
+	cmUnicodeToAnsi(staticData->domainInfoAuth.name, name);
 }
 
 /*
@@ -807,8 +818,8 @@ cmGetFullHostName(
  *
  * RETURNS: NONE
  *
- * NOTES:   asks system for the host name, converts it to uppercase
- *          and padds it with a special symbol
+ * NOTES:   asks system for host name, converts it to upper case
+ *          and pads it with a special symbol
  *====================================================================
  */
 
@@ -875,8 +886,9 @@ resolveLabel(
 {
     NQ_BYTE length;        /* length of name fragments */
     NQ_BYTE* savedOrigin;  /* may be a return value in some cases */
+    NQ_BYTE* pResult = NULL; /* return value */
 
-    TRCB();
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "msg:%p origin:%p", msg, origin);
 
     savedOrigin = *origin;
 
@@ -884,7 +896,7 @@ resolveLabel(
 
     length = **origin;
 
-    /* distinguish between a name and an ofset (rfc1002) */
+    /* distinguish between name and offset (rfc1002) */
 
     if ((length & CM_NB_NAMEOFFSET) == CM_NB_NAMEOFFSET)
     {
@@ -910,20 +922,21 @@ resolveLabel(
 
         *origin += sizeof(CMNetBiosNameOffset);
 
-        TRC("an offset found");
-        TRCE();
-
-        return (NQ_BYTE*)msg + offset;        /* a referenced label */
+        LOGMSG(CM_TRC_LEVEL_MESS_SOME, "an offset found");
+        pResult = (NQ_BYTE*)msg + offset;        /* a referenced label */
+        goto Exit;
     }
     else
     {
         *origin += length + 1; /* skip to the next label, this will work also on a zero
                                   label */
-        TRC("a label found");
-        TRCE();
-
-        return savedOrigin;
+        LOGMSG(CM_TRC_LEVEL_MESS_SOME, "a label found");
+        pResult = savedOrigin;
+        goto Exit;
     }
 
+Exit:
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "result:%p", pResult);
+    return pResult;
 }
 

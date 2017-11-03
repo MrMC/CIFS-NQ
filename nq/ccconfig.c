@@ -19,32 +19,32 @@
 #include "cmcrypt.h"
 
 #include "ccapi.h"
-#include "ccconfig.h"
+#include "ccparams.h"
 #include "cmthread.h"
 
 #ifdef UD_NQ_INCLUDECIFSCLIENT
 
 /* static data */
-static NQ_TIME timeout = UD_CC_CLIENTRESPONSETIMEOUT;
+static NQ_UINT32 globalTimeout = UD_CC_CLIENTRESPONSETIMEOUT;
 
 void ccConfigInit(void)
 {
 	sySetRand();
-    timeout = UD_CC_CLIENTRESPONSETIMEOUT;
+	globalTimeout = UD_CC_CLIENTRESPONSETIMEOUT;
 }
 
 void ccConfigShutdown(void)
 {
 }
 
-void ccConfigSetTimeout(NQ_TIME secs)
+void ccConfigSetTimeout(NQ_UINT32 secs)
 {
-	timeout = secs == 0? UD_CC_CLIENTRESPONSETIMEOUT: secs;
+	globalTimeout = secs == 0? UD_CC_CLIENTRESPONSETIMEOUT: secs;
 }
 
-NQ_TIME ccConfigGetTimeout(void)
+NQ_UINT32 ccConfigGetTimeout(void)
 {
-	return timeout;
+	return globalTimeout;
 }
 
 void ccThreadSubscribe(void)

@@ -1,88 +1,162 @@
-/*********************************************************************
+/*************************************************************************
+ * Copyright 2014-2015 by Visuality Systems, Ltd.
  *
- *           Copyright (c) 2003 by Visuality Systems, Ltd.
+ *                     All Rights Reserved
  *
- *********************************************************************
- * FILE NAME     : $Workfile:$
- * ID            : $Header:$
- * REVISION      : $Revision:$
- *--------------------------------------------------------------------
- * DESCRIPTION   : System-independent definitions for system-dependent
- *                 functions
- *--------------------------------------------------------------------
- * MODULE        : SY - System-dependent
- * DEPENDENCIES  :
- *--------------------------------------------------------------------
- * CREATION DATE : 01-July-2003
- * CREATED BY    : Mark Rabinovich
- * LAST AUTHOR   : $Author:$
- ********************************************************************/
+ * This item is the property of Visuality Systems, Ltd., and contains
+ * confidential, proprietary, and trade-secret information. It may not
+ * be transferred from the custody or control of Visuality Systems, Ltd.,
+ * except as expressly authorized in writing by an officer of Visuality
+ * Systems, Ltd. Neither this item nor the information it contains may
+ * be used, transferred, reproduced, published, or disclosed, in whole
+ * or in part, and directly or indirectly, except as expressly authorized
+ * by an officer of Visuality Systems, Ltd., pursuant to written agreement.
+ **************************************************************************/
 
 #ifndef _SYCOMMON_H_
 #define _SYCOMMON_H_
 
-/* structure for compsing/decompising system time - contains a field for each time fraction */
-
+/*@@
+   Description
+   This structure is intended for composing/decomp0sing system
+   time - contains a field for each time fraction.
+   Note
+   This structure is designated here for reference only and it
+   must not be modified.                                       */
 typedef struct
 {
-    NQ_UINT16 sec;      /* seconds (0 - 59) */
-    NQ_UINT16 min;      /* minutes (0 - 59) */
-    NQ_UINT16 hour;     /* hours of day (0 - 23) */
-    NQ_UINT16 day;      /* day of the month (1-31) */
-    NQ_UINT16 month;    /* month (1 - 12) */
-    NQ_UINT16 year;     /* year in YYYY format */
+    NQ_UINT16 sec;      /*@@ Seconds (0 - 59). */
+    NQ_UINT16 min;      /*@@ Minutes (0 - 59). */
+    NQ_UINT16 hour;     /*@@ Hours of day (0 - 23). */
+    NQ_UINT16 day;      /*@@ Day of the month (1-31). */
+    NQ_UINT16 month;    /*@@ Month (1 - 12). */
+    NQ_UINT16 year;     /*@@ Year in YYYY format. */
 } SYTimeFragments;
 
-/* file information structure - used for querying information from OS */
-
+/*@@
+   Description
+   \File information structure. It is used for querying
+   information from the file system and modifying this
+   information.
+   Note
+   This structure is designated here for reference only and it
+   must not be modified.                                       */
 typedef struct
 {
-    NQ_UINT32 creationTime;         /* seconds in UNIX format */
-    NQ_UINT32 lastChangeTime;       /* seconds in UNIX format */
-    NQ_UINT32 lastAccessTime;       /* seconds in UNIX format */
-    NQ_UINT32 lastWriteTime;        /* seconds in UNIX format */
-    NQ_UINT32 sizeLow;              /* low part of the file size */
-    NQ_UINT32 sizeHigh;             /* high part of the file size */
-    NQ_UINT32 allocSizeLow;         /* low part of the file size */
-    NQ_UINT32 allocSizeHigh;        /* high part of the file size */
-    NQ_UINT32 attributes;           /* DOS FS format attributes */
-    NQ_UINT32 isDeleted;            /* file is marked for deletion */
-    NQ_UINT32 numLinks;             /* number of hard links to the file */
+    NQ_TIME creationTime;         	/*@@ Seconds in UNIX format. */
+    NQ_TIME lastChangeTime;      	/*@@ Seconds in UNIX format. */
+    NQ_TIME lastAccessTime;       	/*@@ Seconds in UNIX format. */
+    NQ_TIME lastWriteTime;        	/*@@ Seconds in UNIX format. */
+    NQ_UINT32 sizeLow;              /*@@ Low part of the file size. */
+    NQ_UINT32 sizeHigh;             /*@@ High part of the file size. */
+    NQ_UINT32 allocSizeLow;         /*@@ Low part of the file size. */
+    NQ_UINT32 allocSizeHigh;        /*@@ High part of the file size. */
+    NQ_UINT32 attributes;           /*@@ DOS FS format attributes. */
+    NQ_UINT32 isDeleted;            /*@@ File is marked for deletion. */
+    NQ_UINT32 numLinks;             /*@@ Number of hard links to the file. */
+    NQ_UINT32 fileIdLow;            /*@@ Low part of file ID. */
+    NQ_UINT32 fileIdHigh;           /*@@ High part of file ID. */
 } SYFileInformation;
 
-/* File attributes bits. They are exactly the same bitmasks as in the
-   SMB protocol - defined here for pre-definition */
-
+/*@@
+ File attributes bits: the file is read-only.
+ */
 #define SY_ATTR_READONLY            0x001
+
+/*@@
+ File attributes bits: the file is hidden.
+ */
+
 #define SY_ATTR_HIDDEN              0x002
+/*@@
+ File attributes bits: the file is a system file.
+ */
 #define SY_ATTR_SYSTEM              0x004
+
+/*@@
+ File attributes bits: this is a voluem.
+ */
 #define SY_ATTR_VOLUME              0x008
+
+/*@@
+ File attributes bits: the file is a directory.
+ */
 #define SY_ATTR_DIRECTORY           0x010
+
+/*@@
+ File attributes bits: the file is archived.
+ */
 #define SY_ATTR_ARCHIVE             0x020
+
+/*@@
+ File attributes bits: this is a device.
+ */
 #define SY_ATTR_DEVICE              0x040
+
+/*@@
+ File attributes bits: the file is a regular file.
+ */
 #define SY_ATTR_NORMAL              0x080
 
+/*@@
+ File attributes bits: the file is temporary.
+ */
 #define SY_ATTR_TEMPORARY           0x100
+
+/*@@
+ File attributes bits: the file is distributed.
+ */
 #define SY_ATTR_SPARSE_FILE         0x200
+
+/*@@
+ File attributes bits: the file is a DFS reparse point.
+ */
 #define SY_ATTR_REPARSE_POINT       0x400
+
+/*@@
+ File attributes bits: the file is compressed.
+ */
 #define SY_ATTR_COMPRESSED          0x800
+
+/*@@
+ File attributes bits: the file is offline.
+ */
 #define SY_ATTR_OFFLINE             0x1000
+
+/*@@
+ File attributes bits: the file ahs indexed contents.
+ */
 #define SY_ATTR_NOT_CONTENT_INDEXED 0x2000
+
+/*@@
+ File attributes bits: the file is encrypted.
+ */
 #define SY_ATTR_ENCRYPTED           0x4000
 
-/* volume information structure - used for querying information from OS */
+/*@@
+   Volume information structure. It is used for querying volume
+   information from the file system.
 
+
+   Note
+   This structure is designated here for reference only and it
+   must not be modified.                                        */
 typedef struct
 {
-    NQ_UINT32 serialNumber;               /* volumeSerial number */
-    NQ_UINT32 creationTime;               /* timeof the volume creation */
-    NQ_UINT32 fileSystemId;               /* ID of the filesystem */
-    NQ_UINT32 blockSize;                  /* block size in bytes */
-    NQ_UINT32 blocksPerUnit;              /* number of blocks in an allocation unit */
-    NQ_UINT32 totalUnitsLow;              /* number of units in volume (low part) */
-    NQ_UINT32 totalUnitsHigh;             /* number of units in volume (high part) */
-    NQ_UINT32 freeUnitsLow;               /* number of free units in volume (low part) */
-    NQ_UINT32 freeUnitsHigh;              /* number of free units in volume (high part) */
+    NQ_UINT32 serialNumberLow;                /*@@ VolumeSerial number (low part). */
+    NQ_UINT32 serialNumberHigh;               /*@@ VolumeSerial number (high part). */
+    NQ_UINT32 creationTimeLow;                /*@@ Time of the volume creation (low part). */
+    NQ_UINT32 creationTimeHigh;               /*@@ Time of the volume creation (high part). */
+    NQ_UINT32 fileSystemIdLow;                /*@@ ID of the file system (low part). */
+    NQ_UINT32 fileSystemIdHigh;               /*@@ ID of the file system (high part). */
+    NQ_UINT32 blockSizeLow;                   /*@@ Block size in bytes (low part). */
+    NQ_UINT32 blockSizeHigh;                  /*@@ Block size in bytes (high part). */
+    NQ_UINT32 blocksPerUnitLow;               /*@@ Number of blocks in an allocation unit (low part). */
+    NQ_UINT32 blocksPerUnitHigh;              /*@@ Number of blocks in an allocation unit (high part). */
+    NQ_UINT32 totalUnitsLow;              	  /*@@ Number of units in volume (low part). */
+    NQ_UINT32 totalUnitsHigh;              	  /*@@ Number of units in volume (high part). */
+    NQ_UINT32 freeUnitsLow;                   /*@@ Number of free units in volume (low part). */
+    NQ_UINT32 freeUnitsHigh;                  /*@@ Number of free units in volume (high part). */
 } SYVolumeInformation;
 
 /* printer information structures */
@@ -108,7 +182,7 @@ typedef struct
     NQ_UINT16 yResolution;
     NQ_UINT16 ttOption;
     NQ_UINT16 collate;
-    const NQ_TCHAR* formName;
+    const NQ_WCHAR* formName;
     NQ_UINT16 logPixels;
     NQ_UINT32 bitsPerPel;
     NQ_UINT32 pelsWidth;
@@ -132,21 +206,21 @@ typedef struct
 typedef struct
 {
     NQ_UINT32 osVersion;
-    const NQ_TCHAR* name;
-    const NQ_TCHAR* driverPath;
-    const NQ_TCHAR* dataFile;
-    const NQ_TCHAR* configFile;
-    const NQ_TCHAR* helpFile;
-    const NQ_TCHAR** dependentFiles;
-    const NQ_TCHAR* monitorName;
-    const NQ_TCHAR* defaultDataType;
-    const NQ_TCHAR** previousNames;
+    const NQ_WCHAR* name;
+    const NQ_WCHAR* driverPath;
+    const NQ_WCHAR* dataFile;
+    const NQ_WCHAR* configFile;
+    const NQ_WCHAR* helpFile;
+    const NQ_WCHAR** dependentFiles;
+    const NQ_WCHAR* monitorName;
+    const NQ_WCHAR* defaultDataType;
+    const NQ_WCHAR** previousNames;
     NQ_UINT32 driverDate;
     NQ_UINT32 driverVersions[2];
-    const NQ_TCHAR* manufacturer;
-    const NQ_TCHAR* manufacturerURL;
-    const NQ_TCHAR* hardwareID;
-    const NQ_TCHAR* provider;
+    const NQ_WCHAR* manufacturer;
+    const NQ_WCHAR* manufacturerURL;
+    const NQ_WCHAR* hardwareID;
+    const NQ_WCHAR* provider;
     NQ_UINT32 attributes;
     NQ_UINT32 configVersion;
     NQ_UINT32 driverVersion;
@@ -188,15 +262,15 @@ typedef struct
 typedef struct
 {
     NQ_UINT32 flags;                /* printer flags */
-    NQ_TCHAR* portName;
-    NQ_TCHAR* driverName;
-    NQ_TCHAR* comment;
-    NQ_TCHAR* location;
+    NQ_WCHAR* portName;
+    NQ_WCHAR* driverName;
+    NQ_WCHAR* comment;
+    NQ_WCHAR* location;
     SYDeviceMode devMode;
-    NQ_TCHAR* sepFile;
-    NQ_TCHAR* printProcessor;
-    NQ_TCHAR* dataType;
-    NQ_TCHAR* parameters;
+    NQ_WCHAR* sepFile;
+    NQ_WCHAR* printProcessor;
+    NQ_WCHAR* dataType;
+    NQ_WCHAR* parameters;
     NQ_UINT32 attributes;
     NQ_UINT32 priority;
     NQ_UINT32 defaultPriority;
@@ -281,8 +355,8 @@ SYPrinterInfo;
 typedef struct
 {
     NQ_UINT32 id;                   /* job ID */
-    const NQ_TCHAR* documentName;   /* name of the document being printed */
-    const NQ_TCHAR* pStatus;        /* optional text description of the status */
+    const NQ_WCHAR* documentName;   /* name of the document being printed */
+    const NQ_WCHAR* pStatus;        /* optional text description of the status */
     NQ_UINT32 status;               /* status code (when the above is null) - see below */
     NQ_UINT32 priority;             /* job priority - see below */
     NQ_UINT32 position;             /* job position in the print queue (0 - current) */
@@ -367,7 +441,7 @@ SYPrintRect;
 typedef struct
 {
     NQ_UINT32 id;                       /* form ID */
-    const NQ_TCHAR* name;               /* form name */
+    const NQ_WCHAR* name;               /* form name */
     NQ_UINT32 flags;                    /* see below */
     SYPrintSize size;                   /* form size */
     SYPrintRect imageableArea;          /* form shape */

@@ -50,7 +50,7 @@ csCheckMessageSignatureSMB2(
     CSUser *pUser,                          /* pointer to user structure */
     NQ_BYTE *pHeaderIn,                     /* pointer to packet header */
     NQ_COUNT dataLength,                    /* packet length */
-    NQ_UINT32 flags                         /* header flags */
+    NQ_UINT32 flags                        /* header flags */
     );
 
 
@@ -63,6 +63,20 @@ csCreateMessageSignatureSMB2(
 
 #endif /* UD_NQ_INCLUDESMB2 */
 
+NQ_BOOL
+csCheckMessageSignatureSMB3(
+    CSUser *pUser,
+    NQ_BYTE *pHeaderIn,
+    NQ_COUNT dataLength,
+    NQ_UINT32 flags
+    );
+
+void
+csCreateMessageSignatureSMB3(
+    NQ_UINT32 sid,
+    NQ_BYTE *pHeaderOut,
+    NQ_COUNT dataLength 
+    );
 
 #endif /* defined(UD_NQ_INCLUDECIFSSERVER) && defined(UD_CS_MESSAGESIGNINGPOLICY) */
 

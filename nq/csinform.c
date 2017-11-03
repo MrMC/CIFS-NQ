@@ -28,12 +28,15 @@
 #endif
 #include "csinform.h"
 #include "csdelete.h"
+#include "cmsmb1.h"
 
 #ifdef UD_NQ_INCLUDECIFSSERVER
 
-/* This code implements information commands and subcommands */
+/* This code implements information commands and sub commands */
 
-static NQ_UINT32 convertNqAccessToNtAccess(NQ_UINT16 nqAccess);
+static NQ_WCHAR fileNameBuff[CM_MAXFILENAMELEN];
+
+NQ_UINT32 convertNqAccessToNtAccess(NQ_UINT16 nqAccess);
 
 /* The following value is used in NOTIFY CHANGE as a completion filter for file information */
 
@@ -72,14 +75,15 @@ csComQueryInformationDisk(
     NQ_UINT32 returnValue;                  /* error code in NT format or 0 for no error */
     CMCifsStatus error;                     /* for composing DOS-style error */
     const CSShare* pShare;                  /* pointer to the share */
-    NQ_TCHAR* pVolumeName;                  /* pointer to the volume name */
+    NQ_WCHAR* pVolumeName;                  /* pointer to the volume name */
     CSUid uid;                              /* required UID */
     CSTid tid;                              /* required TID */
     SYVolumeInformation volumeInfo;         /* buffer for the volume information */
-    static const NQ_TCHAR noName[] = {(NQ_TCHAR)0};   /* empty name for file */
+    static const NQ_WCHAR noName[] = CM_WCHAR_NULL_STRING;   /* empty name for file */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDFileAccessEvent		eventInfo;
     CSUser *				pUser;
+    NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
     
     TRCB();
@@ -146,8 +150,8 @@ csComQueryInformationDisk(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				csErrorReturn(SMB_STATUS_UNSUCCESSFUL, SRV_ERRerror),
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -160,9 +164,11 @@ csComQueryInformationDisk(
     /* convert filename to host filename, simulating empty file name in ANSI */
 
     if ((pVolumeName = cmCifsNtohFilename(
+    					fileNameBuff,
                         pShare->map,
                         noName,
-                        FALSE
+                        FALSE,
+						TRUE
                         )
         ) == NULL
        )
@@ -172,8 +178,8 @@ csComQueryInformationDisk(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				csErrorReturn(SMB_STATUS_OBJECT_NAME_INVALID, DOS_ERRinvalidname),
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -191,8 +197,8 @@ csComQueryInformationDisk(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_ATTRIBGET,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE *)&eventInfo
 			);
@@ -206,8 +212,8 @@ csComQueryInformationDisk(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				error,
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -221,13 +227,13 @@ csComQueryInformationDisk(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_ATTRIBGET,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE *)&eventInfo
 			);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-    /* adjust totalUnitsLow, freeUnitsLow and blocksPerUnit to fit into NQ_UINT16 */
+    /* adjust totalUnitsLow, freeUnitsLow and blocksPerUnitLow to fit into NQ_UINT16 */
  
     if (volumeInfo.totalUnitsLow > 65535)
     {
@@ -241,7 +247,7 @@ csComQueryInformationDisk(
             totalUnits >>= i;
         }
 
-        volumeInfo.blocksPerUnit <<= --i;
+        volumeInfo.blocksPerUnitLow <<= --i;
         volumeInfo.totalUnitsLow >>= i;     
         volumeInfo.freeUnitsLow >>= i;     
     }
@@ -250,8 +256,8 @@ csComQueryInformationDisk(
 
     queryResponse->wordCount = SMB_QUERYINFORMATIONDISK_RESPONSE_WORDCOUNT;
     cmPutSUint16(queryResponse->totalUnits, cmHtol16((NQ_UINT16)volumeInfo.totalUnitsLow));
-    cmPutSUint16(queryResponse->blocksPerUnit, cmHtol16((NQ_UINT16)volumeInfo.blocksPerUnit));
-    cmPutSUint16(queryResponse->blockSize, cmHtol16((NQ_UINT16)volumeInfo.blockSize));
+    cmPutSUint16(queryResponse->blocksPerUnit, cmHtol16((NQ_UINT16)volumeInfo.blocksPerUnitLow));
+    cmPutSUint16(queryResponse->blockSize, cmHtol16((NQ_UINT16)volumeInfo.blockSizeLow));
     cmPutSUint16(queryResponse->freeUnits, cmHtol16((NQ_UINT16)volumeInfo.freeUnitsLow));
     cmPutSUint16(queryResponse->byteCount, 0);
 
@@ -291,14 +297,15 @@ csComQueryInformation(
     NQ_UINT32 returnValue;                      /* error code in NT format or 0 for no error */
     CMCifsStatus error;                         /* for composing DOS-style error */
     const CSShare* pShare;                      /* pointer to the share */
-    NQ_TCHAR* pFileName;                        /* filename to open */
+    NQ_WCHAR* pFileName;                        /* filename to open */
     CSUid uid;                                  /* required UID */
     CSTid tid;                                  /* required TID */
     SYFileInformation fileInfo;                 /* buffer for file information */
     CSUser* pUser;                              /* pointer to the user descriptor */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDFileAccessEvent		eventInfo;
-    const NQ_TCHAR noName[] = {(NQ_TCHAR)0};   /* empty name for file */
+    const NQ_WCHAR noName[] = {(NQ_WCHAR)0};   /* empty name for file */
+    NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     TRCB();
@@ -373,9 +380,11 @@ csComQueryInformation(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+    					fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(queryRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(queryRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -386,8 +395,8 @@ csComQueryInformation(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				csErrorReturn(SMB_STATUS_OBJECT_NAME_INVALID, DOS_ERRinvalidname),
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -398,45 +407,54 @@ csComQueryInformation(
     }
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
     eventInfo.before = TRUE;
-	udEventLog(
-		UD_LOG_MODULE_CS,
-		UD_LOG_CLASS_FILE,
-		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && cmTStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
-		pUser->name,
-		pUser->ip,
-		0,
-		(const NQ_BYTE*)&eventInfo
-		);
+	if (pUser != NULL)
+	{
+		udEventLog(
+				UD_LOG_MODULE_CS,
+				UD_LOG_CLASS_FILE,
+				pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && syWStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+				pUser->name,
+				pUser->ip,
+				0,
+				(const NQ_BYTE*)&eventInfo
+			);
+	}
 	eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
 
-    if (!csCheckPathAndFile(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPathAndFile(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
-		udEventLog(
-			UD_LOG_MODULE_CS,
-			UD_LOG_CLASS_FILE,
-			pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && cmTStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
-			pUser->name,
-			pUser->ip,
-			csErrorReturn(SMB_STATUS_OBJECT_NAME_NOT_FOUND, DOS_ERRbadfile),
-			(const NQ_BYTE*)&eventInfo
-			);
+    	if (pUser != NULL)
+    	{
+    		udEventLog(
+    				UD_LOG_MODULE_CS,
+					UD_LOG_CLASS_FILE,
+					pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && syWStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+					pUser->name,
+					pUser->ip,
+					csErrorReturn(SMB_STATUS_OBJECT_NAME_NOT_FOUND, DOS_ERRbadfile),
+					(const NQ_BYTE*)&eventInfo
+					);
+    	}
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
         TRCERR("Path does not exists");
-        TRC1P(" path: %s", cmTDump(pFileName));
+        TRC1P(" path: %s", cmWDump(pFileName));
         return csErrorReturn(SMB_STATUS_OBJECT_NAME_NOT_FOUND, DOS_ERRbadfile);
     }
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
-	udEventLog(
-		UD_LOG_MODULE_CS,
-		UD_LOG_CLASS_FILE,
-		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && cmTStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
-		pUser->name,
-		pUser->ip,
-		0,
-		(const NQ_BYTE*)&eventInfo
-		);
+    if (pUser != NULL)
+    {
+	    udEventLog(
+		    UD_LOG_MODULE_CS,
+		    UD_LOG_CLASS_FILE,
+		    pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && syWStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		    pUser->name,
+		    pUser->ip,
+		    0,
+		    (const NQ_BYTE*)&eventInfo
+		    );
+    }
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
     /* check whether this file is opened by this or another client and is marked for deletion */
 
@@ -447,14 +465,14 @@ csComQueryInformation(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				csErrorReturn(SMB_STATUS_DELETE_PENDING, DOS_ERRbadaccess),
 				(const NQ_BYTE *)&eventInfo
 				);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("File is marked for deletion");
-        TRC1P(" file name: %s", cmTDump(pFileName));
+        TRC1P(" file name: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_DELETE_PENDING, DOS_ERRbadaccess);
     }
@@ -466,8 +484,8 @@ csComQueryInformation(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_ATTRIBGET,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE *)&eventInfo
 			);
@@ -481,8 +499,8 @@ csComQueryInformation(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				error,
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -497,8 +515,8 @@ csComQueryInformation(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_ATTRIBGET,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE *)&eventInfo
 			);
@@ -511,7 +529,7 @@ csComQueryInformation(
 		
 		cmPutSUint16(queryResponse->fileAttributes, cmHtol16(temp));
 	}
-    cmPutSUint32(queryResponse->lastWriteTime, cmHtol32(fileInfo.lastWriteTime));
+    cmPutSUint32(queryResponse->lastWriteTime, cmHtol32(cmTimeConvertMSecToSec(&fileInfo.lastWriteTime)));
     cmPutSUint32(queryResponse->fileSize, (fileInfo.attributes & SMB_ATTR_DIRECTORY) ? 0 : cmHtol32(fileInfo.sizeLow));
     cmPutSUint16(queryResponse->byteCount, 0);
 
@@ -551,7 +569,7 @@ csComSetInformation(
     NQ_UINT32 returnValue;                     /* error code in NT format or 0 for no error */
     CMCifsStatus error;                     /* for composing DOS-style error */
     const CSShare* pShare;                  /* pointer to the share */
-    NQ_TCHAR* pFileName;                    /* filename to open */
+    NQ_WCHAR* pFileName;                    /* filename to open */
     CSUid uid;                              /* required UID */
     CSTid tid;                              /* required TID */
     SYFileInformation fileInfo;             /* buffer for file information */
@@ -561,7 +579,6 @@ csComSetInformation(
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     TRCB();
-
 
     /* check space in output buffer */
 
@@ -621,9 +638,11 @@ csComSetInformation(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+						fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(setRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(setRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -647,8 +666,6 @@ csComSetInformation(
 	eventInfo.fileName = pFileName;
 	eventInfo.access = (NQ_UINT32)-1;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
-
-
 
     /* check access to share */
 
@@ -674,7 +691,7 @@ csComSetInformation(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && cmTStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && syWStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -682,13 +699,13 @@ csComSetInformation(
 		);
 	eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-    if (!csCheckPathAndFile(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPathAndFile(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && cmTStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && syWStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath),
@@ -707,14 +724,14 @@ csComSetInformation(
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("Path does not exists");
-        TRC1P(" path: %s", cmTDump(pFileName));
+        TRC1P(" path: %s", cmWDump(pFileName));
         return csErrorReturn(SMB_STATUS_OBJECT_PATH_NOT_FOUND, DOS_ERRbadpath);
     }
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && cmTStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && syWStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -738,7 +755,7 @@ csComSetInformation(
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("File is marked for deletion");
-        TRC1P(" file name: %s", cmTDump(pFileName));
+        TRC1P(" file name: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_DELETE_PENDING, DOS_ERRbadaccess);
     }
@@ -812,7 +829,7 @@ csComSetInformation(
     }
     if (cmGetSUint32(setRequest->lastWriteTime) != 0)
     {
-        fileInfo.lastWriteTime = cmLtoh32(cmGetSUint32(setRequest->lastWriteTime));
+        fileInfo.lastWriteTime = cmTimeConvertSecToMSec(cmLtoh32(cmGetSUint32(setRequest->lastWriteTime)));
     }
 
     {
@@ -915,6 +932,8 @@ csComQueryInformation2(
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDFileAccessEvent	eventInfo;
     CSUser * 			pUser;
+    const NQ_WCHAR noName[] = CM_WCHAR_NULL_STRING;  /* empty name for file */
+    NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     TRCB();
@@ -983,14 +1002,14 @@ csComQueryInformation2(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				csErrorReturn(SMB_STATUS_NO_SUCH_FILE, DOS_ERRbadfile),
 				(const NQ_BYTE *)&eventInfo
 				);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("File is marked for deletion");
-        TRC1P(" file name: %s", cmTDump(pName->name));
+        TRC1P(" file name: %s", cmWDump(pName->name));
         TRCE();
         return csErrorReturn(SMB_STATUS_NO_SUCH_FILE, DOS_ERRbadfile);
     }
@@ -1003,8 +1022,8 @@ csComQueryInformation2(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_ATTRIBGET,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE *)&eventInfo
 			);
@@ -1018,8 +1037,8 @@ csComQueryInformation2(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				error,
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1033,8 +1052,8 @@ csComQueryInformation2(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_ATTRIBGET,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE *)&eventInfo
 			);
@@ -1103,10 +1122,12 @@ csComSetInformation2(
     CSName* pName;                              /* pointer to file name descriptor */
     CSFile* pFile;                              /* pointer to file descriptor */
     SYFileInformation fileInfo;                 /* buffer for file information */
-    const NQ_TCHAR* pFileName;                  /* file name pointer */
+    const NQ_WCHAR* pFileName;                  /* file name pointer */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDFileAccessEvent	eventInfo;
     CSUser * 			pUser;
+    const NQ_WCHAR noName[] = CM_WCHAR_NULL_STRING;  /* empty name for file */
+    NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
     TRCB();
 
@@ -1153,8 +1174,8 @@ csComSetInformation2(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBSET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				csErrorReturn(SMB_STATUS_INVALID_HANDLE, DOS_ERRbadfid),
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1172,8 +1193,8 @@ csComSetInformation2(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBSET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				csErrorReturn(SMB_STATUS_UNSUCCESSFUL, SRV_ERRerror),
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1195,8 +1216,8 @@ csComSetInformation2(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBSET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				error,
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1216,14 +1237,14 @@ csComSetInformation2(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBSET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				csErrorReturn(SMB_STATUS_NO_SUCH_FILE, DOS_ERRbadfile),
 				(const NQ_BYTE *)&eventInfo
 				);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("File is marked for deletion");
-        TRC1P(" file name: %s", cmTDump(pFileName));
+        TRC1P(" file name: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_NO_SUCH_FILE, DOS_ERRbadfile);
     }
@@ -1235,8 +1256,8 @@ csComSetInformation2(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_ATTRIBGET,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE *)&eventInfo
 			);
@@ -1250,8 +1271,8 @@ csComSetInformation2(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				error,
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1266,26 +1287,26 @@ csComSetInformation2(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_ATTRIBGET,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE *)&eventInfo
 			);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
     /* update information */
 
-    fileInfo.creationTime = cmCifsSmbTimeToTime(
+    fileInfo.creationTime = cmTimeConvertSecToMSec(cmCifsSmbTimeToTime(
         cmLtoh16(cmGetSUint16(setRequest->creationTime)),
         cmLtoh16(cmGetSUint16(setRequest->creationDate))
-        );
-    fileInfo.lastAccessTime = cmCifsSmbTimeToTime(
+        ));
+    fileInfo.lastAccessTime = cmTimeConvertSecToMSec(cmCifsSmbTimeToTime(
         cmLtoh16(cmGetSUint16(setRequest->lastAccessTime)),
         cmLtoh16(cmGetSUint16(setRequest->lastAccessDate))
-        );
-    fileInfo.lastWriteTime = cmCifsSmbTimeToTime(
+        ));
+    fileInfo.lastWriteTime = cmTimeConvertSecToMSec(cmCifsSmbTimeToTime(
         cmLtoh16(cmGetSUint16(setRequest->lastWriteTime)),
         cmLtoh16(cmGetSUint16(setRequest->lastWriteDate))
-        );
+        ));
 
     {
         SYFile nullHandle;  /* invalid handle to the file */
@@ -1297,8 +1318,8 @@ csComSetInformation2(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBSET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				0,
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1312,8 +1333,8 @@ csComSetInformation2(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBSET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				error,
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1327,8 +1348,8 @@ csComSetInformation2(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBSET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				0,
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1472,15 +1493,16 @@ csQueryFsInformation(
 {
     CMCifsStatus error;                 /* for composing DOS-style error */
     NQ_UINT responseLength;             /* response lengths according to the required level */
-    NQ_TCHAR* pVolumeName;              /* pointer to the volume name */
+    NQ_WCHAR* pVolumeName;              /* pointer to the volume name */
     SYVolumeInformation volumeInfo;     /* buffer for the volume information */
-    static const NQ_TCHAR noName[] = {(NQ_TCHAR)0};   /* empty name for file */
+    static const NQ_WCHAR noName[] = {(NQ_WCHAR)0};   /* empty name for file */
     NQ_UINT labelLength;                /* volume label length, 0 if not required */
-    const NQ_TCHAR* pLabel;             /* pointer to a name to add to response */
+    const NQ_WCHAR* pLabel;             /* pointer to a name to add to response */
     NQ_BOOL tcharLabel = TRUE;          /* whether label is in TCHAR or in CHAR */
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDFileAccessEvent		eventInfo;
     CSUser *				pUser;
+    NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
     CSUid					uid = pTree->uid;
     CSTid					tid = pTree->tid;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
@@ -1498,9 +1520,11 @@ csQueryFsInformation(
 #endif /* UD_NQ_INCLUDEEVENTLOG */
 
     if ((pVolumeName = cmCifsNtohFilename(
+						fileNameBuff,
                         pShare->map,
                         noName,
-                        FALSE
+                        FALSE,
+						TRUE
                         )
         ) == NULL
        )
@@ -1510,8 +1534,8 @@ csQueryFsInformation(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				csErrorReturn(SMB_STATUS_OBJECT_NAME_INVALID, DOS_ERRinvalidname),
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1530,8 +1554,8 @@ csQueryFsInformation(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_ATTRIBGET,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE *)&eventInfo
 			);
@@ -1545,8 +1569,8 @@ csQueryFsInformation(
 				UD_LOG_MODULE_CS,
 				UD_LOG_CLASS_FILE,
 				UD_LOG_FILE_ATTRIBGET,
-				pUser->name,
-				pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
 				error,
 				(const NQ_BYTE *)&eventInfo
 				);
@@ -1560,8 +1584,8 @@ csQueryFsInformation(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
 			UD_LOG_FILE_ATTRIBGET,
-			pUser->name,
-			pUser->ip,
+			pUser? pUser->name : noName,
+			pUser? pUser->ip : &noIP,
 			0,
 			(const NQ_BYTE *)&eventInfo
 			);
@@ -1591,7 +1615,7 @@ csQueryFsInformation(
         break;
     case SMB_QUERYFS_NT_ATTRIBUTEINFO:
         responseLength = sizeof(CMCifsQueryFsInfoNtAttributeResponse);
-        pLabel = (NQ_TCHAR*)UD_FS_FILESYSTEMNAME;
+        pLabel = (NQ_WCHAR*)UD_FS_FILESYSTEMNAME;
         tcharLabel = FALSE;
         break;
     case SMB_QUERYFS_NT_FULLSIZEINFO:
@@ -1615,7 +1639,7 @@ csQueryFsInformation(
         if (unicodeRequired)
         {
             if (tcharLabel)
-                cmTcharToUnicode((NQ_WCHAR*)(descriptor->pData + responseLength), pLabel);
+                syWStrcpy((NQ_WCHAR*)(descriptor->pData + responseLength), pLabel);
             else
                 syAnsiToUnicode((NQ_WCHAR*)(descriptor->pData + responseLength), (NQ_CHAR*)pLabel);
             labelLength = (NQ_UINT)((cmWStrlen((const NQ_WCHAR*)(descriptor->pData + responseLength))) * sizeof(NQ_WCHAR));
@@ -1623,7 +1647,7 @@ csQueryFsInformation(
         else
         {
             if (tcharLabel)
-                cmTcharToAnsi((NQ_CHAR*)(descriptor->pData + responseLength), pLabel);
+                syUnicodeToAnsi((NQ_CHAR*)(descriptor->pData + responseLength), pLabel);
             else
                 syStrcpy((NQ_CHAR*)(descriptor->pData + responseLength), (NQ_CHAR*)pLabel);
             labelLength = (NQ_UINT)syStrlen((NQ_CHAR*)pLabel);
@@ -1655,11 +1679,11 @@ csQueryFsInformation(
 
             infoResponse = (CMCifsQueryFsInfoAllocationResponse*)descriptor->pData;
 
-            cmPutSUint32(infoResponse->idFileSystem, cmHtol32(volumeInfo.fileSystemId));
-            cmPutSUint32(infoResponse->sectorsPerUnit, cmHtol32(volumeInfo.blocksPerUnit));
+            cmPutSUint32(infoResponse->idFileSystem, cmHtol32(volumeInfo.fileSystemIdLow));
+            cmPutSUint32(infoResponse->sectorsPerUnit, cmHtol32(volumeInfo.blocksPerUnitLow));
             cmPutSUint32(infoResponse->totalUnits, cmHtol32(volumeInfo.totalUnitsLow));
             cmPutSUint32(infoResponse->freeUnits, cmHtol32(volumeInfo.freeUnitsLow));
-            cmPutSUint16(infoResponse->sectorSize, cmHtol16((NQ_UINT16)volumeInfo.blockSize));
+            cmPutSUint16(infoResponse->sectorSize, cmHtol16((NQ_UINT16)volumeInfo.blockSizeLow));
         }
         break;
     case SMB_QUERYFS_INFOVOLUME:
@@ -1668,7 +1692,7 @@ csQueryFsInformation(
 
             infoResponse = (CMCifsQueryFsInfoVolumeResponse*)descriptor->pData;
 
-            cmPutSUint32(infoResponse->serialNumber, cmHtol32(volumeInfo.serialNumber));
+            cmPutSUint32(infoResponse->serialNumber, cmHtol32(volumeInfo.serialNumberLow));
             infoResponse->labelLength = (NQ_BYTE)labelLength;
         }
         break;
@@ -1679,10 +1703,10 @@ csQueryFsInformation(
             NQ_UINT32 timeHigh;    /* high part of UTC time */
 
             infoResponse = (CMCifsQueryFsInfoNtVolumeResponse*)descriptor->pData;
-            cmCifsTimeToUTC(volumeInfo.creationTime, &timeLow, &timeHigh);
+            cmCifsTimeToUTC(cmTimeConvertSecToMSec(volumeInfo.creationTimeLow), &timeLow, &timeHigh);
             cmPutSUint32(infoResponse->creationTime.low, cmHtol32(timeLow));
             cmPutSUint32(infoResponse->creationTime.high, cmHtol32(timeHigh));
-            cmPutSUint32(infoResponse->serialNumber, cmHtol32(volumeInfo.serialNumber));
+            cmPutSUint32(infoResponse->serialNumber, cmHtol32(volumeInfo.serialNumberLow));
             cmPutSUint32(infoResponse->labelLength, cmHtol32(labelLength));
             infoResponse->reserved[0] = infoResponse->reserved[1] = 0; 
         }
@@ -1693,12 +1717,12 @@ csQueryFsInformation(
 
             infoResponse = (CMCifsQueryFsInfoNtSizeResponse*)descriptor->pData;
 
-            cmPutSUint32(infoResponse->sectorsPerUnit, cmHtol32(volumeInfo.blocksPerUnit));
+            cmPutSUint32(infoResponse->sectorsPerUnit, cmHtol32(volumeInfo.blocksPerUnitLow));
             cmPutSUint32(infoResponse->totalUnits.high, cmHtol32(volumeInfo.totalUnitsHigh));
             cmPutSUint32(infoResponse->totalUnits.low, cmHtol32(volumeInfo.totalUnitsLow));
             cmPutSUint32(infoResponse->freeUnits.high, cmHtol32(volumeInfo.freeUnitsHigh));
             cmPutSUint32(infoResponse->freeUnits.low, cmHtol32(volumeInfo.freeUnitsLow));
-            cmPutSUint32(infoResponse->sectorSize, cmHtol32(volumeInfo.blockSize));
+            cmPutSUint32(infoResponse->sectorSize, cmHtol32(volumeInfo.blockSizeLow));
         }
         break;
     case SMB_QUERYFS_NT_DEVICEINFO:
@@ -1707,8 +1731,8 @@ csQueryFsInformation(
 
             infoResponse = (CMCifsQueryFsInfoNtDeviceResponse*)descriptor->pData;
 
-            cmPutSUint32(infoResponse->deviceType, 0);               /* no response */
-            cmPutSUint32(infoResponse->deviceCharacteristics, 0);    /* no response */
+            cmPutSUint32(infoResponse->deviceType, 0x7);                /* disk */
+            cmPutSUint32(infoResponse->deviceCharacteristics, 0x20);    /* mounted */
         }
         break;
     case SMB_QUERYFS_NT_ATTRIBUTEINFO:
@@ -1734,8 +1758,8 @@ csQueryFsInformation(
             cmPutSUint32(infoResponse->callerTotalUnits.low, cmHtol32(volumeInfo.freeUnitsLow));
             cmPutSUint32(infoResponse->freeUnits.high, cmHtol32(volumeInfo.freeUnitsHigh));
             cmPutSUint32(infoResponse->freeUnits.low, cmHtol32(volumeInfo.freeUnitsLow));
-            cmPutSUint32(infoResponse->sectorsPerUnit, cmHtol32(volumeInfo.blocksPerUnit));
-            cmPutSUint32(infoResponse->sectorSize, cmHtol32(volumeInfo.blockSize));
+            cmPutSUint32(infoResponse->sectorsPerUnit, cmHtol32(volumeInfo.blocksPerUnitLow));
+            cmPutSUint32(infoResponse->sectorSize, cmHtol32(volumeInfo.blockSizeLow));
         }
         break;
     }
@@ -1773,7 +1797,7 @@ csTransaction2QueryPathInformation(
     CMCifsPathInformation2Request* infoRequest;    /* casted request */
     NQ_BOOL unicodeRequired;            /* whether client requires UNICODE */
     const CSShare* pShare;              /* pointer to the share */
-    NQ_TCHAR* pFileName;                /* pointer to the volume name */
+    NQ_WCHAR* pFileName;                /* pointer to the volume name */
     CSUid uid;                          /* required UID */
     CSTid tid;                          /* required TID */
     CSUser *pUser;
@@ -1830,9 +1854,11 @@ csTransaction2QueryPathInformation(
     /* convert filename to host filename */
 
     if ((pFileName = cmCifsNtohFilename(
+						fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(infoRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(infoRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -1852,7 +1878,7 @@ csTransaction2QueryPathInformation(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && cmTStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && syWStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -1860,13 +1886,13 @@ csTransaction2QueryPathInformation(
 		);
 	eventInfo.before = FALSE;
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
-    if (!csCheckPathAndFile(pShare, pFileName, (NQ_UINT)cmTStrlen(pShare->map), pUser->preservesCase))
+    if (!csCheckPathAndFile(pShare, pFileName, (NQ_UINT)syWStrlen(pShare->map), pUser->preservesCase))
     {
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 		udEventLog(
 			UD_LOG_MODULE_CS,
 			UD_LOG_CLASS_FILE,
-			pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && cmTStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+			pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && syWStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 			pUser->name,
 			pUser->ip,
 			csErrorReturn(SMB_STATUS_OBJECT_NAME_NOT_FOUND, DOS_ERRbadfile),
@@ -1874,7 +1900,7 @@ csTransaction2QueryPathInformation(
 			);
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
         TRCERR("File does not exists");
-        TRC1P(" path: %s", cmTDump(pFileName));
+        TRC1P(" path: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_OBJECT_NAME_NOT_FOUND, DOS_ERRbadfile);
     }
@@ -1882,7 +1908,7 @@ csTransaction2QueryPathInformation(
 	udEventLog(
 		UD_LOG_MODULE_CS,
 		UD_LOG_CLASS_FILE,
-		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && cmTStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
+		pUser->preservesCase ? UD_LOG_FILE_ATTRIBGET : (pShare != NULL && syWStrcmp(pShare->map , pFileName) == 0) ? UD_LOG_FILE_ATTRIBGET : UD_LOG_FILE_QUERYDIRECTORY,
 		pUser->name,
 		pUser->ip,
 		0,
@@ -1894,7 +1920,7 @@ csTransaction2QueryPathInformation(
     if (csFileMarkedForDeletion(pFileName))
     {
         TRCERR("File is marked for deletion");
-        TRC1P(" file name: %s", cmTDump(pFileName));
+        TRC1P(" file name: %s", cmWDump(pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_DELETE_PENDING, DOS_ERRbadaccess);
     }
@@ -1908,7 +1934,7 @@ csTransaction2QueryPathInformation(
                     NULL,
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
                     pFileName,
-                    (NQ_COUNT)cmTStrlen(pShare->map),
+                    (NQ_COUNT)syWStrlen(pShare->map),
                     cmLtoh16(cmGetSUint16(infoRequest->informationLevel)),
                     unicodeRequired,
                     (NQ_UINT)(CS_MAXBUFFERSIZE - (NQ_UINT)(descriptor->pParams - (NQ_BYTE*)descriptor->pHeaderOut)),
@@ -1950,7 +1976,7 @@ csTransaction2QueryFileInformation(
     NQ_UINT32 returnValue;                      /* error code in NT format or 0 for no error */
     CSFile* pFile;                              /* pointer to the file descriptor */
     CSName* pName;                              /* pointer to file name descriptor */
-    const NQ_TCHAR* pFileName;                  /* file name pointer */
+    const NQ_WCHAR* pFileName;                  /* file name pointer */
 
     TRCB();
 
@@ -2037,7 +2063,7 @@ csTransaction2QueryFileInformation(
     returnValue = csQueryFileInformationByName(
                     pFile,
                     pFileName,
-                    (NQ_COUNT)cmTStrlen(pShare->map),
+                    (NQ_COUNT)syWStrlen(pShare->map),
                     (NQ_UINT)informationLevel,
                     unicodeRequired,
                     (NQ_UINT)(CS_MAXBUFFERSIZE - (NQ_UINT)(descriptor->pParams - (NQ_BYTE*)descriptor->pHeaderOut)),
@@ -2118,9 +2144,11 @@ csTransaction2SetPathInformation(
     /* convert filename to host filename, simulating empty file name in ANSI */
 
     if ((ctx.pFileName = cmCifsNtohFilename(
+						fileNameBuff,
                         pShare->map,
-                        (NQ_TCHAR*)(infoRequest + 1),
-                        unicodeRequired
+                        (NQ_WCHAR*)(infoRequest + 1),
+                        unicodeRequired,
+						TRUE
                         )
         ) == NULL
        )
@@ -2183,7 +2211,7 @@ csTransaction2SetPathInformation(
         );
 #endif /* UD_NQ_INCLUDEEVENTLOG */
         TRCERR("File is marked for deletion");
-        TRC1P(" file name: %s", cmTDump(ctx.pFileName));
+        TRC1P(" file name: %s", cmWDump(ctx.pFileName));
         TRCE();
         return csErrorReturn(SMB_STATUS_NO_SUCH_FILE, DOS_ERRbadfile);
     }
@@ -2240,6 +2268,8 @@ csTransaction2SetFileInformation(
 #ifdef UD_NQ_INCLUDEEVENTLOG   
     const CSUser* pUser;                /* user name structure */
     UDFileAccessEvent eventInfo;        /* share event information */
+    const NQ_WCHAR noName[] = CM_WCHAR_NULL_STRING;  /* empty name for file */
+    NQ_IPADDRESS noIP = CM_IPADDR_ZERO;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
     InfoContext ctx;
 
@@ -2271,7 +2301,7 @@ csTransaction2SetFileInformation(
     pUser = csGetUserByUid(pFile->uid);
 #endif /* UD_NQ_INCLUDEEVENTLOG */
     ctx.pFileName = csGetFileName(pFile->fid);
-    TRC1P(" file name: %s", cmTDump(ctx.pFileName));
+    TRC1P(" file name: %s", cmWDump(ctx.pFileName));
     if (ctx.pFileName == NULL)
     {
 #ifdef UD_NQ_INCLUDEEVENTLOG
@@ -2282,8 +2312,8 @@ csTransaction2SetFileInformation(
                 UD_LOG_MODULE_CS,
                 UD_LOG_CLASS_FILE,
                 UD_LOG_FILE_ATTRIBSET,
-                pUser->name,
-                pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
                 csErrorReturn(SMB_STATUS_UNSUCCESSFUL, SRV_ERRerror),
                 (const NQ_BYTE*)&eventInfo
             );
@@ -2310,8 +2340,8 @@ csTransaction2SetFileInformation(
                 UD_LOG_MODULE_CS,
                 UD_LOG_CLASS_FILE,
                 UD_LOG_FILE_ATTRIBSET,
-                pUser->name,
-                pUser->ip,
+				pUser? pUser->name : noName,
+				pUser? pUser->ip : &noIP,
                 returnValue,
                 (const NQ_BYTE*)&eventInfo
             );
@@ -2376,7 +2406,7 @@ csTransaction2SetFileInformation(
 NQ_UINT32
 csQueryFileInformationByName(
     const CSFile* pFile,
-    const NQ_TCHAR* pFileName,
+    const NQ_WCHAR* pFileName,
     NQ_COUNT shareNameLen,
     NQ_UINT level,
     NQ_BOOL unicodeRequired,
@@ -2389,11 +2419,11 @@ csQueryFileInformationByName(
     NQ_UINT dataLength;                 /* length of the data area */
     CMCifsStatus error;                 /* for composing error code */
     NQ_UINT nameLength = 0;             /* length of the file name */
-    const NQ_TCHAR* pActualName;        /* file name */
-    NQ_STATIC NQ_TCHAR tempName[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN)];
+    const NQ_WCHAR* pActualName;        /* file name */
+    NQ_STATIC NQ_WCHAR tempName[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];
                                         /* buffer for converting names */
     NQ_INT charLen;                     /* character length in required encoding */
-    static const NQ_TCHAR rootName[] = { cmTChar('\\'), 0 };
+    static const NQ_WCHAR rootName[] = { cmWChar('\\'), 0 };
 #ifdef UD_NQ_INCLUDEEVENTLOG
     UDFileAccessEvent eventInfo;        /* share event information */
     CSUser	*			pUser = NULL;
@@ -2401,7 +2431,7 @@ csQueryFileInformationByName(
 
     TRCB();
 
-    TRC1P("file name: %s", cmTDump(pFileName));
+    TRC1P("file name: %s", cmWDump(pFileName));
 #ifdef UD_NQ_INCLUDEEVENTLOG
     eventInfo.access = 0;
     eventInfo.before = TRUE;
@@ -2415,6 +2445,8 @@ csQueryFileInformationByName(
     }
 #endif /* UD_NQ_INCLUDEEVENTLOG */
     charLen = unicodeRequired? sizeof(NQ_WCHAR) : sizeof(NQ_CHAR);
+
+    syMemset(&fileInfo, 0, sizeof(fileInfo));
 
 #ifdef UD_CS_INCLUDERPC
     if (NULL != pFile && pFile->isPipe)
@@ -2460,7 +2492,6 @@ csQueryFileInformationByName(
     if (NQ_SUCCESS != status)
     {
     	error = csErrorGetLast();
-
         TRCERR("Unable to read file/pipe information");
         TRCE();
         return error;
@@ -2474,13 +2505,19 @@ csQueryFileInformationByName(
         fileInfo.sizeLow = 0;
     }
 
-    /* find the file name without the share */
+    /* find the file name without the share and path separator */
 
-    pActualName = pFileName + shareNameLen + 1;   /* including path separator */
+    pActualName = pFileName + shareNameLen;
+    if (*pActualName == cmWChar(SY_PATHSEPARATOR))
+    	pActualName++;
 
-    /* check available space */
-    
     descriptor->parameterCount = 0;
+    
+    /* adjust level */
+    /* undocumented: over SMB1 for required level SMB_PASSTHRU_FILE_ALLINFO (1018),
+     * level SMB_QUERYPATH2_NT_ALLINFO (0x107) is expected in response */
+    level = ((syMemcmp(descriptor->pHeaderOut->protocol, cmSmbProtocolId, sizeof(cmSmbProtocolId)) == 0) && level == SMB_PASSTHRU_FILE_ALLINFO) ?
+    		SMB_QUERYPATH2_NT_ALLINFO : level;
     
     switch (level)
     {
@@ -2516,12 +2553,13 @@ csQueryFileInformationByName(
     case SMB_QUERYPATH2_NT_NAMEINFO:
         descriptor->parameterCount = 2;
         dataLength = sizeof(CMCifsFileInformation2NtFileName);
-        pActualName--;    /* include separator into the path */
-        nameLength = (NQ_UINT)(cmTStrlen(pActualName) * sizeof(NQ_WCHAR));
+        if (syWStrlen(pActualName) > 0)
+        	pActualName--;    /* include separator into the path */
+        nameLength = (NQ_UINT)(syWStrlen(pActualName) * sizeof(NQ_WCHAR));
         if (nameLength == 0)
         {
             pActualName = rootName;
-            nameLength = (NQ_UINT)(cmTStrlen(pActualName) * sizeof(NQ_WCHAR));
+            nameLength = (NQ_UINT)(syWStrlen(pActualName) * sizeof(NQ_WCHAR));
         }
         dataLength += nameLength;
         break;
@@ -2529,20 +2567,27 @@ csQueryFileInformationByName(
     case SMB_QUERYPATH2_NT_ALTNAMEINFO:
         descriptor->parameterCount = 2;
         dataLength = sizeof(CMCifsFileInformation2NtFileName);
-        pActualName = cmTStrrchr(pFileName, cmTChar(SY_PATHSEPARATOR));
-        if (pActualName == NULL)
-            pActualName = pFileName;
-        else
-            pActualName++;
-        nameLength = (NQ_UINT)(cmTStrlen(pActualName) * sizeof(NQ_WCHAR));    /* force unicode */
+        if (*pActualName == cmWChar('\0'))
+        	pActualName = pFileName;
+        nameLength = (NQ_UINT)(syWStrlen(pActualName) * sizeof(NQ_WCHAR));    /* force unicode */
         unicodeRequired = TRUE;
         dataLength += nameLength + (NQ_UINT)charLen;
         break;
-    case SMB_PASSTHRU_FILE_ALLINFO:    
+    case SMB_PASSTHRU_FILE_ALLINFO:
+         descriptor->parameterCount = 2;
+         dataLength = sizeof(CMCifsFileInformation2NtAll);
+         if (*pActualName == cmWChar('\0'))
+         	pActualName = pFileName;
+         nameLength = (NQ_UINT)(syWStrlen(pActualName) * sizeof(NQ_WCHAR));    /* force unicode */
+         unicodeRequired = TRUE;
+         dataLength += nameLength;
+         break;
     case SMB_QUERYPATH2_NT_ALLINFO:
         descriptor->parameterCount = 2;
-        dataLength = sizeof(CMCifsFileInformation2NtAll);
-        nameLength = (NQ_UINT)(cmTStrlen(pActualName) * sizeof(NQ_WCHAR));    /* force unicode */
+        dataLength = sizeof(CMCifsFileInformation2NtAllShort);
+        if (*pActualName == cmWChar('\0'))
+        	pActualName = pFileName;
+        nameLength = (NQ_UINT)(syWStrlen(pActualName) * sizeof(NQ_WCHAR));    /* force unicode */
         unicodeRequired = TRUE;
         dataLength += nameLength;
         break;
@@ -2688,17 +2733,35 @@ csQueryFileInformationByName(
             infoResponse = (CMCifsFileInformation2NtFileName*)descriptor->pData;
 
             cmPutSUint32(infoResponse->fileNameLength, cmHtol32(nameLength));
-            cmTStrcpy(tempName, pActualName);
+            syWStrcpy(tempName, pActualName);
             cmCifsHtonFilename(tempName);
-            cmTcharToUnicode((NQ_WCHAR*)(infoResponse + 1), tempName);
+            syWStrcpy((NQ_WCHAR*)(infoResponse + 1), tempName);
         }
         break;
-    case SMB_PASSTHRU_FILE_ALLINFO:    
+    case SMB_PASSTHRU_FILE_ALLINFO:
+    {
+        CMCifsFileInformation2NtAll* infoResponse;  /* casted response */
+
+        infoResponse = (CMCifsFileInformation2NtAll*)descriptor->pData;
+
+        cmPutSUint32(infoResponse->fileIndex.low, cmHtol32(fileInfo.fileIdLow));
+        cmPutSUint32(infoResponse->fileIndex.high, cmHtol32(fileInfo.fileIdHigh));
+        cmPutSUint32(infoResponse->eaSize, 0L);
+        cmPutSUint32(infoResponse->accessFlags, pFile ? cmHtol32(convertNqAccessToNtAccess(pFile->access)): 0);
+        cmPutSUint32(infoResponse->byteOffset.low, pFile ? cmHtol32(pFile->offsetLow) : 0);
+        cmPutSUint32(infoResponse->byteOffset.high, pFile ? cmHtol32(pFile->offsetHigh) : 0);
+        cmPutSUint32(infoResponse->mode, 0);
+        cmPutSUint32(infoResponse->alignment, 0);
+        cmPutSUint32(infoResponse->fileNameLength, cmHtol32(nameLength));
+        syWStrcpy(tempName, pActualName);
+        cmCifsHtonFilename(tempName);
+        syWStrcpy((NQ_WCHAR*)(infoResponse + 1), tempName);
+    }  /* go to next level */
     case SMB_QUERYPATH2_NT_ALLINFO:
         {
-            CMCifsFileInformation2NtAll* infoResponse;  /* casted response */
+            CMCifsFileInformation2NtAllShort* infoResponse;  /* casted response */
 
-            infoResponse = (CMCifsFileInformation2NtAll*)descriptor->pData;
+            infoResponse = (CMCifsFileInformation2NtAllShort*)descriptor->pData;
 
             csWriteFileTimes(&fileInfo, csGetNameByName(pFileName), descriptor->pData);
             cmPutSUint32(infoResponse->attributes, cmHtol32(fileInfo.attributes));
@@ -2711,18 +2774,14 @@ csQueryFileInformationByName(
             infoResponse->deletePending = (NQ_BYTE)fileInfo.isDeleted;
             infoResponse->directory = ((NQ_UINT16)fileInfo.attributes & SY_ATTR_DIRECTORY) != 0;
             cmPutSUint16(infoResponse->pad2, 0);
-            cmPutSUint32(infoResponse->fileIndex.low, 0);
-            cmPutSUint32(infoResponse->fileIndex.high, 0);
-            cmPutSUint32(infoResponse->eaSize, 0L);
-            cmPutSUint32(infoResponse->accessFlags, pFile ? cmHtol32(convertNqAccessToNtAccess(pFile->access)): 0);
-            cmPutSUint32(infoResponse->byteOffset.low, pFile ? cmHtol32(pFile->offsetLow) : 0);
-            cmPutSUint32(infoResponse->byteOffset.high, pFile ? cmHtol32(pFile->offsetHigh) : 0);
-            cmPutSUint32(infoResponse->mode, 0);
-            cmPutSUint32(infoResponse->alignment, 0);
-            cmPutSUint32(infoResponse->fileNameLength, cmHtol32(nameLength));
-            cmTStrcpy(tempName, pActualName);
-            cmCifsHtonFilename(tempName);
-            cmTcharToUnicode((NQ_WCHAR*)(infoResponse + 1), tempName);
+            if (level == SMB_QUERYPATH2_NT_ALLINFO)
+            {
+				cmPutSUint32(infoResponse->eaSize, 0);
+				cmPutSUint32(infoResponse->fileNameLength, cmHtol32(nameLength));
+				syWStrcpy(tempName, pActualName);
+				cmCifsHtonFilename(tempName);
+				syWStrcpy((NQ_WCHAR*)(infoResponse + 1), tempName);
+            }
         }
         break;
     case SMB_QUERYPATH2_NT_ALLOCATIONINFO:
@@ -2766,8 +2825,8 @@ csQueryFileInformationByName(
 
             infoResponse = (CMCifsFileInternalInformation*)descriptor->pData;
 
-            cmPutSUint32(infoResponse->fileIndex.low, 0);
-            cmPutSUint32(infoResponse->fileIndex.high, 0);
+            cmPutSUint32(infoResponse->fileIndex.low, cmHtol32(fileInfo.fileIdLow));
+            cmPutSUint32(infoResponse->fileIndex.high, cmHtol32(fileInfo.fileIdHigh));
         }
         break;
     }
@@ -2813,7 +2872,7 @@ csSetFileInformationByName(
 #ifdef UD_NQ_INCLUDEEVENTLOG
     eventInfo.before = TRUE;
     eventInfo.rid = csGetUserRid((CSUser *)pUser);
-    eventInfo.tid = pFile != NULL ? pFile->tid : ctx->tid;
+    eventInfo.tid = (NQ_UINT32)(pFile != NULL ? pFile->tid : ctx->tid);
     eventInfo.fileName = ctx->pFileName;
     eventInfo.infoLevel = ctx->level;
 #endif /* UD_NQ_INCLUDEEVENTLOG */
@@ -2945,14 +3004,22 @@ csSetFileInformationByName(
             if (markedForDeletion && (fileInfo.attributes & SMB_ATTR_DIRECTORY))
             {
                 CSFileEnumeration fileEnumeration;
-                NQ_TCHAR fileName[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN)];
-                NQ_TCHAR pattern[] = {cmTChar(SY_PATHSEPARATOR), cmTChar('*'), cmTChar(0)};
+                NQ_WCHAR fileName[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];
+                NQ_WCHAR pattern[] = {cmWChar(SY_PATHSEPARATOR), cmWChar('*'), cmWChar(0)};
+				CSUser *	user = NULL;
 
-                cmTStrcpy(fileName, ctx->pFileName);
-                cmTStrcat(fileName, pattern);
+				syWStrcpy(fileName, ctx->pFileName);
+				syWStrcat(fileName, pattern);
 
-                csEnumerateSourceName(&fileEnumeration, fileName, csGetUserByUid(pFile->uid)->preservesCase);
-                fileEnumeration.bringLinks = FALSE;
+#ifdef UD_NQ_INCLUDEEVENTLOG
+				user = (CSUser *)pUser;
+#else
+				user = csGetUserByUid(pFile->uid);
+#endif
+
+				csEnumerateSourceName(&fileEnumeration, fileName, user == NULL ? FALSE : user->preservesCase);
+                fileEnumeration.isCurrDirReported = TRUE;
+                fileEnumeration.isParentDirReported = TRUE;
 #ifdef UD_NQ_INCLUDEEVENTLOG
 				eventInfo.before = TRUE;
 				if (NULL != pUser)
@@ -3074,8 +3141,8 @@ csSetFileInformationByName(
 				{
 	                NQ_IPADDRESS zeroIP = CM_IPADDR_ZERO;
 
-					pName->deletingUserRid = pUser ? csGetUserRid(pUser) : CS_ILLEGALID;
-					pName->deletingTid = pFile ? pFile->tid : CS_ILLEGALID;
+					pName->deletingUserRid = csGetUserRid(pUser);
+					pName->deletingTid = (NQ_UINT32)(pFile ? pFile->tid : CS_ILLEGALID);
 					cmIpToAscii(pName->deletingIP, pUser ? pUser->ip : &zeroIP);
 				}
 #endif /* UD_NQ_INCLUDEEVENTLOG */				
@@ -3102,28 +3169,28 @@ csSetFileInformationByName(
                 && (cmGetSUint16(infoRequest->creationTime) != 0x0000 && cmGetSUint16(infoRequest->creationDate) != 0x0000)
                )
             {
-                fileInfo.creationTime = cmCifsSmbTimeToTime(
+                fileInfo.creationTime = cmTimeConvertSecToMSec(cmCifsSmbTimeToTime(
                                             cmLtoh16(cmGetSUint16(infoRequest->creationTime)),
                                             cmLtoh16(cmGetSUint16(infoRequest->creationDate))
-                                            );
+                                            ));
             }
             if (   (cmGetSUint16(infoRequest->lastAccessTime) != 0xFFFF && cmGetSUint16(infoRequest->lastAccessDate) != 0xFFFF)
                 && (cmGetSUint16(infoRequest->lastAccessTime) != 0x0000 && cmGetSUint16(infoRequest->lastAccessDate) != 0x0000)
                )
             {
-                fileInfo.lastAccessTime = cmCifsSmbTimeToTime(
+                fileInfo.lastAccessTime = cmTimeConvertSecToMSec(cmCifsSmbTimeToTime(
                                             cmLtoh16(cmGetSUint16(infoRequest->lastAccessTime)),
                                             cmLtoh16(cmGetSUint16(infoRequest->lastAccessDate))
-                                            );
+                                            ));
             }
             if (   (cmGetSUint16(infoRequest->lastWriteTime) != 0xFFFF && cmGetSUint16(infoRequest->lastWriteDate) != 0xFFFF)
                 && (cmGetSUint16(infoRequest->lastWriteTime) != 0xFFFF && cmGetSUint16(infoRequest->lastWriteDate) != 0xFFFF)
                )
             {
-                fileInfo.lastWriteTime = cmCifsSmbTimeToTime(
+                fileInfo.lastWriteTime = cmTimeConvertSecToMSec(cmCifsSmbTimeToTime(
                                             cmLtoh16(cmGetSUint16(infoRequest->lastWriteTime)),
                                             cmLtoh16(cmGetSUint16(infoRequest->lastWriteDate))
-                                            );
+                                            ));
             }
             if (cmGetSUint32(infoRequest->dataSize) != 0)
             {
@@ -3271,14 +3338,14 @@ csSetFileInformationByName(
             }
             else 
             {
-                NQ_TCHAR* pVolumeName = NULL;                     /* pointer to the volume name */
+                NQ_WCHAR* pVolumeName = NULL;                     /* pointer to the volume name */
                 SYVolumeInformation volumeInfo;                   /* volume info */ 
-                static const NQ_TCHAR noName[] = {(NQ_TCHAR)0};   /* empty name for file */
+                static const NQ_WCHAR noName[] = {(NQ_WCHAR)0};   /* empty name for file */
                 const CSShare *pShare = NULL;                     /* pointer to share */
                 NQ_UINT64 lowTotalSpace, highTotalSpace, allocSize, freeUnits, unitSize;
 
                 if ((pShare = csGetShareByUidTid(ctx->uid, ctx->tid)) == NULL || 
-                     (pVolumeName = cmCifsNtohFilename(pShare->map, noName, FALSE)) == NULL)
+                     (pVolumeName = cmCifsNtohFilename(fileNameBuff ,pShare->map, noName, FALSE, TRUE)) == NULL)
                 {
                     TRCERR("Illegal filename");
                     TRCE();
@@ -3289,7 +3356,7 @@ csSetFileInformationByName(
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 			if (NULL != pUser)
 			{
-				const NQ_TCHAR * tempName = eventInfo.fileName;
+				const NQ_WCHAR * tempName = eventInfo.fileName;
 
 				eventInfo.fileName = pVolumeName;
 				eventInfo.before = TRUE;
@@ -3313,7 +3380,7 @@ csSetFileInformationByName(
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 					if (NULL != pUser)
 					{
-						const NQ_TCHAR * tempName = eventInfo.fileName;
+						const NQ_WCHAR * tempName = eventInfo.fileName;
 
 						eventInfo.fileName = pVolumeName;
 						udEventLog(
@@ -3335,7 +3402,7 @@ csSetFileInformationByName(
 #ifdef UD_NQ_INCLUDEEXTENDEDEVENTLOG
 				if (NULL != pUser)
 				{
-					const NQ_TCHAR * tempName = eventInfo.fileName;
+					const NQ_WCHAR * tempName = eventInfo.fileName;
 
 					eventInfo.fileName = pVolumeName;
 					udEventLog(
@@ -3351,9 +3418,9 @@ csSetFileInformationByName(
 				}
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
                 /* verify there is enough disk space for required operation */
-                /* free space = freeUnits * blockSize * blocksPerUnit */
+                /* free space = freeUnits * blockSizeLow * blocksPerUnitLow */
                 
-                cmU64MultU32U32(&unitSize, volumeInfo.blockSize, volumeInfo.blocksPerUnit);
+                cmU64MultU32U32(&unitSize, volumeInfo.blockSizeLow, volumeInfo.blocksPerUnitLow);
                 freeUnits.low = volumeInfo.freeUnitsLow;
                 freeUnits.high = volumeInfo.freeUnitsHigh;
                 cmU128MultU64U64(&lowTotalSpace, &highTotalSpace, &freeUnits, &unitSize);
@@ -3424,8 +3491,8 @@ csSetFileInformationByName(
 #endif /* UD_NQ_INCLUDESMB2 */
             const CSShare* pShare;                          /* pointer to share descriptor */ 
             CSUser* pUser;                                  /* pointer to user descriptor */
-            NQ_TCHAR* pDestFileName;                        /* destination file name in host filesystem format */
-            NQ_STATIC NQ_WCHAR destName[UD_FS_FILENAMELEN]; /* buffer for destination file name */
+            NQ_WCHAR* pDestFileName;                        /* destination file name in host file system format */
+            NQ_WCHAR* destName = NULL; 						/* destination file name */
             NQ_UINT32 nameLength;                           /* new name length */ 
             const NQ_WCHAR* pNameW;                         /* offset to file name */
             NQ_BOOL replaceIfExists;                        /* replace flag */
@@ -3434,8 +3501,21 @@ csSetFileInformationByName(
             pUser = csGetUserByUid(ctx->uid);
 
 #ifdef UD_NQ_INCLUDESMB2
+            if (NULL == pUser)
+            {
+            	TRCERR("Can't find user.");
+				TRCE();
+				return csErrorReturn(SMB_STATUS_OBJECT_NAME_INVALID, DOS_ERRinvalidname);
+            }
+
             pSession = csGetSessionById(pUser->session);
-            if (pSession->smb2)
+            if (NULL == pSession)
+			{
+				TRCERR("Can't find session.");
+				TRCE();
+				return csErrorReturn(SMB_STATUS_OBJECT_NAME_INVALID, DOS_ERRinvalidname);
+			}
+            if (pSession->dialect != CS_DIALECT_SMB1)
             {
                 infoRequestSmb2 = (CMSmb2FileRenameInformation*)ctx->pData; 
                 nameLength = cmLtoh32(cmGetSUint32(infoRequestSmb2->nameLength));
@@ -3453,6 +3533,13 @@ csSetFileInformationByName(
 
             if (nameLength > 0)
             {
+            	destName = (NQ_WCHAR *)cmMemoryAllocate((NQ_UINT)((nameLength + 1) * sizeof(NQ_WCHAR)));
+            	if (NULL == destName)
+            	{
+                    TRCERR("Out of memory");
+                    TRCE();
+                    return csErrorReturn(SMB_STATUS_NO_MEMORY, DOS_ERRnomem);
+            	}
                 cmWStrncpy(destName, pNameW, (NQ_UINT)(nameLength / sizeof(NQ_WCHAR))); 
                 destName[nameLength / sizeof(NQ_WCHAR)] = 0;
             }
@@ -3463,8 +3550,10 @@ csSetFileInformationByName(
                 return csErrorReturn(SMB_STATUS_OBJECT_NAME_INVALID, DOS_ERRinvalidname);
             }
 
-            if ((pDestFileName = cmCifsNtohFilename(pShare->map, (NQ_TCHAR*)destName, TRUE)) == NULL)
-            {                
+            pDestFileName = cmCifsNtohFilename(fileNameBuff, pShare->map, (NQ_WCHAR*)destName, TRUE, TRUE);
+            cmMemoryFree(destName);
+            if (pDestFileName == NULL)
+            {
                 TRCERR("Illegal filename");
                 TRCE();
                 return csErrorReturn(SMB_STATUS_OBJECT_NAME_INVALID, DOS_ERRinvalidname);
@@ -3530,7 +3619,7 @@ csSetFileInformationByName(
 			}
 #endif /* UD_NQ_INCLUDEEXTENDEDEVENTLOG */
             }
-            if ((error = csRenameFile(pUser, pShare, TRUE, (NQ_UINT16)fileInfo.attributes, (NQ_TCHAR*)ctx->pFileName, pDestFileName)) != NQ_SUCCESS)    
+            if ((error = csRenameFile(pUser, pShare, TRUE, (NQ_UINT16)fileInfo.attributes, (NQ_WCHAR*)ctx->pFileName, pDestFileName)) != NQ_SUCCESS)
             {
                 TRCERR("Unable to rename file");
                 TRCE();
@@ -3544,7 +3633,7 @@ csSetFileInformationByName(
                 TRCE();
                 return csErrorReturn(SMB_STATUS_OBJECT_NAME_INVALID, DOS_ERRinvalidname);
             }
-            cmTStrncpy(pName->name, pDestFileName, sizeof(pName->name)/sizeof(NQ_TCHAR));
+            syWStrncpy(pName->name, pDestFileName, sizeof(pName->name)/sizeof(NQ_WCHAR));
         }
         break;
     default:
@@ -3620,14 +3709,16 @@ csSetFileInformationByName(
     return 0;
 }
 
-static NQ_UINT32
+NQ_UINT32
 convertNqAccessToNtAccess(
     NQ_UINT16 nqAccess
     )
 {
 	NQ_UINT32 ntAccess = 0;
 
-	switch (nqAccess & (
+    LOGFB(CM_TRC_LEVEL_FUNC_COMMON, "nqAccess:0x%X", nqAccess);
+
+    switch (nqAccess & (
 						SMB_ACCESS_A_READ |
 						SMB_ACCESS_A_WRITE |
 						SMB_ACCESS_A_READWRITE |
@@ -3650,6 +3741,7 @@ convertNqAccessToNtAccess(
 			ntAccess = 0;
 			break;
 	}
+    LOGFE(CM_TRC_LEVEL_FUNC_COMMON, "ntAccess:0x%X", ntAccess);
 	return ntAccess;
 }
 

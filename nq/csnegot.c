@@ -70,18 +70,22 @@ csComNegotiate(
     NQ_BYTE** pResponse
     )
 {
-    NQ_UINT byteCount;                      /* down-counter for the array of dialiects */
+    NQ_UINT byteCount;                      /* down-counter for the array of dialects */
     NQ_UINT16 dialectIndex;                 /* next dialect */
     NQ_UINT16 agreedDialectIndex;           /* negotiated dialect */
-    const CMCifsHeader* pHeaderIn;          /* pointer to incoming header */
+
+#ifdef UD_NQ_INCLUDESMB2
+    NQ_BOOL	smb2Availble = FALSE;
+#endif
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
+    const CMCifsHeader* pHeaderIn;          /* pointer to incoming header */
     NQ_BOOL extendedSecurity = FALSE;       /* SPNEGO logon */
 #endif
 
     TRCB();
 
-    pHeaderIn = (CMCifsHeader*)(pRequest-sizeof(CMCifsHeader));
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
+    pHeaderIn = (CMCifsHeader*)(pRequest-sizeof(CMCifsHeader));
     extendedSecurity = cmLtoh16(cmGetSUint16(pHeaderIn->flags2)) & SMB_FLAGS2_EXTENDED_SECURITY;
     cmPutSUint16(
         pHeaderOut->flags2, 
@@ -129,22 +133,49 @@ csComNegotiate(
         }
 
 #ifdef UD_NQ_INCLUDESMB2
-        /* check for SMB2 dialect */
+        /* check for SMB2.002 dialect */
         if (syStrcmp((NQ_CHAR*)pRequest, SMB2_DIALECTSTRING) == 0)
+        	smb2Availble = TRUE;
+
+#ifdef UD_NQ_INCLUDESMB3
+        /* check for SMB2.??? dialect */
+        if (syStrcmp((NQ_CHAR*)pRequest, SMB2ANY_DIALECTSTRING) == 0)
         {
             /* SMB2 is supported, answer with SMB2 negotiate response */
-            NQ_UINT32 status = csSmb2OnSmb1Negotiate(pResponse);
+            NQ_UINT32 status;
+
+            status = csSmb2OnSmb1Negotiate(pResponse , TRUE);
+
+            if (smb2Availble)
+            {
+            	CSSession	*	pSession = csGetSessionBySocket();
+
+            	pSession->dialect = CS_DIALECT_SMB2;
+            }
 
             TRCE();
             return status;
         }
-#endif
+#endif /* UD_NQ_INCLUDESMB3 */
+
+#endif /* UD_NQ_INCLUDESMB2 */
 
         dialectIndex++;
         strLen = (NQ_UINT)syStrlen((NQ_CHAR*)pRequest);
         byteCount -= strLen + 2;    /* one for format and one for the terminating zero */
         pRequest += strLen + 1;     /* shift to the next dialect */
     }
+#ifdef UD_NQ_INCLUDESMB2
+    if (smb2Availble)
+	{
+		/* SMB2 is supported, answer with SMB2 negotiate response */
+		NQ_UINT32 status;
+		status = csSmb2OnSmb1Negotiate(pResponse , FALSE);
+
+		TRCE();
+		return status;
+	}
+#endif /* UD_NQ_INCLUDESMB2 */
 
     /* compose a response */
 
@@ -189,23 +220,7 @@ csComNegotiate(
         }
 
         cmGenerateRandomEncryptionKey(pSession->encryptionKey);
-
-#ifdef UD_CS_INCLUDEPASSTHROUGH
-        if (csIsPassthroughRequired()
-#ifdef UD_CS_INCLUDEDOMAINMEMBERSHIP
-            && !udGetComputerSecret(NULL)
-#endif /* UD_CS_INCLUDEDOMAINMEMBERSHIP */
-            )
-        {
-            csPassthroughNegotiate(
-                                    pSession->encryptionKey 
-#ifdef UD_CS_INCLUDEEXTENDEDSECURITY
-                                    ,extendedSecurity
-#endif /* UD_CS_INCLUDEEXTENDEDSECURITY */
-                                    );
-        }
-#endif /* UD_CS_INCLUDEPASSTHROUGH */
-
+        pSession->dialect = CS_DIALECT_SMB1;
 
         generatePositiveResponse(
             pSession, 
@@ -316,7 +331,7 @@ generatePositiveResponse(
     CMCifsNegotiateResponse* negotiateResponse;    /* outgoing message pointer */
     NQ_UINT32 lowUtc;                              /* time in the UTC format - low portion */
     NQ_UINT32 highUtc;                             /* time in the UTC format - high portion */
-    NQ_UINT32 systemTime;                          /* system (Unix-format) time */
+    NQ_TIME systemTime;                          /* system (Unix-format) time */
     NQ_UINT32 capabilities;                        /* server capabilities */
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
     NQ_UINT16 byteCount;
@@ -385,7 +400,7 @@ generatePositiveResponse(
     /* fill in the server time by obtaining the system time and converting it to
        the UTC format */
 
-    systemTime = (NQ_TIME)syGetTime();
+    systemTime = syGetTimeInMsec();
     cmCifsTimeToUTC(systemTime, &lowUtc, &highUtc);
 
     cmPutSUint32(negotiateResponse->systemTime.low, cmHtol32(lowUtc));
@@ -394,20 +409,24 @@ generatePositiveResponse(
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
     if (extendedSecurity)
     {
+    	/* Notice - here we use extended negotiate response format */
         CMBlob blob;
 
         negotiateResponse->encryptKeyLength = 0;
-        *pResponse = negotiateResponse->encryptKey;
+
 #ifdef UD_CS_INCLUDESECURITYDESCRIPTORS    
-        syMemcpy(*pResponse, cmSdGetComputerSid()->subs, 16);
+        syMemcpy(negotiateResponse->_un._st.serverGUID, cmSdGetComputerSid()->subs, 16);
 #else /* UD_CS_INCLUDESECURITYDESCRIPTORS */
-        syMemset(*pResponse, 0, 16);
+        syMemset(negotiateResponse->_un._st.serverGUID, 0, 16);
 #endif /* UD_CS_INCLUDESECURITYDESCRIPTORS */
-        *pResponse += 16;
+
         blob = amSpnegoServerGenerateMechList();
+
+        /* upon finish should set pointer on end of structure */
+        *pResponse = negotiateResponse->_un._st.securityBlob;
         if (NULL != blob.data)
         {
-            syMemcpy(*pResponse, blob.data, blob.len);
+            syMemcpy(negotiateResponse->_un._st.securityBlob, blob.data, blob.len);
             *pResponse += blob.len;
             byteCount = (NQ_UINT16)blob.len; 
             cmMemoryFreeBlob(&blob);
@@ -430,14 +449,14 @@ generatePositiveResponse(
     
         /* generate random numbers for the encryption key of this session, write it
            both into the response and into the session */
-        syMemcpy(negotiateResponse->encryptKey, pSession->encryptionKey, SMB_ENCRYPTION_LENGTH);
+        syMemcpy(negotiateResponse->_un.encryptKey, pSession->encryptionKey, SMB_ENCRYPTION_LENGTH);
     
         /* calculate data length as the length of the encryption key + the length of the
            domain name */
         /* domainName = cmNetBiosGetDomain()->name; */
         cmPutSUint16(negotiateResponse->byteCount, cmHtol16(SMB_ENCRYPTION_LENGTH/* + syStrlen(domainName) + 1*/));
-    
-        *pResponse = (NQ_BYTE*)(negotiateResponse + 1);
+		/* An intentinal access above the array range - shift to the next field */    
+        *pResponse = (NQ_BYTE*)(negotiateResponse->_un.encryptKey + 9);
 #ifdef UD_CS_INCLUDEEXTENDEDSECURITY
     }
 #endif
