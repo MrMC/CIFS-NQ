@@ -2,6 +2,7 @@
 #import "INQAlbumPickerController.h"
 #import "INQAppDelegate.h"
 
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 @implementation INQAlbumPickerController
 
 @synthesize parent, assetGroups;
@@ -88,7 +89,7 @@
         [self.navigationController.navigationBar setBarTintColor:[app setBarColor]];
         
         // set navigation title color
-        [self.navigationController.navigationBar setTitleTextAttributes:[NSDictionary dictionaryWithObject:[UIColor whiteColor] forKey:UITextAttributeTextColor]];
+        [self.navigationController.navigationBar setTitleTextAttributes:[NSDictionary dictionaryWithObject:[UIColor whiteColor] forKey:NSForegroundColorAttributeName]];
         
         // set navigation bar button arrow color
         self.navigationController.navigationBar.tintColor = [UIColor whiteColor];
@@ -96,7 +97,7 @@
         // set navigation bar button color
         [[UIBarButtonItem appearanceWhenContainedIn:[UINavigationBar class], nil]
          setTitleTextAttributes:[NSDictionary dictionaryWithObjectsAndKeys:[UIColor whiteColor],
-                                 UITextAttributeTextColor, nil] forState:UIControlStateNormal];
+                                 NSForegroundColorAttributeName, nil] forState:UIControlStateNormal];
         
         // set navigation toolbar color
         [self.navigationController.toolbar setBarTintColor:[app setBarColor]];

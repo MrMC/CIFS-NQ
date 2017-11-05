@@ -562,16 +562,16 @@
 #else
     // Text of bar button
     UIBarButtonItem *downloadButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Download",@"Download")
-                                                                      style:UIBarButtonItemStyleBordered target:self 
+                                                                      style:UIBarButtonItemStylePlain target:self
                                                                      action:@selector(fileAction:)];
     downloadButton.tag = 1;
 #endif
     UIBarButtonItem *copydButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Copy",@"Copy")
-                                                                   style:UIBarButtonItemStyleBordered target:self 
+                                                                   style:UIBarButtonItemStylePlain target:self
                                                                   action:@selector(fileAction:)];
     copydButton.tag = 2;
     UIBarButtonItem *moveButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Move",@"Move") 
-                                                                  style:UIBarButtonItemStyleBordered target:self 
+                                                                  style:UIBarButtonItemStylePlain target:self
                                                                  action:@selector(fileAction:)];
     moveButton.tag = 3;
 #if 1
@@ -598,7 +598,7 @@
 #else
     // Text of bar button
     UIBarButtonItem *deleteButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Delete",@"Delete")
-                                                                    style:UIBarButtonItemStyleBordered target:self 
+                                                                    style:UIBarButtonItemStylePlain target:self
                                                                    action:@selector(fileAction:)];
     deleteButton.tag = 4;
 #endif
@@ -632,7 +632,7 @@
 #else
     // Text of bar button
     UIBarButtonItem *homeButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Home",@"Home")
-                                                                  style:UIBarButtonItemStyleBordered 
+                                                                  style:UIBarButtonItemStylePlain
                                                                  target:self 
                                                                  action:@selector(fileAction:)];
     homeButton.tag = 5;
@@ -752,7 +752,7 @@
                                                                                 action:nil];
         
     UIBarButtonItem *uploadButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"UploadSelectFiles",@"Upload Selecte Files") 
-                                                                    style:UIBarButtonItemStyleBordered 
+                                                                    style:UIBarButtonItemStylePlain
                                                                    target:self 
                                                                    action:@selector(endUpload)];  
     
@@ -776,7 +776,7 @@
                                                                                  target:nil 
                                                                                  action:nil];
     
-    UIBarButtonItem *uploadButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"DownloadHear",@"Download Selecte Files") style:UIBarButtonItemStyleBordered target:self action:@selector(endDownload)];  
+    UIBarButtonItem *uploadButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"DownloadHear",@"Download Selecte Files") style:UIBarButtonItemStylePlain target:self action:@selector(endDownload)];
     
     self.toolbarItems = [NSArray arrayWithObjects:spaceButton,uploadButton,spaceButton,nil];    
     [spaceButton release];
@@ -871,7 +871,7 @@
 #else
     // Text of bar button
     UIBarButtonItem *uploadButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Upload",@"Upload")
-                                                                    style:UIBarButtonItemStyleBordered 
+                                                                    style:UIBarButtonItemStylePlain
                                                                    target:self 
                                                                    action:@selector(upload)];
 #endif
@@ -898,7 +898,7 @@
 #else
     // Text of bar button
     UIBarButtonItem *newFolderButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"NewFolder",@"New Folder")
-                                                                       style:UIBarButtonItemStyleBordered 
+                                                                       style:UIBarButtonItemStylePlain
                                                                       target:self 
                                                                       action:@selector(createFolder)];
 #endif
@@ -906,7 +906,7 @@
 #if 0
     // Analyze対応 [Value stored to 'bookMarkButton' during its initialization is never read]
     UIBarButtonItem *bookMarkButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"BookMark",@"BookMark Folder")
-                                                                       style:UIBarButtonItemStyleBordered 
+                                                                       style:UIBarButtonItemStylePlain
                                                                       target:self 
                                                                       action:@selector(bookMark)];
 #endif
@@ -933,7 +933,7 @@
 #else
     // Text of bar button
     UIBarButtonItem *newPhotoButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"SharePhoto",@"SharePhoto")
-                                                                      style:UIBarButtonItemStyleBordered 
+                                                                      style:UIBarButtonItemStylePlain
                                                                      target:self 
                                                                      action:@selector(addPhoto)];
 #endif
@@ -963,7 +963,7 @@
     }
 #else
     // Text of bar button
-    UIBarButtonItem *homeButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Home",@"Home") style:UIBarButtonItemStyleBordered target:self action:@selector(fileAction:)];
+    UIBarButtonItem *homeButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Home",@"Home") style:UIBarButtonItemStylePlain target:self action:@selector(fileAction:)];
 #endif
     homeButton.tag = 5;
     
@@ -1293,19 +1293,19 @@
         NSString *inputText = textField.text;
         inputText = [inputText stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
 #endif
-        NQ_TCHAR uDirectory[1000];
+        NQ_WCHAR uDirectory[1000];
 #ifdef UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
-        //cmWStrcpy(uDirectory, (NQ_TCHAR *)[[NSString stringWithFormat:@"\\\\%@\\%@\\%@",savedComputer,savedPath,inputText]
+        //cmWStrcpy(uDirectory, (NQ_WCHAR *)[[NSString stringWithFormat:@"\\\\%@\\%@\\%@",savedComputer,savedPath,inputText]
         //                                    cStringUsingEncoding:NSUTF16StringEncoding]);
-        cmWStrcpy(uDirectory, (NQ_TCHAR *)[[NSString stringWithFormat:@"\\%@%@" , mntPtPath,inputText]
+        cmWStrcpy(uDirectory, (NQ_WCHAR *)[[NSString stringWithFormat:@"\\%@%@" , mntPtPath,inputText]
                                           cStringUsingEncoding:NSUTF16StringEncoding]);
-        DLog(@"Directory(UTF-16):%S", (const NQ_TCHAR *)uDirectory);
+        DLog(@"Directory(UTF-16):%S", (const NQ_WCHAR *)uDirectory);
 #else
         const char *directory;
         directory = [[NSString stringWithFormat:@"\\\\%@\\%@\\%@",savedComputer,savedPath,inputText] UTF8String];
  
         
-        cmAnsiToTchar(uDirectory,directory);
+        strcpy(uDirectory,directory);
 #endif
         if (isServer) {
             if(!ccCreateDirectory(uDirectory)) {

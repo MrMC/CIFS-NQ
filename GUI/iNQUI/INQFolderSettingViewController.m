@@ -3,6 +3,7 @@
 #import "INQSharedFolderDataSource.h"
 #import "INQShareFolder.h"
 
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 @interface INQFolderSettingViewController ()
 
 @end
@@ -250,7 +251,7 @@
 #pragma mark -
 #pragma mark - UITextFieldDelegate Method.
 - (void)textFieldDidEndEditing:(UITextField *)textField{
-    int tag = textField.tag;
+    NSInteger tag = textField.tag;
     if (tag == 100) {
         folderObj.userName = textField.text;
     }

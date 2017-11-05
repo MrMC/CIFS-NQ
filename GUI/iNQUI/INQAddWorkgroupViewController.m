@@ -213,9 +213,12 @@
     loadingMessageLabel.minimumScaleFactor = 8.f/12.f;
     loadingMessageLabel.textAlignment = NSTextAlignmentCenter;
     [self.navigationController.view addSubview:loadingMessageLabel];
-    
-    NSString *labelText = [[NSLocalizedString(@"Searching...",@"Searching...") stringByAppendingString:@"\n"] stringByAppendingString:workgroup];
-    [loadingMessageLabel setText:labelText];
+  
+    if (workgroup)
+    {
+      NSString *labelText = [[NSLocalizedString(@"Searching...",@"Searching...") stringByAppendingString:@"\n"] stringByAppendingString:workgroup];
+      [loadingMessageLabel setText:labelText];
+    }
 }
 
 /**
@@ -223,21 +226,11 @@
  */
 - (void)stopLoadingView
 {
-    dispatch_sync(dispatch_get_main_queue(),^{
-      [indicator stopAnimating];
-      [loadingView removeFromSuperview];
-      [loadingMessageLabel removeFromSuperview];
-      [indicator release];
-      [loadingView release];
-      [loadingMessageLabel release];
-    });
-    ////[loadingView removeFromSuperview];
-    //[loadingView performSelectorOnMainThread:@selector(removeFromSuperview) withObject:nil waitUntilDone:NO];
-    ////[loadingMessageLabel removeFromSuperview];
-    //[loadingMessageLabel performSelectorOnMainThread:@selector(removeFromSuperview) withObject:nil waitUntilDone:NO];
-    ////[indicator release];
-    ////[loadingView release];
-    ////[loadingMessageLabel release];
+    [loadingView performSelectorOnMainThread:@selector(removeFromSuperview) withObject:nil waitUntilDone:NO];
+    [loadingMessageLabel performSelectorOnMainThread:@selector(removeFromSuperview) withObject:nil waitUntilDone:NO];
+    [indicator release];
+    [loadingView release];
+    [loadingMessageLabel release];
 }
 
 
@@ -323,10 +316,10 @@
     }
     
     if (computerId == nil) {
-        int key = [[NSUserDefaults standardUserDefaults] integerForKey:@"KEY"];
+        NSInteger key = [[NSUserDefaults standardUserDefaults] integerForKey:@"KEY"];
         key++;
 
-        computerId = [NSString stringWithFormat:@"%d",key];
+      computerId = [NSString stringWithFormat:@"%ld",(long)key];
         [[NSUserDefaults standardUserDefaults] setInteger:key forKey:@"KEY"];
     }
     

@@ -48,7 +48,7 @@
                                                                                 action:nil];
     
     
-    UIBarButtonItem *homeButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Home",@"Home") style:UIBarButtonItemStyleBordered target:self action:@selector(backToHome)];    
+    UIBarButtonItem *homeButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Home",@"Home") style:UIBarButtonItemStylePlain target:self action:@selector(backToHome)];    
     homeButton.tag = 5;
     
     NSArray *items = [NSArray arrayWithObjects:spaceButton,homeButton,nil];
@@ -128,8 +128,8 @@
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     
-    NQ_TCHAR uMountPoint[256];
-    NQ_TCHAR uRemotePath[256];
+    NQ_WCHAR uMountPoint[256];
+    NQ_WCHAR uRemotePath[256];
     
     
     INQFileListViewController *controller = [[[INQFileListViewController alloc]init]autorelease];
@@ -141,16 +141,14 @@
     NSString *fullPath = [NSString stringWithFormat:@"\\\\%@\\%@",bookmark.computer,bookmark,fullPath];
 #endif
     
-#if 0//def UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
-    cmWStrcpy(uRemotePath, (NQ_TCHAR *)[fullPath 
+#if 1//def UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
+    cmWStrcpy(uRemotePath, (NQ_WCHAR *)[fullPath
                                         cStringUsingEncoding:NSUTF16StringEncoding]);
-    cmWStrcpy(uMountPoint, (NQ_TCHAR *)[[NSString stringWithFormat:@"\\mountPoint"]
+    cmWStrcpy(uMountPoint, (NQ_WCHAR *)[[NSString stringWithFormat:@"\\mountPoint"]
                                         cStringUsingEncoding:NSUTF16StringEncoding]);
-    DLog(@"MountPoint(UTF-16):%S", (const NQ_TCHAR *)uMountPoint);
-    DLog(@"RemotePath(UTF-16):%S", (const NQ_TCHAR *)uRemotePath);
 #else
-    cmAnsiToTchar(uRemotePath,[fullPath cStringUsingEncoding:NSUTF8StringEncoding]);
-    cmAnsiToTchar(uMountPoint,"mountPoint");
+    syAnsiToUnicode(uRemotePath,[fullPath cStringUsingEncoding:NSUTF8StringEncoding]);
+    syAnsiToUnicode(uMountPoint,"mountPoint");
 #endif
     
     int res = nqAddMount(uMountPoint,uRemotePath, TRUE);

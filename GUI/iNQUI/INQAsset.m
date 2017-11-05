@@ -1,6 +1,7 @@
 
 #import "INQAsset.h"
 
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 @implementation INQAsset
 
 @synthesize asset;

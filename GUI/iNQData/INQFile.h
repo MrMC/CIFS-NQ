@@ -9,7 +9,7 @@
     NSDate *updateTime;
     BOOL dir;
     BOOL hidden;
-    long fileSize;
+    int64_t fileSize;
     NSInteger subFolderFileCount;
     NSString *fileExt;
     long lastWriteTimeHigh;
@@ -28,9 +28,9 @@ typedef enum{
 @property (nonatomic,retain) NSDate *updateTime;
 @property (nonatomic,getter = isDir) BOOL dir;
 @property (nonatomic,getter = isHidden) BOOL hidden;
-@property (nonatomic) long fileSize;
+@property (nonatomic) int64_t fileSize;
 @property (nonatomic) NSInteger subFolderFileCount;
-@property (nonatomic) long lastWriteTimeHigh;
+@property (nonatomic) time_t lastWriteTimeHigh;
 @property (nonatomic,retain) NSString *relativePath;
 
 

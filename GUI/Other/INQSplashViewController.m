@@ -72,7 +72,7 @@
     float sleepTime = 7.5f;
     [loadingView startAnimating];
     
-    INQAppDelegate *delegate = [[UIApplication sharedApplication] delegate]; 
+    INQAppDelegate *delegate = (INQAppDelegate*)[[UIApplication sharedApplication] delegate]; 
     BOOL isAuto = [[NSUserDefaults standardUserDefaults] boolForKey:IS_AUTO_START_SERVER];
     if (!delegate.isWifi || !isAuto) {
         // 初期化時間を若干延長(共有先への接続性向上を目的として[暫定対応])
@@ -196,13 +196,6 @@
 #pragma mark -
 #pragma mark NotificationCenter call Methods.
 
-- (void)browserDaemonStarted {
-}
-
-- (void)browserDaemonClosed {
-    
-}
-
 - (void)netBiosDaemonStarted {
     
 }
@@ -215,14 +208,11 @@
     DLog(@"start server ...");    
     [[INQServiceManager sharedManager] setServerStated:YES];
     //end = YES;
-    
     if (isStartup)
     {
         [self endLoading];
         isStartup = NO;
     }
-    
-    
 }
 
 - (void)cifsServerClosed {

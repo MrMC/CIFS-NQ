@@ -8,6 +8,7 @@
 {
     NSMutableArray          *data_;             // 保存データ用
     NSMutableArray          *dataTmp_;          // 検索データ用
+    NSMutableArray          *domainList_;          // 検索データ用
     INQComputerDataSource   *dataSource;        //
     UITextField             *textField;         // エラー表示用テキスト領域
     NSString                *workgroupName;     // ワークグループ名格納先
@@ -20,7 +21,7 @@
 @implementation INQWorkgroupViewController
 @synthesize data = data_;
 @synthesize dataTmp = dataTmp_;
-@synthesize domainList;
+@synthesize domainList = domainList_;
 @synthesize isBookMark;
 
 @synthesize loadingView;
@@ -43,12 +44,15 @@
     if (self)
     {
         // Custom initialization
-        data_ = [[NSMutableArray alloc]init];             
-
-        dataTmp_ = [[NSMutableArray alloc]init];
-        domainList = [[NSMutableArray alloc]init];
+        if (!data_)
+          data_ = [[NSMutableArray alloc]init];
+        if (!dataTmp_)
+          dataTmp_ = [[NSMutableArray alloc]init];
+        if (!domainList_)
+        domainList_ = [[NSMutableArray alloc]init];
         
-        dataSource = [[INQComputerDataSource alloc]init];
+        if (!dataSource)
+          dataSource = [[INQComputerDataSource alloc]init];
         [dataSource loadData:NO];
         dataSource.delegate = self;
         /*dispatch_async(dispatch_get_main_queue(), ^{
@@ -75,9 +79,15 @@
                                                      green:238.f/255.f
                                                       blue:238.f/255.f
                                                      alpha:1.0];
+    data_ = [[NSMutableArray alloc]init];
+    dataTmp_ = [[NSMutableArray alloc]init];
+    domainList_ = [[NSMutableArray alloc]init];
+  
     [self done:self];
 
     dataSource = [[INQComputerDataSource alloc]init];
+    [dataSource loadData:NO];
+    dataSource.delegate = self;
     self.tableView.dataSource = dataSource;
     
     [dataSource setDelegate:self];
@@ -186,11 +196,12 @@
     
     [dataSource release];
     [data_ release];
+    self.data = nil;
 
     [dataTmp_ release];
     self.dataTmp = nil;
     
-    [domainList release];
+    [domainList_ release];
     self.domainList = nil;
     
     [textField release];
@@ -334,7 +345,7 @@
         [self.navigationController.navigationBar setBarTintColor:[app setBarColor]];
         
         // set navigation title color
-        [self.navigationController.navigationBar setTitleTextAttributes:[NSDictionary dictionaryWithObject:[UIColor whiteColor] forKey:UITextAttributeTextColor]];
+        [self.navigationController.navigationBar setTitleTextAttributes:[NSDictionary dictionaryWithObject:[UIColor whiteColor] forKey:NSForegroundColorAttributeName]];
         
         // set navigation bar button arrow color
         self.navigationController.navigationBar.tintColor = [UIColor whiteColor];
@@ -342,7 +353,7 @@
         // set navigation bar button color
         [[UIBarButtonItem appearanceWhenContainedIn:[UINavigationBar class], nil]
          setTitleTextAttributes:[NSDictionary dictionaryWithObjectsAndKeys:[UIColor whiteColor],
-                                 UITextAttributeTextColor, nil] forState:UIControlStateNormal];
+                                 NSForegroundColorAttributeName, nil] forState:UIControlStateNormal];
         
         // set navigation toolbar color
         [self.navigationController.toolbar setBarTintColor:[app setBarColor]];
@@ -443,6 +454,10 @@
 
 
 }
+
+- (void)needDisplay { 
+}
+
 
 /**
  * @brief 新しいコンピューター追加ボタン イベントハンドラ
@@ -991,6 +1006,5 @@
   [self.navigationController popToViewController:[self.navigationController.viewControllers objectAtIndex:1] animated:YES];
   
 }
-
 
 @end

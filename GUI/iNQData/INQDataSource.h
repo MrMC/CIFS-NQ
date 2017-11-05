@@ -1,5 +1,3 @@
-@protocol INQDataSourceCallBack;
-
 @protocol INQDataSource <UITableViewDataSource>
 - (void)loadData;
 @end

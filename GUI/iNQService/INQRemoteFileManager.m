@@ -16,12 +16,12 @@
     DLog(@"FromPath:%@",fromPath);
     DLog(@"ToPath:%@",to);    
    // strcpy(fullPath,[fromPath UTF8String]);
-    NQ_TCHAR uFromPath[255];
+    NQ_WCHAR uFromPath[255];
 #ifdef UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
-    cmWStrcpy(uFromPath, (NQ_TCHAR *)[fromPath cStringUsingEncoding:NSUTF16StringEncoding]);
-    DLog(@"FromPath(UTF-16):%S", (const NQ_TCHAR *)uFromPath);
+    cmWStrcpy(uFromPath, (NQ_WCHAR *)[fromPath cStringUsingEncoding:NSUTF16StringEncoding]);
+    DLog(@"FromPath(UTF-16):%S", (const NQ_WCHAR *)uFromPath);
 #else
-    cmAnsiToTchar(uFromPath,[fromPath UTF8String]);
+    syAnsiToUnicode(uFromPath,[fromPath UTF8String]);
 #endif
     file = ccCreateFile(
                          uFromPath, 
@@ -98,7 +98,7 @@
     NSAssert(fileData != nil,@"write file data is null.");   
     NSAssert(toRemotePath != nil,@"write file path is null.");  
     
-    int docLen;  
+    NSInteger docLen;  
     unsigned char* data;
     
     static char filePath[255];  
@@ -109,12 +109,12 @@
     docLen = [fileData length] / sizeof(unsigned char);
 
     NQ_HANDLE file;
-    NQ_TCHAR uFilePath[255];
+    NQ_WCHAR uFilePath[255];
 #ifdef UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
-    cmWStrcpy(uFilePath, (NQ_TCHAR *)[toRemotePath cStringUsingEncoding:NSUTF16StringEncoding]);
-    DLog(@"FilePath(UTF-16):%S", (const NQ_TCHAR *)uFilePath);
+    cmWStrcpy(uFilePath, (NQ_WCHAR *)[toRemotePath cStringUsingEncoding:NSUTF16StringEncoding]);
+    DLog(@"FilePath(UTF-16):%S", (const NQ_WCHAR *)uFilePath);
 #else
-    cmAnsiToTchar(uFilePath,[toRemotePath UTF8String]);
+    syAnsiToUnicode(uFilePath,[toRemotePath UTF8String]);
 #endif
     file = ccCreateFile(
                          uFilePath,
@@ -151,12 +151,12 @@
 
 + (BOOL)deleteFile:(NSString*)fullPath {
     NSAssert(fullPath != nil,@"delete file path is null.");    
-    NQ_TCHAR uFullPath[255];
+    NQ_WCHAR uFullPath[255];
 #ifdef UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
-    cmWStrcpy(uFullPath, (NQ_TCHAR *)[fullPath cStringUsingEncoding:NSUTF16StringEncoding]);
-    DLog(@"FullPath(UTF-16):%S", (const NQ_TCHAR *)uFullPath);
+    cmWStrcpy(uFullPath, (NQ_WCHAR *)[fullPath cStringUsingEncoding:NSUTF16StringEncoding]);
+    DLog(@"FullPath(UTF-16):%S", (const NQ_WCHAR *)uFullPath);
 #else
-    cmAnsiToTchar(uFullPath,[fullPath UTF8String]);
+    syAnsiToUnicode(uFullPath,[fullPath UTF8String]);
 #endif
     return ccDeleteFile(uFullPath);
 }
@@ -166,16 +166,16 @@
     NSAssert(fullPath != nil,@"move file path is null.");  
     NSAssert(to != nil,@"move file toPath is null.");      
     
-    NQ_TCHAR uFullPath[255];
-    NQ_TCHAR uToPath[255];
-#if 0//def UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
-    cmWStrcpy(uToPath, (NQ_TCHAR *)[to cStringUsingEncoding:NSUTF16StringEncoding]);
-    DLog(@"ToPath(UTF-16):%S", (const NQ_TCHAR *)uToPath);
-    cmWStrcpy(uFullPath, (NQ_TCHAR *)[fullPath cStringUsingEncoding:NSUTF16StringEncoding]);
-    DLog(@"FullPath(UTF-16):%S", (const NQ_TCHAR *)uFullPath);
+    NQ_WCHAR uFullPath[255];
+    NQ_WCHAR uToPath[255];
+#if 1//def UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
+    cmWStrcpy(uToPath, (NQ_WCHAR *)[to cStringUsingEncoding:NSUTF16StringEncoding]);
+    DLog(@"ToPath(UTF-16):%S", (const NQ_WCHAR *)uToPath);
+    cmWStrcpy(uFullPath, (NQ_WCHAR *)[fullPath cStringUsingEncoding:NSUTF16StringEncoding]);
+    DLog(@"FullPath(UTF-16):%S", (const NQ_WCHAR *)uFullPath);
 #else
-    cmAnsiToTchar(uToPath,[to UTF8String]);
-    cmAnsiToTchar(uFullPath,[fullPath UTF8String]);         
+    syAnsiToUnicode(uToPath,[to UTF8String]);
+    syAnsiToUnicode(uFullPath,[fullPath UTF8String]);         
 #endif
     return ccMoveFile(uFullPath,uToPath);
 }

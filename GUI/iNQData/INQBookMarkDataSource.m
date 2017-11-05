@@ -96,10 +96,10 @@
 
 + (NSString*)getKey {
     NSString *computerId;
-    int key = [[NSUserDefaults standardUserDefaults] integerForKey:@"KEY"];
+    NSInteger key = [[NSUserDefaults standardUserDefaults] integerForKey:@"KEY"];
     key++;
     
-    computerId = [NSString stringWithFormat:@"%d",key];
+  computerId = [NSString stringWithFormat:@"%ld",(long)key];
     [[NSUserDefaults standardUserDefaults] setInteger:key forKey:@"KEY"];
     [[NSUserDefaults standardUserDefaults] synchronize];
     return computerId;

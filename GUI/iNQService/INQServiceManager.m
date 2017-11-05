@@ -1,5 +1,4 @@
 
-#import "NSString+CString.h"
 #import "INQServiceManager.h"
 
 #import "udconfig.h"
@@ -17,30 +16,27 @@ void joinDomain(void);
 
 void udCifsServerStarted(void) {
 
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        NSNotification *n = [NSNotification notificationWithName:CIFS_SERVER_STARTED object:nil];
-        [[NSNotificationCenter defaultCenter] postNotification:n];        
-    });
-
     static NQ_CHAR *result = "no printer";
 
 #ifdef UD_CS_INCLUDEDOMAINMEMBERSHIP
     joinDomain();
 #endif
-    
     printf("\n===== NQCS: server is ready (%s)\n", result);
 
-    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSNotification *n = [NSNotification notificationWithName:CIFS_SERVER_STARTED object:nil];
+        [[NSNotificationCenter defaultCenter] postNotification:n];
+    });
 }
 
 int count;
 
 NQ_BOOL
 udDefGetNextShare(
-                  NQ_TCHAR* name,
-                  NQ_TCHAR* map,
+                  NQ_WCHAR* name,
+                  NQ_WCHAR* map,
                   NQ_BOOL* printQueue,
-                  NQ_TCHAR* description
+                  NQ_WCHAR* description
                   ) {
     
     NSMutableDictionary *savedData = [[NSUserDefaults standardUserDefaults]objectForKey:SHARE_FOLDERS];
@@ -59,9 +55,9 @@ udDefGetNextShare(
 #if 0
             // デバッグ用処理としてサーバー機能を有効時に自端末のrootフォルダを共有設定にする設定を無効
 #if DEBUG
-            cmAnsiToTchar(name, "Root");
-            cmAnsiToTchar(map, "./");
-            cmAnsiToTchar(description, "Default root (no configuration file provided)");
+            syAnsiToUnicode(name, "Root");
+            syAnsiToUnicode(map, "./");
+            syAnsiToUnicode(description, "Default root (no configuration file provided)");
             *printQueue = FALSE;
             return TRUE;              
 #endif
@@ -82,24 +78,11 @@ udDefGetNextShare(
         NSString* documentpath = [documents stringByAppendingPathComponent:folderName];
         DLog(@"document path:%@",documentpath);
 #endif // ITA - debug
-#if 1
-        // サーバー機能時の文字化け対策
-        cmWStrcpy(name, (NQ_TCHAR *)[[NSString stringWithFormat:@"%@",folderName]
+        cmWStrcpy(name, (NQ_WCHAR *)[[NSString stringWithFormat:@"%@",folderName]
                                      cStringUsingEncoding:NSUTF16StringEncoding]);
-#if 1 // ITA - debug
         cmAnsiToUnicode(map, [documentpath UTF8String]);
-#else
-        cmAnsiToUnicode(map, [key wideToAscill]);
-#endif // ITA - debug
-        cmWStrcpy(description, (NQ_TCHAR *)[[NSString stringWithFormat:@"%@",folderName]
+        cmWStrcpy(description, (NQ_WCHAR *)[[NSString stringWithFormat:@"%@",folderName]
                                     cStringUsingEncoding:NSUTF16StringEncoding]);
-
-#else
-        cmAnsiToUnicode(name, [folderName wideToAscill]);
-        cmAnsiToUnicode(map, [key wideToAscill]);
-        cmAnsiToUnicode(description, [folderName wideToAscill]);
-#endif
-        
         *printQueue = FALSE;
         count++;
         return TRUE;
@@ -112,7 +95,7 @@ udDefGetNextShare(
 
 void
 udDefGetDomain(
-               NQ_TCHAR *buffer,
+               NQ_WCHAR *buffer,
                NQ_BOOL  *isWorkgroup
                )
 {
@@ -121,13 +104,13 @@ udDefGetDomain(
    //     parseNetBiosConfig();
    // }
     
-   // cmAnsiToTchar(buffer, staticData->domainNameOfServer);
+   // syAnsiToUnicode(buffer, staticData->domainNameOfServer);
    // *isWorkgroup = staticData->isWorkgroupName;
     NSString *workgroup = [[NSUserDefaults standardUserDefaults] objectForKey:@"WORKGROUP"];
     if (workgroup != nil) {
-        cmAnsiToTchar(buffer,[workgroup UTF8String]);
+        syAnsiToUnicode(buffer,[workgroup UTF8String]);
     } else {
-        cmAnsiToTchar(buffer,"WORKGROUP");
+        syAnsiToUnicode(buffer,"WORKGROUP");
     }
     *isWorkgroup = TRUE;    
 }
@@ -148,16 +131,16 @@ udDefGetDomain(
 
 NQ_BOOL
 udDefGetNextMount(
-                  NQ_TCHAR* name,
-                  NQ_TCHAR* map
+                  NQ_WCHAR* name,
+                  NQ_WCHAR* map
                   )
 {
     NQ_STATIC char nameA[256];
     NQ_STATIC char mapA[256];
     
  
-    cmAnsiToTchar(name, nameA);
-    cmAnsiToTchar(map, mapA);
+    syAnsiToUnicode(name, nameA);
+    syAnsiToUnicode(map, mapA);
     return FALSE;
 
 }
@@ -169,9 +152,8 @@ void udCifsServerClosed(void) {
   
 }
 
-
 void udNetBiosDaemonStarted(void) {
-    dispatch_sync(dispatch_get_main_queue(), ^{
+    dispatch_async(dispatch_get_main_queue(), ^{
         NSLog(@"\n NETBIOS STARTED\n");
         [[NSNotificationCenter defaultCenter] postNotification:[NSNotification notificationWithName:NETBIOS_DAEMON_STARTED object:nil]];
         
@@ -180,27 +162,12 @@ void udNetBiosDaemonStarted(void) {
     
 }
 
-
 void udNetBiosDaemonClosed(void) {
     NSLog(@"\n NETBISO CLOSED\n");
     NSNotification *n = [NSNotification notificationWithName:NETBIOS_DAEMON_CLOSED object:nil];
     [[NSNotificationCenter defaultCenter] postNotification:n];
     
 }
-
-
-void udBrowserDaemonStarted(void) {
-    NSNotification *n = [NSNotification notificationWithName:BROWSER_DAEMON_STARTED object:nil];
-    [[NSNotificationCenter defaultCenter] postNotification:n];
-    
-}
-
-void udBrowserDaemonClosed(void) {
-    NSNotification *n = [NSNotification notificationWithName:BROWSER_DAEMON_CLOSED object:nil];
-    [[NSNotificationCenter defaultCenter] postNotification:n];
-    
-}
-
 
 @implementation INQServiceManager
 @synthesize serverStated;
@@ -230,7 +197,6 @@ void udBrowserDaemonClosed(void) {
 
 - (void)initClient {
     [self client];
-    //[self performSelectorInBackground:@selector(client) withObject:nil];
 }
 
 - (void)startNetBios {
@@ -256,28 +222,10 @@ void udBrowserDaemonClosed(void) {
     [self performSelectorInBackground:@selector(csstop) withObject:nil]; 
 }
 
-- (void)startBrowser {
-    DLog(@"Start Browser");
-    //[self brstart];
-    //[self performSelectorInBackground:@selector(brstart) withObject:nil];
-  
-}
-
-- (void)stopBrowser {
-    //[self performSelectorInBackground:@selector(brstop) withObject:nil];
- 
-}
-
-
-#pragma mark - 
+#pragma mark -
 #pragma mark Native Command.
 
 - (void)client {
-
-    //udInit();           /* new UD */
-    //syInit();
-    //nsInitGuard();      /* prepare for using NS */
-    //syInit();
 #ifdef UD_NQ_INCLUDECIFSCLIENT
     ccInit(NULL);
 #endif
@@ -287,13 +235,9 @@ void udBrowserDaemonClosed(void) {
 -(void)ndstart {
     NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];    
 #ifdef UD_ND_INCLUDENBDAEMON
-    /* initialization */
-    //udInit();
-    //syInit();
-    //nsInitGuard();      /* prepare for using NS */
     cmInit();
     /* main function */
-    ndStart();
+    ndStart(NULL);
     
     /* cleanup */
     cmExit();
@@ -332,35 +276,6 @@ void udBrowserDaemonClosed(void) {
     csStop();  
     [pool release];
 }
-
-
-
-- (void)brstart {
-    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];        
-#ifdef UD_NQ_INCLUDEBROWSERDAEMON
-    udInit();           /* new UD */
-    syInit();
-    nsInitGuard();      /* prepare for using NS */
-    
-    //brStart();
-    
-    nsExitGuard();
-    udStop();
-#endif
-    [pool release];
-    
-}
-
-- (void)brstop {
-    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];        
-#ifdef UD_NQ_INCLUDEBROWSERDAEMON
-    //brStop();
-    nsExitGuard();
-#endif    
-    [pool release];
-}
-
-
 
 static NQ_BOOL
 convertHex2Ascii(
@@ -421,7 +336,7 @@ convertHex2Ascii(
 
 NQ_INT
 udDefGetPassword(
-                 const NQ_TCHAR* userName,
+                 const NQ_WCHAR* userName,
                  NQ_CHAR* password,
                  NQ_BOOL* pwdIsHashed,
                  NQ_UINT32* userNumber
@@ -432,7 +347,7 @@ udDefGetPassword(
     *userNumber = 501;
     *pwdIsHashed = 0;
 
-    cmTcharToAnsi(userNameA, userName);
+    syUnicodeToAnsi(userNameA, userName);
     printf("USER NAME %s",userNameA);
     
     NSString *inqUserName = [[NSUserDefaults standardUserDefaults] objectForKey:@"USERID"];

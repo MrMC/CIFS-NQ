@@ -6,10 +6,12 @@
 #import "INQAlbumPickerController.h"
 #import "INQ.h"
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 @interface INQAssetTablePicker : UITableViewController
 {
 	ALAssetsGroup *assetGroup;
-	
 	NSMutableArray *elcAssets;
 	int selectedAssets;
 	
@@ -27,5 +29,7 @@
 - (void)preparePhotos;
 
 - (void)doneAction:(id)sender;
+
+#pragma GCC diagnostic pop
 
 @end

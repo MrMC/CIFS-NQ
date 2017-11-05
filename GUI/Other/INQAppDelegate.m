@@ -60,7 +60,7 @@ static void uncaughtExceptionHandler(NSException *exception)
 
     NSDictionary *attributes = [NSDictionary dictionaryWithObjectsAndKeys: 
                                 [UIColor whiteColor], 
-                                UITextAttributeTextColor, 
+                                NSForegroundColorAttributeName, 
                                 [UIColor clearColor], 
                                 UITextAttributeTextShadowColor, nil];
     
@@ -132,11 +132,9 @@ static void uncaughtExceptionHandler(NSException *exception)
             [[INQServiceManager sharedManager] startCifsServer];        
         }        
     }
-    //[[INQServiceManager sharedManager] startBrowser];
 }
 
 - (void)stopAllService {
-    //[[INQServiceManager sharedManager] stopBrowser];
     [[INQServiceManager sharedManager] stopCifsServer];
     [[INQServiceManager sharedManager] stopNetBios];    
 }
@@ -219,15 +217,10 @@ static void uncaughtExceptionHandler(NSException *exception)
 - (void)registerNotification {
     DLog(@"Register Notification.");
     [[NSNotificationCenter defaultCenter] addObserver:self.viewController selector:@selector(netBiosDaemonStarted) name:NETBIOS_DAEMON_STARTED object:nil];
-    
+    [[NSNotificationCenter defaultCenter] addObserver:self.viewController selector:@selector(netBiosDaemonClosed) name:NETBIOS_DAEMON_CLOSED object:nil];
+
     [[NSNotificationCenter defaultCenter] addObserver:self.viewController selector:@selector(cifsServerStarted) name:CIFS_SERVER_STARTED object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self.viewController selector:@selector(cifsServerClosed) name:CIFS_SERVER_CLOSED object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self.viewController selector:@selector(browserDaemonStarted) name:BROWSER_DAEMON_STARTED object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self.viewController selector:@selector(browserDaemonClosed) name:BROWSER_DAEMON_CLOSED object:nil];
-    
-    [[NSNotificationCenter defaultCenter] addObserver:self.viewController selector:@selector(netBiosDaemonStarted) name:NETBIOS_DAEMON_STARTED object:nil];
-    
-    [[NSNotificationCenter defaultCenter] addObserver:self.viewController selector:@selector(netBiosDaemonClosed) name:NETBIOS_DAEMON_CLOSED object:nil];     
 }
 
 #pragma mark -

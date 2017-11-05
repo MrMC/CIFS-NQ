@@ -130,11 +130,11 @@
                                                         error:nil];
     }
     
-    NQ_TCHAR uSearchPath[1000];
-    NQ_TCHAR uFilePath[1000];
+    NQ_WCHAR uSearchPath[1000];
+    NQ_WCHAR uFilePath[1000];
 
 #ifndef UD_CM_UNICODEAPPLICATION
-    NQ_TCHAR uBuffer[1000];
+    NQ_WCHAR uBuffer[1000];
     unsigned int num;
 #endif
     
@@ -146,8 +146,11 @@
     
 #if 1
     // コンピューター名をバックアップ(削除処理用)
-    INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
-    app.backupComputerName = computer;
+    dispatch_sync( dispatch_get_main_queue(), ^{
+      INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
+      app.backupComputerName = computer;
+    });
+
 #endif
     
     while(TRUE) {
@@ -163,27 +166,25 @@
         [controller remoteShareNameFromPath:mntPtPath from:rp];
         
 #ifndef UD_CM_UNICODEAPPLICATION
-        NQ_TCHAR *s;
+        NQ_WCHAR *s;
 #endif
         
 #ifdef UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
         
-        //cmWStrcpy(uSearchPath, (NQ_TCHAR *)[[NSString stringWithFormat:@"\\\\%@\\%@\\*",computer,rp]
+        //cmWStrcpy(uSearchPath, (NQ_WCHAR *)[[NSString stringWithFormat:@"\\\\%@\\%@\\*",computer,rp]
         //                                    cStringUsingEncoding:NSUTF16StringEncoding]);
         /*if ([mntPtPath length] > 1)
-            cmWStrcpy(uSearchPath, (NQ_TCHAR *)[[NSString stringWithFormat:@"\\%@%@*", controller.mountPoint , mntPtPath]
+            cmWStrcpy(uSearchPath, (NQ_WCHAR *)[[NSString stringWithFormat:@"\\%@%@*", controller.mountPoint , mntPtPath]
                                             cStringUsingEncoding:NSUTF16StringEncoding]);
         else
-            cmWStrcpy(uSearchPath, (NQ_TCHAR *)[[NSString stringWithFormat:@"\\%@\\*", controller.mountPoint]*/
+            cmWStrcpy(uSearchPath, (NQ_WCHAR *)[[NSString stringWithFormat:@"\\%@\\*", controller.mountPoint]*/
 
-        cmWStrcpy(uSearchPath, (NQ_TCHAR *)[[NSString stringWithFormat:@"\\%@*",  mntPtPath]
+        cmWStrcpy(uSearchPath, (NQ_WCHAR *)[[NSString stringWithFormat:@"\\%@*",  mntPtPath]
                                             cStringUsingEncoding:NSUTF16StringEncoding]);
-
-        DLog(@"SearchPath(UTF-16):%S",(const NQ_TCHAR *)uSearchPath);
 #else
         searchPath = [[NSString stringWithFormat:@"\\\\%@\\%@\\*",computer,rp] UTF8String];
         DLog(@"Search Path:%s",searchPath);
-        cmAnsiToTchar(uSearchPath,searchPath);
+        strcpy(uSearchPath,searchPath);
 #endif
         
         dir = ccFindFirstFile(uSearchPath, &fData, 0);
@@ -208,34 +209,36 @@
 #else
         for (s = uBuffer, num = 1; ccFindNextFileW(dir, &fData); ) {
 #endif
+            if (fData.fileAttributes & CIFS_ATTR_HIDDEN)
+              continue;
+
             INQFile *file = [[INQFile alloc]init];
 
 #ifdef UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
-            //cmWStrcpy(uFilePath, (NQ_TCHAR *)[[NSString stringWithFormat:@"\\\\%@\\%@\\",computer,rp]
+            //cmWStrcpy(uFilePath, (NQ_WCHAR *)[[NSString stringWithFormat:@"\\\\%@\\%@\\",computer,rp]
             //                                  cStringUsingEncoding:NSUTF16StringEncoding]);
-            cmWStrcpy(uFilePath, (NQ_TCHAR *)[[NSString stringWithFormat:@"\\%@", mntPtPath]
+            cmWStrcpy(uFilePath, (NQ_WCHAR *)[[NSString stringWithFormat:@"\\%@", mntPtPath]
                                                 cStringUsingEncoding:NSUTF16StringEncoding]);
             cmWStrcat(uFilePath, fData.fileName);
-            DLog(@"FullPath(UTF-16):%S", (const NQ_TCHAR *)uFilePath);
 #else
             char toFile[256];
-            cmTcharToAnsi(toFile,fData.fileName);
+            strcpy(toFile,fData.fileName);
             
             NSString *fn = [NSString stringWithUTF8String:toFile];
             NSString *filePath = [NSString stringWithFormat:@"\\\\%@\\%@\\%@",computer,rp,fn];
             DLog(@"Next FilePath:%@",filePath);
-            cmAnsiToTchar(uFilePath,[filePath UTF8String]);
+            strcpy(uFilePath,[filePath UTF8String]);
 #endif
             
             if (fData.fileAttributes & CIFS_ATTR_DIR) {
 #ifdef UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
-                file.fileName = [NSString stringWithFormat:@"%S", (const NQ_TCHAR *)fData.fileName];
+                file.fileName = [NSString stringWithFormat:@"%S", (const NQ_WCHAR *)fData.fileName];
 #else
                 s += cmTStrlen(s) + 1;
                 cmTStrcpy(s, fData.fileName);
                 num++;
                 char foldername[256];
-                cmTcharToAnsi(foldername,s);
+                strcpy(foldername,s);
                 
                 file.fileName = [NSString stringWithUTF8String:foldername];
 #endif
@@ -263,16 +266,16 @@
                 
                 if (!ccGetFileInformationByNameW(uFilePath, &fi))
 #ifdef UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
-                    DLog(@"Unable to perform ccGetFileInformationByName() for file [%S]\n", (const NQ_TCHAR *)uFilePath);
+                    DLog(@"Unable to perform ccGetFileInformationByName() for file [%S]\n", (const NQ_WCHAR *)uFilePath);
 #else
                     DLog(@"Unable to perform ccGetFileInformationByName() for file [%@]\n", filePath);
 #endif
                 
 #ifdef UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
-                file.fileName = [NSString stringWithFormat:@"%S", (const NQ_TCHAR *)fData.fileName];
+                file.fileName = [NSString stringWithFormat:@"%S", (const NQ_WCHAR *)fData.fileName];
 #else
                 char filename[256];
-                cmTcharToAnsi(filename,fData.fileName);
+                strcpy(filename,fData.fileName);
                 
                 file.fileName = [NSString stringWithUTF8String:filename];
 #endif
@@ -302,12 +305,17 @@
                 // cache file full path.
                 file.fullPath = _tp;
 
-               
-                file.fileSize = fData.fileSizeLow;//[NSString stringWithFormat:@"%1.f %@",size,unit];
-                long createTime = cmCifsUTCToTime(fData.lastWriteTimeLow,fData.lastWriteTimeHigh);
+                file.fileSize = (int64_t)fData.fileSizeLow + (((int64_t)fData.fileSizeHigh * (int64_t)1 << 32));
 
-                file.createDateTime = [[[NSDate alloc]initWithTimeIntervalSince1970:createTime]autorelease];
-                file.lastWriteTimeHigh = createTime;
+                NQ_TIME createTime = cmCifsUTCToTime(fData.creationTimeLow, fData.creationTimeHigh);
+                NSTimeInterval createDateTime = (time_t)cmTimeConvertMSecToSec(&createTime);
+                file.createDateTime = [[[NSDate alloc] initWithTimeIntervalSince1970:createDateTime] autorelease];
+
+                NQ_TIME updateTime = cmCifsUTCToTime(fData.creationTimeLow, fData.creationTimeHigh);
+                NSTimeInterval updateDateTime = (time_t)cmTimeConvertMSecToSec(&updateTime);
+                file.updateTime = [[[NSDate alloc] initWithTimeIntervalSince1970:updateDateTime] autorelease];
+
+                file.lastWriteTimeHigh = fData.lastAccessTimeHigh;
                 
 #if 1
                 // ファイルとフォルダの表示順をフォルダ(アルファベット順)→ファイル(アルファベット順)とする対応
@@ -645,14 +653,21 @@
         }
 
         [cell.textLabel setText:file.fileName];
-        float size = (float)file.fileSize / 1023.0f;// / 1000.0f;
-        NSString *unit = @"KB";
-        
-        if (size > 1024.0f * 1024.0f) {
-            size = size / 1024.f / 1024.0f ;
+        float size = (float)file.fileSize;
+        NSString *unit = @"B";
+        if (size > 1024.0f) {
+            size = size / 1024.f;
+            unit = @"KB";
+        }
+        if (size > 1024.0f) {
+            size = size / 1024.f;
             unit = @"MB";
         }
-        
+        if (size > 1024.0f) {
+            size = size / 1024.f;
+            unit = @"GB";
+        }
+
         [cell.detailTextLabel setText:[NSString stringWithFormat:@"%@ - %@",[NSString stringWithFormat:@"%d%@",(int)size,unit],[formater stringFromDate:file.createDateTime]]];
         [formater release];
     }
@@ -766,11 +781,11 @@
 -(int)getCountFileAndSubFolderAtRemote:(NSString *)remotoPath
 {
     NQ_HANDLE dir;
-    NQ_TCHAR uSearchPath[1000]={0};
+    NQ_WCHAR uSearchPath[1000]={0};
     FindFileDataW_t fData;
     int subFileFolderCount = 0;
 
-    cmWStrcpy( uSearchPath, (NQ_TCHAR *)[[NSString stringWithFormat:@"%@",remotoPath]
+    cmWStrcpy( uSearchPath, (NQ_WCHAR *)[[NSString stringWithFormat:@"%@",remotoPath]
                                          cStringUsingEncoding:NSUTF16StringEncoding]);
     
     dir = ccFindFirstFile( uSearchPath, &fData, 0 );

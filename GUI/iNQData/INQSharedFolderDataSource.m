@@ -75,7 +75,7 @@
         [self.data removeAllObjects];
         
 //      static char buffer[16000];
-//      NQ_TCHAR b[16000];
+//      NQ_WCHAR b[16000];
         unsigned int num;    
         char *name;    
         const char *uid;
@@ -88,11 +88,11 @@
         work = [aComInfo.workGroup UTF8String];
         
         DLog(@"IP:%s",name);
-        NQ_TCHAR uHost[256];
-        NQ_TCHAR uBuffer[16000];
-        NQ_TCHAR *s;
+        NQ_WCHAR uHost[256];
+        NQ_WCHAR uBuffer[16000];
+        NQ_WCHAR *s;
         
-        cmAnsiToTchar(uHost, name);
+        syAnsiToUnicode(uHost, name);
         DLog(@"%@/%@/%@/%@",aComInfo.computerNameIP,aComInfo.userName,aComInfo.password,aComInfo.workGroup);
         
         udSetCredentials(uid,p,work); 
@@ -198,14 +198,14 @@
         [firstFolder release];
         
         for (i = 1, s = uBuffer; i < num; i++) {
-            s += cmTStrlen(s) + 1;
+            s += syWStrlen(s) + 1;
             
             
-#warning change this.
-            char toChar[16000];
+//#warning change this.
+            unichar toChar[16000];
             //        NSString *folderName = [NSString stringWithFormat:@"%S",s];
-            cmTcharToAnsi(toChar, s);
-            NSString *folderName = [NSString stringWithUTF8String:toChar];
+            syWStrcpy(toChar, s);
+            NSString *folderName = [NSString stringWithCharacters:toChar length: syWStrlen(toChar)];
             if (folderName == nil) {
                 folderName = [NSString stringWithFormat:@"%S",(const unichar *)s];
             }
@@ -260,18 +260,16 @@
     int res = 0;
     char remotePath[256]; 
 //  char mountPoint[256];
-    NQ_TCHAR uMountPoint[256];
-    NQ_TCHAR uRemotePath[256];
-//  const char *folderName;
+    NQ_WCHAR uMountPoint[256];
+    NQ_WCHAR uRemotePath[256];
 
 #ifdef UD_CM_UNICODEAPPLICATION /* mizuguchi UTF-8 <-> UTF-16 */
-    cmWStrcpy(uRemotePath, (NQ_TCHAR *)[[NSString stringWithFormat:@"\\\\%@\\%@",self.computer,folder.folderName]
+    cmWStrcpy(uRemotePath, (NQ_WCHAR *)[[NSString stringWithFormat:@"\\\\%@\\%@",self.computer,folder.folderName]
                                         cStringUsingEncoding:NSUTF16StringEncoding]);
-    cmWStrcpy(uMountPoint, (NQ_TCHAR *)[[NSString stringWithFormat:@"\\%@",folder.mountPoint]
+    cmWStrcpy(uMountPoint, (NQ_WCHAR *)[[NSString stringWithFormat:@"\\%@",folder.mountPoint]
                                         cStringUsingEncoding:NSUTF16StringEncoding]);
-    DLog(@"MountPoint(UTF-16):%S", (const NQ_TCHAR *)uMountPoint);
-    DLog(@"RemotePath(UTF-16):%S", (const NQ_TCHAR *)uRemotePath);
 #else
+    const char *folderName;
     folderName = [folder.folderName cStringUsingEncoding:NSUnicodeStringEncoding];
     DLog(@"Mount folder Name %S",folderName);
     
@@ -286,12 +284,11 @@
     strcpy(mountPoint, "\\");
     strcat(mountPoint,[folder.mountPoint cStringUsingEncoding:NSUTF8StringEncoding]);
     
-    cmAnsiToTchar(uRemotePath,[f cStringUsingEncoding:NSUTF8StringEncoding]);
-    cmAnsiToTchar(uMountPoint,mountPoint);
+    syAnsiToUnicode(uRemotePath,[f cStringUsingEncoding:NSUTF8StringEncoding]);
+    syAnsiToUnicode(uMountPoint,mountPoint);
 #endif
     
     nqRemoveMount(uMountPoint);
-    
     res = nqAddMount(uMountPoint,uRemotePath, TRUE);        
     
     if (res != 0) {
@@ -447,8 +444,8 @@
         if ([[INQServiceManager sharedManager] isServerStated]) {
 #if 1
             // サーバー機能時の文字化け対策
-            NQ_TCHAR uFolderName[256] = {0};
-            cmWStrcpy(uFolderName, (NQ_TCHAR *)[[NSString stringWithFormat:@"%@",folderObj.folderName]
+            NQ_WCHAR uFolderName[256] = {0};
+            cmWStrcpy(uFolderName, (NQ_WCHAR *)[[NSString stringWithFormat:@"%@",folderObj.folderName]
                                                 cStringUsingEncoding:NSUTF16StringEncoding]);
 
             // (注意) 以下の関数を使用することで期待動作をするが、ヘッダーファイルに定義の無い関数につき対応を要確認.(関数名に文字"q"が付与されている)
@@ -502,10 +499,10 @@
 #if 1
             // サーバー機能時の文字化け対策
             // Measures against garbled characters in server function
-            NQ_TCHAR uFolderName[256] = {0};
-            NQ_TCHAR uFolderID[256] = {0};
+            NQ_WCHAR uFolderName[256] = {0};
+            NQ_WCHAR uFolderID[256] = {0};
             
-            cmWStrcpy(uFolderName, (NQ_TCHAR *)[[NSString stringWithFormat:@"%@",folderObj.folderName]
+            cmWStrcpy(uFolderName, (NQ_WCHAR *)[[NSString stringWithFormat:@"%@",folderObj.folderName]
                                                 cStringUsingEncoding:NSUTF16StringEncoding]);
             cmAnsiToUnicode(uFolderID, [folderObj.folderId UTF8String]);
             
@@ -572,6 +569,9 @@
     [prompt show];
     [prompt release];
     
+}
+
+- (void)loadData {
 }
 
 @end

@@ -10,7 +10,10 @@
 	NSOperationQueue *queue;
 	id parent;
     
-    ALAssetsLibrary *library;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  ALAssetsLibrary *library;
+#pragma GCC diagnostic pop
 }
 
 @property (nonatomic, assign) id parent;

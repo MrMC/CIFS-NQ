@@ -25,14 +25,14 @@
     UIBarButtonItem *uploadButton;
     if (app.typeSelectedView == DEF_VIEW_WORKGROUP)
     {
-        uploadButton = [[[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"UploadSelectFiles",@"Upload Select Files") style:UIBarButtonItemStyleBordered target:self action:@selector(doneAction:)]autorelease];
+        uploadButton = [[[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"UploadSelectFiles",@"Upload Select Files") style:UIBarButtonItemStylePlain target:self action:@selector(doneAction:)]autorelease];
     }
     else
     {
-        uploadButton = [[[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"CopySelectFiles",@"Copy Select Files") style:UIBarButtonItemStyleBordered target:self action:@selector(doneAction:)]autorelease];
+        uploadButton = [[[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"CopySelectFiles",@"Copy Select Files") style:UIBarButtonItemStylePlain target:self action:@selector(doneAction:)]autorelease];
     }
 #else
-    UIBarButtonItem *uploadButton = [[[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"UploadSelectFiles",@"Upload Selecte Files") style:UIBarButtonItemStyleBordered target:self action:@selector(doneAction:)]autorelease];
+    UIBarButtonItem *uploadButton = [[[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"UploadSelectFiles",@"Upload Selecte Files") style:UIBarButtonItemStylePlain target:self action:@selector(doneAction:)]autorelease];
 #endif
     
     self.toolbarItems = [NSArray arrayWithObjects:spaceButton,uploadButton,spaceButton,nil];

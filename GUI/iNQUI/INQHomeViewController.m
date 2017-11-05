@@ -32,7 +32,7 @@
     
     UIBarButtonItem *settingButtonItem = [[UIBarButtonItem alloc]
                                           initWithImage:[UIImage imageNamed:@"icon_setting.png"] 
-                                          style:UIBarButtonItemStyleBordered 
+                                          style:UIBarButtonItemStylePlain
                                           target:self 
                                           action:@selector(setting:)];
                                           
@@ -333,8 +333,17 @@
     [super didReceiveMemoryWarning];
     float mem = [self memory];
     if (mem < 4.0f) {
-        UIAlertView *alert = [[UIAlertView alloc]initWithTitle:@"MemoryWarning" message:@"close other app." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil, nil]; 
-        [alert show];
+        //UIAlertView *alert = [[UIAlertView alloc]initWithTitle:@"MemoryWarning" message:@"close other app." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil, nil];
+        //[alert show];
+        UIAlertController * alert = [UIAlertController
+                alertControllerWithTitle:@"MemoryWarning"
+                                 message:@"close other app."
+                          preferredStyle:UIAlertControllerStyleAlert];
+        UIAlertAction* defaultAction = [UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault
+                               handler:^(UIAlertAction * action) {}];
+
+        [alert addAction:defaultAction];
+        [self presentViewController:alert animated:YES completion:nil];
         [alert release];
     }
 }

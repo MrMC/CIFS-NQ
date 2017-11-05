@@ -3,6 +3,9 @@
 #import <AssetsLibrary/AssetsLibrary.h>
 #import "INQAssetTablePicker.h"
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 @interface INQAsset : UIView {
 	ALAsset *asset;
 	UIImageView *overlayView;
@@ -17,3 +20,5 @@
 -(BOOL)selected;
 
 @end
+
+#pragma GCC diagnostic pop

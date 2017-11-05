@@ -10,6 +10,7 @@
 @synthesize data = data_;
 @synthesize computerInfo;
 @synthesize isBookMark;
+
 - (id)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil {
     self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil];
     if (self) {
@@ -138,9 +139,13 @@
 
     [self.tableView reloadData];    
 }
-
-- (void)viewDidUnload {
-
+  
+  - (void)needDisplay { 
+  }
+  
+  
+  - (void)viewDidUnload {
+    
     [data_ release];
     data_ = nil;
     [computerInfo release];
@@ -148,14 +153,14 @@
     [dataSource release];    
     dataSource = nil;
     [super viewDidUnload];
-
-}
-
-- (void)bookMark {
+    
+  }
+  
+  - (void)bookMark {
     NSMutableDictionary *org = [[NSUserDefaults standardUserDefaults] objectForKey:BOOKMARK];
     
     if (org == nil) {
-        org = [[[NSMutableDictionary alloc]init]autorelease];
+      org = [[[NSMutableDictionary alloc]init]autorelease];
     }
     
     NSMutableDictionary *orgdic = [NSMutableDictionary dictionaryWithDictionary:org];
@@ -165,20 +170,20 @@
     [dic setValue:computerInfo.workGroup forKey:WORKGROUP];
     [dic setValue:computerInfo.userName forKey:USER_NAME];
     [dic setValue:computerInfo.password forKey:PASSWORD];
-  
+    
     [orgdic setValue:dic forKey:computerInfo.computerId];
-
+    
     [[NSUserDefaults standardUserDefaults] setObject:orgdic forKey:BOOKMARK];
     [[NSUserDefaults standardUserDefaults] synchronize];
     [self alertMessage:NSLocalizedString(@"SaveBookMarkOK", @"save book mark ")];
     [dic release];
     
-}
-
+  }
+  
 #pragma mark -
 #pragma mark AlertView
-
-- (void)alertMessage:(NSString*)msg {
+  
+  - (void)alertMessage:(NSString*)msg {
     UIAlertView *alertView = [[UIAlertView alloc]initWithTitle:@"" 
                                                        message:msg 
                                                       delegate:nil 
@@ -186,45 +191,45 @@
                                              otherButtonTitles:nil, nil];
     [alertView show];
     [alertView release];
-}
-- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation {
+  }
+  - (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation {
     return (interfaceOrientation == UIInterfaceOrientationPortrait);
-}
-
+  }
+  
 #pragma mark - HOME Button.
-- (void)backToHome {
+  - (void)backToHome {
     [self.navigationController popToViewController:[self.navigationController.viewControllers objectAtIndex:1] animated:YES];
     
-}
-
+  }
+  
 #pragma mark -
 #pragma mark UITableViewDelegate method
-
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-
+  
+  - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    
     INQShareFolder *folder = (INQShareFolder*)[self.data objectAtIndex:indexPath.row];
-   
+    
     if (!folder.isMounted) {
-        return;
+      return;
     }
     
     INQFileListViewController *controller = [[INQFileListViewController alloc]initWithStyle:UITableViewStylePlain];       
     [self.navigationController pushViewController:controller animated:YES];
-
+    
     // dispatch処理で実行しないとiOS7で期待動作にならない
     dispatch_async(dispatch_get_main_queue(), ^{
-        controller.title = folder.folderName;
-        controller.mountPoint = folder.mountPoint;
-        [controller loadDataFromServer:computerInfo.computerNameIP path:folder.folderName];
-        [controller release];
+      controller.title = folder.folderName;
+      controller.mountPoint = folder.mountPoint;
+      [controller loadDataFromServer:computerInfo.computerNameIP path:folder.folderName];
+      [controller release];
     });
     
     // テーブル再描画処理(選択したテーブルの行の状態が選択色のままになるのを回避)
     [self.tableView reloadData];
-}
-
-- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
-{
+  }
+  
+  - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
+  {
     UIView *sectionView = [[[UIView alloc]initWithFrame:CGRectMake(0, 0, [UIScreen mainScreen].bounds.size.width, 20)]autorelease];
     UILabel *textLabel = [[[UILabel alloc]initWithFrame:CGRectMake(10, 0, [UIScreen mainScreen].bounds.size.width, 20)]autorelease];
     
@@ -237,25 +242,25 @@
     textLabel.shadowOffset = CGSizeMake(0, 1);
     
     switch(section) {
-        case 0:
-            textLabel.text = NSLocalizedString(@"SharedFolder", @"Shared Folder");
-            break;
+      case 0:
+        textLabel.text = NSLocalizedString(@"SharedFolder", @"Shared Folder");
+        break;
     }
     
     [sectionView addSubview:textLabel];
     
     return sectionView;
-}
-
-- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
-{
+  }
+  
+  - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
+  {
     CGFloat heightSection = 20.0f;
     
     return heightSection;
-}
-
-- (void)refresh {
+  }
+  
+  - (void)refresh {
     [dataSource setComputerInfo:computerInfo];    
-}
-
-@end
+  }
+  
+  @end

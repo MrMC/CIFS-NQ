@@ -198,7 +198,7 @@
         [self.navigationController.navigationBar setBarTintColor:[app setBarColor]];
         
         // set navigation title color
-        [self.navigationController.navigationBar setTitleTextAttributes:[NSDictionary dictionaryWithObject:[UIColor whiteColor] forKey:UITextAttributeTextColor]];
+        [self.navigationController.navigationBar setTitleTextAttributes:[NSDictionary dictionaryWithObject:[UIColor whiteColor] forKey:NSForegroundColorAttributeName]];
         
         // set navigation bar button arrow color
         self.navigationController.navigationBar.tintColor = [UIColor whiteColor];
@@ -206,7 +206,7 @@
         // set navigation bar button color
         [[UIBarButtonItem appearanceWhenContainedIn:[UINavigationBar class], nil]
          setTitleTextAttributes:[NSDictionary dictionaryWithObjectsAndKeys:[UIColor whiteColor],
-                                 UITextAttributeTextColor, nil] forState:UIControlStateNormal];
+                                 NSForegroundColorAttributeName, nil] forState:UIControlStateNormal];
         
         // set navigation toolbar color
         [self.navigationController.toolbar setBarTintColor:[app setBarColor]];
@@ -537,39 +537,38 @@
     
 }
 
-
 // Override to support conditional editing of the table view.
 - (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    // Return NO if you do not want the specified item to be editable.
-    return YES;
+  // Return NO if you do not want the specified item to be editable.
+  return YES;
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
+  
+  // 共有フォルダ用View初期化
+  if ([self.data count] == 0)
+  {
+    [self addWorkgroup];
+  }
+  else
+  {
+    INQSharedFolderViewController *controller = [[INQSharedFolderViewController alloc]init];
+    controller.computerInfo = [self.data objectAtIndex:indexPath.row];
+    //controller.isBookMark = self.isBookMark;
     
-    // 共有フォルダ用View初期化
-    if ([self.data count] == 0)
-    {
-        [self addWorkgroup];
-    }
-    else
-    {
-        INQSharedFolderViewController *controller = [[INQSharedFolderViewController alloc]init];
-        controller.computerInfo = [self.data objectAtIndex:indexPath.row];
-        //controller.isBookMark = self.isBookMark;
-        
-        // コンピュータ情報の更新(無効)
-        INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
-        app.isUpdateComputerInfo = FALSE;
-        
-        // ナビゲーションバーのタイトルにコンピュータの表示名を設定
-        controller.navigationItem.title = controller.computerInfo.displayName;
-        
-        [self.navigationController pushViewController:controller animated:NO];
-        [controller release];
-        return;
-    }
+    // コンピュータ情報の更新(無効)
+    INQAppDelegate *app = (INQAppDelegate *)[[UIApplication sharedApplication] delegate];
+    app.isUpdateComputerInfo = FALSE;
+    
+    // ナビゲーションバーのタイトルにコンピュータの表示名を設定
+    controller.navigationItem.title = controller.computerInfo.displayName;
+    
+    [self.navigationController pushViewController:controller animated:NO];
+    [controller release];
+    return;
+  }
 }
 
 /**

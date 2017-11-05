@@ -37,9 +37,9 @@
 
 - (void)getWorkgroups
 {
-    static char buffer[16000];
-    int num = 0;
-    
+    char buffer[16000];
+    NQ_INT num = 0;
+
     if (!nqGetWorkgroupsByWgA( "WORKGROUP", buffer, sizeof(buffer), &num))
     {
         DLog(@"Get Workgroups Failed");
@@ -50,7 +50,7 @@
         
         return;
     }
-    
+
     if (num == 0) {
         DLog(@"No Workgroups Found");
         
@@ -104,7 +104,7 @@
 //  bool *isWorkgroup;
 //  static char domainBuffer[16000];
     static char domain[256];    
-//  static NQ_TCHAR domainT[256];
+//  static NQ_WCHAR domainT[256];
     
     // ワークグループ名を固定で"WORKGROUP"とする処理を可変できる様に変更.
     char *pDomain;
@@ -267,7 +267,7 @@
     /*if (isBookMark) {
         savedData = [[NSUserDefaults standardUserDefaults]objectForKey:BOOKMARK];
     }*/
-    DLog(@"== save data:%@ \n%d",savedData,isBookMark);
+    //DLog(@"== save data:%@ \n%d",savedData,isBookMark);
     NSEnumerator *enm = [savedData keyEnumerator];
     
     while (YES && enm != nil) {
@@ -570,6 +570,9 @@
     }
     [[NSUserDefaults standardUserDefaults] synchronize];    
     [dic release];
+}
+
+- (void)loadData { 
 }
 
 @end

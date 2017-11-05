@@ -22,15 +22,15 @@
 {
     self = [super initWithStyle:style];
     if (self) {
-        [[UIApplication sharedApplication] setStatusBarHidden:NO];    
-
-
-        // Custom initialization
     }
     return self;
 }
 
-- (void)viewDidLoad{    
+- (BOOL)prefersStatusBarHidden {
+   return NO;
+}
+
+- (void)viewDidLoad{
     [super viewDidLoad];
     
     self.title = NSLocalizedString(@"LocalFolder", @"LocalFolder");
@@ -80,7 +80,7 @@
 #else
     // Text of bar button
     UIBarButtonItem *newFolderButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"NewFolder",@"New Folder")
-                                                                       style:UIBarButtonItemStyleBordered 
+                                                                       style:UIBarButtonItemStylePlain
                                                                       target:self 
                                                                       action:@selector(newFolder)];
 #endif
@@ -113,7 +113,7 @@
     }
 #else
     // Text of bar button
-    UIBarButtonItem *homeButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Home",@"Home") style:UIBarButtonItemStyleBordered target:self action:@selector(backToHome)];
+    UIBarButtonItem *homeButton = [[UIBarButtonItem alloc]initWithTitle:NSLocalizedString(@"Home",@"Home") style:UIBarButtonItemStylePlain target:self action:@selector(backToHome)];
 #endif
     homeButton.tag = 5;
     
@@ -260,7 +260,7 @@
         [self.navigationController.navigationBar setBarTintColor:[app setBarColor]];
         
         // set navigation title color
-        [self.navigationController.navigationBar setTitleTextAttributes:[NSDictionary dictionaryWithObject:[UIColor whiteColor] forKey:UITextAttributeTextColor]];
+        [self.navigationController.navigationBar setTitleTextAttributes:[NSDictionary dictionaryWithObject:[UIColor whiteColor] forKey:NSForegroundColorAttributeName]];
         
         // set navigation bar button arrow color
         self.navigationController.navigationBar.tintColor = [UIColor whiteColor];
@@ -268,7 +268,7 @@
         // set navigation bar button color
         [[UIBarButtonItem appearanceWhenContainedIn:[UINavigationBar class], nil]
          setTitleTextAttributes:[NSDictionary dictionaryWithObjectsAndKeys:[UIColor whiteColor],
-                                 UITextAttributeTextColor, nil] forState:UIControlStateNormal];
+                                 NSForegroundColorAttributeName, nil] forState:UIControlStateNormal];
 
         // set navigation toolbar color
         [self.navigationController.toolbar setBarTintColor:[app setBarColor]];
