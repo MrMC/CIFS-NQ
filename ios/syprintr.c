@@ -194,17 +194,17 @@ typedef struct
     /* information structure */
     SYPrinterInfo info;
     /* buffers for actual info data */
-    NQ_TCHAR  manufacturer[32];
-    NQ_TCHAR  model[32];
-    NQ_TCHAR  name[64];
-    NQ_TCHAR  comment[100];
-    NQ_TCHAR  location[100];
-    NQ_TCHAR  parameters[100];
-    NQ_TCHAR  portName[100];
-    NQ_TCHAR  printProcessor[100];
-    NQ_TCHAR  sepFile[100];
-    NQ_TCHAR  dataType[100];
-    NQ_TCHAR  formName[7];
+    NQ_WCHAR  manufacturer[32];
+    NQ_WCHAR  model[32];
+    NQ_WCHAR  name[64];
+    NQ_WCHAR  comment[100];
+    NQ_WCHAR  location[100];
+    NQ_WCHAR  parameters[100];
+    NQ_WCHAR  portName[100];
+    NQ_WCHAR  printProcessor[100];
+    NQ_WCHAR  sepFile[100];
+    NQ_WCHAR  dataType[100];
+    NQ_WCHAR  formName[7];
     NQ_BYTE   sd[320];
     NQ_BYTE   extra[1000];
 }
@@ -223,7 +223,7 @@ getPrinter(
 
 static int
 findPrinter(
-    const NQ_TCHAR *device
+    const NQ_WCHAR *device
     )
 {
     int i;
@@ -232,7 +232,7 @@ findPrinter(
     {
         Printer *p = &_printers[i];
 
-        cmTcharToAnsi(deviceA, device);
+        syUnicodeToAnsi(deviceA, device);
         if (strcmp(deviceA, p->device) == 0)
             return i;
     }
@@ -267,8 +267,8 @@ typedef struct
     NQ_BOOL used;
     SYPrinterHandle printer;
     SYPrintJobInfo info;
-    NQ_TCHAR document[256];
-    NQ_TCHAR status[32];
+    NQ_WCHAR document[256];
+    NQ_WCHAR status[32];
     NQ_BYTE sd[320];
     struct {
         NQ_BOOL flag;
@@ -556,7 +556,7 @@ startJob(
         /* start the job only if it is new or in "blocked" state */
         j->info.status &= (NQ_UINT32)(~SY_PRINTJOBSTATUS_BLOCKED);
         j->info.status |= SY_PRINTJOBSTATUS_PRINTING;
-        cmAnsiToTchar(j->status, "Printing");
+        syAnsiToUnicode(j->status, "Printing");
 
         onResumeJob(p, j);
 
@@ -571,7 +571,7 @@ startJob(
 static int
 addJob(
     int printer,
-    const NQ_TCHAR *document,
+    const NQ_WCHAR *document,
     const NQ_BYTE *sd,
     NQ_COUNT sdlen,
     const void *pUser
@@ -600,7 +600,7 @@ addJob(
 
             /* mark the new job as "blocked" by default */
             j->info.status |= SY_PRINTJOBSTATUS_BLOCKED;
-            cmAnsiToTchar(j->status, "Blocked");
+            syAnsiToUnicode(j->status, "Blocked");
 
             if (p->job == -1)
             {
@@ -733,11 +733,11 @@ getProperty(
 
 static NQ_BOOL
 initPrinter(
-    const NQ_TCHAR *device,
+    const NQ_WCHAR *device,
     Printer *p
     )
 {
-    /*NQ_TCHAR space[] = {cmTChar(' '), cmTChar('\0')};*/
+    /*NQ_WCHAR space[] = {cmTChar(' '), cmTChar('\0')};*/
     static char buffer[512];
     char property[64];
     int vendor, product;
@@ -747,7 +747,7 @@ initPrinter(
     const char *ds = buffer;
 #endif
 
-    cmTcharToAnsi(deviceA, device);
+    syUnicodeToAnsi(deviceA, device);
     if (!getDeviceInfo(deviceA, buffer, sizeof(buffer), &vendor, &product, &p->status))
         return FALSE;
 
@@ -759,9 +759,9 @@ initPrinter(
     p->info.status = 0;
 
     getProperty(ds, "MFG", property, sizeof(property));
-    cmAnsiToTchar(p->manufacturer, property);
+    syAnsiToUnicode(p->manufacturer, property);
     getProperty(ds, "MDL", property, sizeof(property));
-    cmAnsiToTchar(p->model, property);
+    syAnsiToUnicode(p->model, property);
 
     /* construct full printer name */
 /*  cmTStrcpy(p->name, p->manufacturer);
@@ -769,7 +769,7 @@ initPrinter(
     cmTStrcat(p->name, p->model);*/
     
     /* store the device name */
-    cmTcharToAnsi(p->device, device);
+    syUnicodeToAnsi(p->device, device);
 
     return TRUE;
 }
@@ -817,15 +817,15 @@ syInitPrinters(
         p->status = SY_PRINTERSTATUS_NOTAVAILABLE;
 
         /* prepare data */
-        cmAnsiToTchar(p->name, "");
-        cmAnsiToTchar(p->comment, "");
-        cmAnsiToTchar(p->location, "");
-        cmAnsiToTchar(p->parameters, "");
-        cmAnsiToTchar(p->portName, "NQ Printer Port");
-        cmAnsiToTchar(p->printProcessor, "winprint");
-        cmAnsiToTchar(p->sepFile, "");
-        cmAnsiToTchar(p->dataType, "RAW");
-        cmAnsiToTchar(p->formName, "A4");
+        syAnsiToUnicode(p->name, "");
+        syAnsiToUnicode(p->comment, "");
+        syAnsiToUnicode(p->location, "");
+        syAnsiToUnicode(p->parameters, "");
+        syAnsiToUnicode(p->portName, "NQ Printer Port");
+        syAnsiToUnicode(p->printProcessor, "winprint");
+        syAnsiToUnicode(p->sepFile, "");
+        syAnsiToUnicode(p->dataType, "RAW");
+        syAnsiToUnicode(p->formName, "A4");
 
         /* information */
         p->info.averagePpm = 0;        
@@ -882,7 +882,7 @@ syInitPrinters(
 
 SYPrinterHandle
 syGetPrinterHandle(
-    const NQ_TCHAR* name
+    const NQ_WCHAR* name
     )
 {
     SYPrinterHandle h = findPrinter(name);
@@ -968,8 +968,8 @@ syGetPrinterInfo(
 
 static void
 safeTStrcpy(
-    NQ_TCHAR *to,
-    const NQ_TCHAR *from
+    NQ_WCHAR *to,
+    const NQ_WCHAR *from
     )
 {
     if (from && to)
@@ -1038,12 +1038,12 @@ sySetPrinterInfo(
 NQ_STATUS
 syGetPrinterDriver(
     SYPrinterHandle handle,
-    const NQ_TCHAR* os,
+    const NQ_WCHAR* os,
     SYPrinterDriver* info
     )
 {
-/*    static const NQ_TCHAR *list[] = {NULL, NULL};
-    static const NQ_TCHAR empty[] = {(NQ_TCHAR)0};
+/*    static const NQ_WCHAR *list[] = {NULL, NULL};
+    static const NQ_WCHAR empty[] = {(NQ_WCHAR)0};
     Printer *p = getPrinter(handle);
 
     TRC2P("NQPR: get printer %d driver, os='%s'", handle, cmTDump(os));
@@ -1172,9 +1172,9 @@ syPrinterGetSecurityDescriptor(
 NQ_UINT32
 syStartPrintJob(
     SYPrinterHandle handle,
-    const NQ_TCHAR* name,
-    const NQ_TCHAR* file,
-    const NQ_TCHAR* type,
+    const NQ_WCHAR* name,
+    const NQ_WCHAR* file,
+    const NQ_WCHAR* type,
     const NQ_BYTE* sd,
     NQ_COUNT sdLen,
     const void *pUser
@@ -1472,11 +1472,11 @@ syGetPrintForm(
     SYPrintFormInfo* info
     )
 {
-    static NQ_TCHAR letter[16];
-    static NQ_TCHAR a4[8];
+    static NQ_WCHAR letter[16];
+    static NQ_WCHAR a4[8];
 
-    cmAnsiToTchar(letter, "Letter");
-    cmAnsiToTchar(a4, "A4");
+    syAnsiToUnicode(letter, "Letter");
+    syAnsiToUnicode(a4, "A4");
 
     info->id = formIdx;
     info->flags = SY_PRINTFORMFLAG_BUILTIN;

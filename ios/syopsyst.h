@@ -27,6 +27,9 @@
 
 #define SY_OSNAME       "RedHat Linux"                   /* Operating system name */
 
+
+#define syAssert(_stat_)        assert(_stat_)          /* assert macro */
+
 /*
     Time and random functions
     -------------------------
@@ -35,8 +38,11 @@
 
  */
 
-#define syGetTime()     time(0)         /* system (Posix) time in seconds from 1-Jan-1970 */
+#define syGetTimeInSec()     time(0)         /* system (Posix) time in seconds from 1-Jan-1970 */
 
+
+NQ_TIME syGetTimeInMsec(void);
+NQ_TIME syConvertTimeSpecToTimeInMsec(void * val);
 /* Get time zone difference in munites */
 NQ_INT
 syGetTimeZone(
@@ -49,31 +55,32 @@ syGetTimeZone(
 /* Decompose system time into fragments */
 void
 syDecomposeTime(
-    NQ_TIME time,                       /* system time */
+    NQ_UINT32 time,                     /* system time */
     SYTimeFragments* decomposed         /* structure of file fragments */
     );
 
 /* Compose system time from fragments */
-NQ_TIME                                 /* composed system time */
+NQ_UINT32                                 /* composed system time */
 syComposeTime(
     const SYTimeFragments* decomposed   /* structure of file fragments */
     );
+
+/* Wait a number of seconds. */
+#define sySleep(_secs_) sleep(_secs_)
 
 /*
     Threads
     -------
 
-  Thread management calls. IN VxWorks threads are mapped on tasks. 
-
+  Thread management calls.
  */
 
-#define SYThread	pthread_t				/* TID - thread handle */
-#define syIsValidThread(_taskId_)	    TRUE
+#define SYThread					pthread_t				/* TID - thread handle */
+#define syIsValidThread(_taskId_)	TRUE
 
 #define syThreadGetCurrent		    pthread_self
-/*#define syThreadStart(_taskIdPtr_, _startpoint_, _background_)	pthread_create(&_taskIdPtr_, NULL, (void* (void*))_startpoint_, NULL); */
 void syThreadStart(SYThread *taskIdPtr, void (*startpoint)(void), NQ_BOOL background);
-#define syThreadDestroy(_taskId_) 	
+#define syThreadDestroy(_taskId_)   pthread_cancel(_taskId_);
 
 /*
     Semaphores
@@ -84,24 +91,36 @@ void syThreadStart(SYThread *taskIdPtr, void (*startpoint)(void), NQ_BOOL backgr
  2) We use binary semaphores
 
  */
+//#define SY_SEMAPHORE_AVAILABLE
 
 /* mutex */
 #define SYMutex                       pthread_mutex_t
 
 void syMutexCreate(SYMutex* _m);
-/*#define syMutexCreate(_m)             pthread_mutex_init(_m, NULL)*/
+
+#ifdef MUTEX_DEBUG
+/* Mutex functions - add prints per mutex create, take, give, destroy */
+void syMutexDelete(SYMutex* _m);
+void syMutexTake(SYMutex* _m);
+void syMutexGive(SYMutex* _m);
+
+#else
+/* regular mutex operations */
 #define syMutexDelete(_m)             pthread_mutex_destroy(_m)
 #define syMutexTake(_m)               pthread_mutex_lock(_m)
 #define syMutexGive(_m)               pthread_mutex_unlock(_m)
+#endif
 
 /* counting semaphore */
 #define SYSemaphore                   sem_t
 
-#define sySemaphoreCreate(_s, _count) /*sem_init(_s, 0, _count)*/
-#define sySemaphoreDelete(_s)         /*sem_destroy(&_s)*/
-#define sySemaphoreTake(_s)           /*sem_wait(&_s)*/
-#define sySemaphoreGive(_s)           /*sem_post(&_s)*/
+#define sySemaphoreCreate(_s, _count) sem_init(_s, 0, _count)
+#define sySemaphoreDelete(_s)         sem_destroy(&_s)
+#define sySemaphoreTake(_s)           sem_wait(&_s)
+#define sySemaphoreGive(_s)           sem_post(&_s)
+#define sySemaphoreGetCount(_s , _val) sem_getvalue(&_s , _val)
 NQ_INT	sySemaphoreTimedTake( SYSemaphore *sem , NQ_INT timeout);
+
 /*
     Sockets
     -------
@@ -118,11 +137,11 @@ NQ_INT	sySemaphoreTimedTake( SYSemaphore *sem , NQ_INT timeout);
 #ifdef UD_NQ_USETRANSPORTIPV6
 
 #ifdef SY_LITTLEENDIANHOST
-#define SY_LOCALHOSTIP4 {0, 0} /* {0x007f, 0x0100} */
+#define SY_LOCALHOSTIP4 /*{0, 0} */  {0x007f, 0x0100} 
 #define SY_LOCALHOSTIP6 {0, 0, 0, 0, 0, 0, 0, 0} /* {0, 0, 0, 0, 0, 0, 0, 0x0100} */
 #define SY_LINKLOCALIP  0x80fe
 #else /* SY_LITTLEENDIANHOST */
-#define SY_LOCALHOSTIP4 {0, 0} /* {0x0001, 0x7f00 } */
+#define SY_LOCALHOSTIP4 /*{0, 0} */ {0x7f00 , 0x0001} 
 #define SY_LOCALHOSTIP6 {0, 0, 0, 0, 0, 0, 0, 0} /* {0, 0, 0, 0, 0, 0, 0, 1} */
 #define SY_LINKLOCALIP  0xfe80
 #endif /* SY_LITTLEENDIANHOST */
@@ -168,6 +187,16 @@ syIsSocketAlive(
 #define syAddSocketToSet(_sock, _set)       FD_SET((_sock), (_set))
 #define syIsSocketSet(_sock, _set)          FD_ISSET((_sock), (_set))
 #define syClearSocketSet(_set)              FD_ZERO((_set))
+/*@@syClearSocketFromSet
+   Description
+   Remove a socket from a socket set.
+   Parameters
+   _sock :  The socket to remove.
+   _set :   Socket set.
+   Returns
+   None                               */
+#define syClearSocketFromSet(_sock, _set)   FD_CLR((_sock), (_set))
+
 
 /* Stop socket operations and disconnect the socket if it was connected */
 NQ_STATUS
@@ -286,6 +315,18 @@ syRecvSocket(
     NQ_COUNT len            /* buffer length */
     );
 
+/*@@
+ Description
+ Receive from a datagram or a TCP stream or time out if no data on sockets.
+ Parameters
+ sock : Socket handle.
+ buf : Receive buffer.
+ len : Buffer size.
+ secs : Number of seconds to wait for data on sockets.
+Returns
+Number of bytes received or <i>NQ_FAIL</i> on error. */
+NQ_INT syRecvSocketWithTimeout(SYSocketHandle sock, NQ_BYTE * buf, unsigned int len,  unsigned int secs);
+
 /* Accept client socket */
 SYSocketHandle              /* new socket ID or invalid handle */
 syAcceptSocket(
@@ -296,12 +337,15 @@ syAcceptSocket(
 
 /* Send multicast datagram */
 NQ_STATUS sySendMulticast(
-    SYSocketHandle socket,  /* socket handle */
+    SYSocketHandle socket,  /* socket handle */ 
     const NQ_BYTE * buffer, /* data to send */
     NQ_COUNT length,        /* number of bytes to send */
     const NQ_IPADDRESS *ip, /* destination IP */
     NQ_PORT port);          /* destination port */
 
+void sySubscribeToMulticast(SYSocketHandle socket,
+		const NQ_IPADDRESS *ip
+		);
 #define sySetDatagramSocketOptions(_sock)
 #define sySetStreamSocketOptions(_sock)
 
@@ -330,34 +374,34 @@ NQ_STATUS sySendMulticast(
 /* Create directory */
 NQ_STATUS                               /* NQ_SUCCESS or NQ_FAIL */
 syCreateDirectory(
-    const NQ_TCHAR* name                /* full directory path */
+    const NQ_WCHAR* name                /* full directory path */
     );
 
 /* Delete directory */
 NQ_STATUS                               /* NQ_SUCCESS or NQ_FAIL */
 syDeleteDirectory(
-    const NQ_TCHAR* name                /* full directory path */
+    const NQ_WCHAR* name                /* full directory path */
     );
 
 /* Open directory by name */
 SYDirectory                             /* directory handle or invalid handle */
 syOpenDirectory(
-    const NQ_TCHAR* name                /* full directory path */
+    const NQ_WCHAR* name                /* full directory path */
     );
 
 /* Open directory and read the first entry */
 NQ_STATUS                               /* NQ_SUCCESS or NQ_FAIL */
 syFirstDirectoryFile(
-    const NQ_TCHAR* name,               /* full directory path */
+    const NQ_WCHAR* name,               /* full directory path */
     SYDirectory* pDir,                  /* buffer for directory handle */
-    const NQ_TCHAR** fileName           /* buffer for a pointer to the file name */
+    const NQ_WCHAR** fileName           /* buffer for a pointer to the file name */
     );
 
 /* Read next directory entry */
 NQ_STATUS                               /* NQ_SUCCESS or NQ_FAIL */
 syNextDirectoryFile(
     SYDirectory dir,                    /* directory handle */
-    const NQ_TCHAR** fileName           /* buffer for a pointer to the file name */
+    const NQ_WCHAR** fileName           /* buffer for a pointer to the file name */
     );
 
 NQ_STATUS
@@ -390,7 +434,7 @@ syCloseDirectory(
 /* Create and open new file */
 SYFile                                  /* file handle or invalid handle */
 syCreateFile(
-    const NQ_TCHAR* name,               /* file name */
+    const NQ_WCHAR* name,               /* file name */
     NQ_BOOL denyread,                   /* true - to deny sharing for read */
     NQ_BOOL denyexecute,                /* true - to deny sharing for execute */
     NQ_BOOL denywrite                   /* true - to deny sharing for write */
@@ -399,20 +443,20 @@ syCreateFile(
 /* Delete file */
 NQ_STATUS                               /* NQ_SUCCESS or NQ_FAIL */
 syDeleteFile(
-    const NQ_TCHAR* name                /* file name */
+    const NQ_WCHAR* name                /* file name */
     );
 
 /* Rename file */
 NQ_STATUS                               /* NQ_SUCCESS or NQ_FAIL */
 syRenameFile(
-    const NQ_TCHAR* old,                /* file name */
-    const NQ_TCHAR* newName             /* new file name */
+    const NQ_WCHAR* old,                /* file name */
+    const NQ_WCHAR* newName             /* new file name */
     );
 
 /* Open file for reading */
 SYFile                                  /* file handle or invalid handle */
 syOpenFileForRead(
-    const NQ_TCHAR* name,               /* file name */
+    const NQ_WCHAR* name,               /* file name */
     NQ_BOOL denyread,                   /* true - to deny sharing for read */
     NQ_BOOL denyexecute,                /* true - to deny sharing for execute */
     NQ_BOOL denywrite                   /* true - to deny sharing for write */
@@ -421,7 +465,7 @@ syOpenFileForRead(
 /* Open file for writing */
 SYFile                                  /* file handle or invalid handle */
 syOpenFileForWrite(
-    const NQ_TCHAR* name,               /* file name */
+    const NQ_WCHAR* name,               /* file name */
     NQ_BOOL denyread,                   /* true - to deny sharing for read */
     NQ_BOOL denyexecute,                /* true - to deny sharing for execute */
     NQ_BOOL denywrite                   /* true - to deny sharing for write */
@@ -430,7 +474,7 @@ syOpenFileForWrite(
 /* Open file for reading and writing */
 SYFile                                  /* file handle or invalid handle */
 syOpenFileForReadWrite(
-    const NQ_TCHAR* name,               /* file name */
+    const NQ_WCHAR* name,               /* file name */
     NQ_BOOL denyread,                   /* true - to deny sharing for read */
     NQ_BOOL denyexecute,                /* true - to deny sharing for execute */
     NQ_BOOL denywrite                   /* true - to deny sharing for write */
@@ -502,21 +546,21 @@ sySeekFileEnd(
 NQ_STATUS                               /* NQ_SUCCESS or NQ_FAIL */
 syGetFileInformation(
     SYFile file,                        /* file id */
-    const NQ_TCHAR* fileName,           /* file name */
+    const NQ_WCHAR* fileName,           /* file name */
     SYFileInformation* fileInfo         /* file information structure */
     );
 
 /* Read file information structure by file name */
 NQ_STATUS                               /* NQ_SUCCESS or NQ_FAIL */
 syGetFileInformationByName(
-    const NQ_TCHAR* fileName,           /* file name */
+    const NQ_WCHAR* fileName,           /* file name */
     SYFileInformation* fileInfo         /* file information structure */
     );
 
 /* Update file information by either file name or file handle */
 NQ_STATUS                               /* NQ_SUCCESS or NQ_FAIL */
 sySetFileInformation(
-    const NQ_TCHAR* fileName,           /* file name */
+    const NQ_WCHAR* fileName,           /* file name */
     SYFile handle,                      /* file handle */
     const SYFileInformation* fileInfo   /* file information structure */
     );
@@ -524,7 +568,7 @@ sySetFileInformation(
 /* Query volume information */
 NQ_STATUS                               /* NQ_SUCCESS or NQ_FAIL */
 syGetVolumeInformation(
-    const NQ_TCHAR* name,               /* volume name */
+    const NQ_WCHAR* name,               /* volume name */
     SYVolumeInformation *info           /* buffer for information */
     );
 
@@ -567,6 +611,26 @@ syGetVolumeInformation(
 
 #define   syGetHostName(_name, _nameLen)       gethostname((_name), (_nameLen))
 
+#ifdef CM_NQ_STORAGE
+/*@@syGmtToString@NQ_BYTE *@NQ_COUNT@NQ_TIME@NQ_CHAR *
+   Description
+   This function converts system time into GMT time and prints
+   it according to the format (<i>fmt</i>).
+
+   <b><i><c> @GMT-%Y.%m.%d-%H.%M.%S</c></i></b>
+   Parameters
+   strTime :  The buffer to return the string.
+   size :     The buffer size.
+   t :        Time in seconds from Jan 1, 1970 (Unix time).
+   fmt :      The string format.
+   Returns
+   <i>TRUE</i> on success, <i>FALSE</i> on error.
+   Note
+   The format string in the example is currently the only one
+   that need be supported.                                     */
+NQ_BOOL syGmtToString(NQ_BYTE * strTime, NQ_COUNT size, NQ_UINT32 t, const NQ_CHAR * fmt);
+#endif
+
 /* find host IP by its name */
 NQ_IPADDRESS4                   /* host IP */
 syGetHostByName(
@@ -604,12 +668,14 @@ syGetMacAddress(
 
 /* Get adapter information */
 NQ_STATUS                   /* NQ_FAIL when there is no adapter with the given index,
-                               NQ_SUCCESS when adapter information awailable */
+                               NQ_SUCCESS when adapter information available */
 syGetAdapter(
     NQ_INDEX adapterIdx,    /* adapter number (zero based) */
+	NQ_INDEX * osIndex,		/* buffer for adapter index as defined by the OS */
     NQ_IPADDRESS4 *ip,      /* buffer for adapter IP in NBO */
     NQ_IPADDRESS6 *ip6,     /* buffer for adapter IPv6 in NBO */
     NQ_IPADDRESS4 *subnet,  /* buffer for subnet address in NBO */
+	NQ_IPADDRESS4* pBcast, 	/* buffer for bcast address in NBO */
     NQ_IPADDRESS4 *wins     /* buffer for wins address in NBO (may be 0 for a B-node) */
     );
 

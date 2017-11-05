@@ -16,23 +16,30 @@
  * CREATED BY    : Mark Rabinovich
  * LAST AUTHOR   : $Author:$
  ********************************************************************/
-
 #ifndef _UDPARAMS_H_
 #define _UDPARAMS_H_
 
-#define NQ_DEBUG
+#ifdef NQ_DEBUG
+#ifndef UD_NQ_INCLUDETRACE
 #define UD_NQ_INCLUDETRACE
+#endif
+#endif
+
+#define UD_NQ_INCLUDEBROWSERDAEMON
 /*  CIFS transport options
     ----------------------
    At least one transport should be defined
    Comment out lines with transports you don't want to be used */
 
-#define UD_NQ_USETRANSPORTNETBIOS    /* NetBIOS over TCP/IP */
-//#define UD_NQ_USETRANSPORTIPV4       /* plain TCP/IP */
-/*#define UD_NQ_USETRANSPORTIPV6*/     /* plain TCP/IP version 6 */
+#define UD_NQ_USETRANSPORTNETBIOS   /* NetBIOS over TCP/IP */
+#define UD_NQ_USETRANSPORTIPV4       /* plain TCP/IP */
+/*#define UD_NQ_USETRANSPORTIPV6 */    /* plain TCP/IP version 6 */
 
-#define UD_NQ_HOSTNAMESIZE          256  /* maximum length of the host name for the case of DNS 
-                                            as required by RFC. You can decrease this value to save of footprint */
+/*#define UD_NQ_INCLUDESMBCAPTURE */  /* Internal NQ Network packet capturing*/
+
+/* maximum length of the host name for the case of DNS 
+   as required by RFC. You can decrease this value to save of footprint */
+#define UD_NQ_HOSTNAMESIZE          256
 
 /* Application Interface
     ---------------------
@@ -42,7 +49,7 @@
   Unicode. When it is commented, the default interface is ASCII. This parameter affects
   definition of NQ_TCHAR */
 
-#define UD_CM_UNICODEAPPLICATION     /* comment this definition for ACSII application */
+#define UD_CM_UNICODEAPPLICATION    /* comment this definition for ACSII application */
 
 /*  Code pages configuration
     ------------------------
@@ -52,16 +59,17 @@
     All definitions should match the number of the code pages and shouldn't be redefined.
 */
 
-/* #define UD_NQ_INCLUDECODEPAGE */
-/* #define UD_NQ_CODEPAGE437      437  */ /* US */
-/* #define UD_NQ_CODEPAGE850      850  */ /* Multilingual Latin I */
-/* #define UD_NQ_CODEPAGE852      852  */ /* Latin II */
-/* #define UD_NQ_CODEPAGE858      858  */ /* Multilingual Latin I + Euro */
-/* #define UD_NQ_CODEPAGE862      862 */ /* Hebrew */
-/* #define UD_NQ_CODEPAGE932      932 */ /* Japanese Shift-JIS */
-/* #define UD_NQ_CODEPAGE936      936  */ /* Simplified Chinese GBK */
-/* #define UD_NQ_CODEPAGE949      949 */ /* Korean */
-/* #define UD_NQ_CODEPAGE950      950  */ /* Traditional Chinese Big5 */
+/*#define UD_NQ_INCLUDECODEPAGE*/
+/*#define UD_NQ_CODEPAGE437      437*/  /* US */
+/*#define UD_NQ_CODEPAGE850      850*/  /* Multilingual Latin I */
+/*#define UD_NQ_CODEPAGE852      852*/  /* Latin II */
+/*#define UD_NQ_CODEPAGE858      858*/  /* Multilingual Latin I + Euro */
+/*#define UD_NQ_CODEPAGE862      862*/  /* Hebrew */
+/*#define UD_NQ_CODEPAGE932      932*/  /* Japanese Shift-JIS */
+/*#define UD_NQ_CODEPAGE936      936*/  /* Simplified Chinese GBK */
+/*#define UD_NQ_CODEPAGE949      949*/  /* Korean */
+/*#define UD_NQ_CODEPAGE950      950*/  /* Traditional Chinese Big5 */
+/*#define UD_NQ_CODEPAGEUTF8     8  */  /* UTF-8  */
 
 /*  Event logging
     -------------
@@ -70,7 +78,7 @@
     Turning on this option requires implementing those logging callbacks in UD.
 */
 
-#define UD_NQ_INCLUDEEVENTLOG   /* comment this line to exclude event logging and information calls */
+/*#define UD_NQ_INCLUDEEVENTLOG*/  /* comment this line to exclude event logging and information calls */
 
  /*
     NS resources
@@ -121,8 +129,15 @@
 #define UD_NS_NUMNDCHANNELS     2       /* number of sockets to internally connect to ND */
 #define UD_NS_NUMDDCHANNELS     2       /* number of sockets to internally connect to DD */
 
+/* Various sockets, like name resolution sockets, can be either left open
+   all the time or opened and closed per usage. When the following parameter is defined,
+   sockets are opened and closed per usage. When software resides in untrusted network,
+   it is advisable to enable the following parameter. */
+
+/*#define UD_NQ_CLOSESOCKETS*/
+
 /* Buffer size: 
- * This value should be at least 64K+headers for NQ to support SMB2. This hapens because 
+ * This value should be at least 64K+headers for NQ to support SMB2. This happens because
  * Windows 7 does not appreciate server's limits 
  * Buffers size for SMB1 support may be any number greater than 1460. A multiple of 1460
  * is recommended to decrease TCP fragmentation. */
@@ -138,24 +153,30 @@
 /* The following two ports are used for internal communications. Their numbers should not
    be used by other network protocols on the target. */
 
-#define UD_BR_INTERNALIPCPORT   1021     /* internal Browser Service */
-#define UD_NS_INTERNALNSPORT    1022     /* internal Name Service */
-#define UD_NS_INTERNALDSPORT    1023     /* internal Datagram Distribution Service */
+#define UD_BR_INTERNALIPCPORT   1025     /* internal Browser Service */
+#define UD_NS_INTERNALNSPORT    1026     /* internal Name Service */
+#define UD_NS_INTERNALDSPORT    1027     /* internal Datagram Distribution Service */
 
 #define UD_ND_DAEMONTIMEOUT     1       /* seconds waiting for incoming NetBIOS message */
 #define UD_ND_MAXINTERNALNAMES  20      /* maximum number of internal NetBIOS names */
 #define UD_ND_MAXEXTERNALNAMES  20      /* maximum number of external NetBIOS names */
 #define UD_ND_REGISTRATIONCOUNT 3       /* repeat count for registration */
 #define UD_ND_MAXQUERYREQUESTS  3       /* number of concurrent query requests to the same name */
-
 #define UD_NQ_MAXDNSSERVERS     4       /* maximum number of DNS servers */
-#define UD_NQ_MAXWINSSERVERS     4       /* maximum number of DNS servers */
+#define UD_NQ_MAXWINSSERVERS    4       /* maximum number of WINS servers */
 /* Some implementations contain external (non NQ) NetBIOS implementation. In this case NQ
    should be compiled without NetBIOS. When this definition is omitted, UD_CS_INCLUDEPASSTHROUGH,
    UD_NB_INCLUDENAMESERVICE and UD_NB_RETARGETSESSIONS (see below) should be also omitted.
-   Otherwise, there will be an error during preprocessing */
+   Otherwise, there will be an error during pre-processing */
 
 #define UD_ND_INCLUDENBDAEMON       /* comment this line for no NQ NetBIOS */
+
+/* When NetBIOS is defined, NQ may use it for DC resolution. With a B-node this resolution may slow down the
+   entire DC resolution because of broadcast response timeout. This may become very time-costly with DFS enabled.
+   The following parameter, when defined forces NQ to skip DC resolution over NetBIOS even when NetBIOS is
+   available. */
+
+/* #define UD_NQ_AVOIDDCRESOLUTIONNETBIOS */    /* comment this line to use 1b resolution over NetBIOS. */
 
 /* NetBIOS may support more than one server application on the target (more than just
    CIFS Server). For this reason Session Request messages should be accepted by the NetBIOS
@@ -196,20 +217,39 @@
    for asynchronous socket operations. */
 
 /* #define UD_NS_ASYNCSEND */             /* Comment this line to use synchronous send */
+/* When this parameter is defined NetBIOS component skips host name registration. */
 
-#define UD_NQ_INCLUDESMB2               /* comment this line to disable SMB2 support */
+/*#define UD_CM_DONOTREGISTERHOSTNAMENETBIOS*/
+
+/* When this parameter is defined DNS component skips host name registration. */
+
+/*#define UD_CM_DONOTREGISTERHOSTNAMEDNS*/
+
+#define UD_NQ_INCLUDESMB2              /* comment this line to disable SMB2 support */
+#define UD_NQ_INCLUDESMB3              /* comment this line to disable SMB3 support */
+#define UD_NQ_INCLUDESMB311            /* comment this line to disable SMB3.1.1 support */
 #define UD_CS_INCLUDEPERSISTENTFIDS    /* comment this line to disable SMB2 durable file ID support */
-#define UD_CS_FORCEINTERIMRESPONSES    /* comment this line to supress sending interim responses */
+/*#define UD_CS_FORCEINTERIMRESPONSES*/    /* comment this line to suppress sending interim responses */
+
+
+/* Default number of credits NQ server grants:
+   The bigger number may cause timeout on bulk upload/download operation,
+   especially when the client is W2k8 Server.*/
+#define UD_CS_SMB2_NUMCREDITS 30
 
 /* When this parameter is defined message signing is supported and can take the following values:
    1    message signing enabled, but not required
    2    message signing required   
-   Comment out this parameter to disable message signing support */
+   Comment out this parameter to disable message signing support
+   NOTE: Windows 8 and above require message signing to be at least 1 */
 
 #define UD_CS_MESSAGESIGNINGPOLICY  1
 
 /* When this parameter is defined NQ Server joins its default domain */
 #define UD_CS_INCLUDEDOMAINMEMBERSHIP
+
+#define UD_CM_SECURITYDESCRIPTORLENGTH 512  /* maximum length of a SD in bytes */
+#define UD_CM_MAXUSERGROUPS 5               /* maximum number of groups a user may be member of */
 
 /*
     CIFS server parameters
@@ -237,6 +277,10 @@
    also the number of client computers that may be simultaneously connected to NQ Server. */
 #define UD_FS_NUMSERVERSESSIONS        50
 
+/* if this parameter is defined , when session table is full , the new connection will be refused.
+   if it isn't defined the least active connection will be released */
+/*#define UD_CS_REFUSEONSESSIONTABLEOVERFLOW*/
+
 /* number of connection requests that may be queued during one listen() call */
 #define UD_FS_LISTENQUEUELEN    10
 
@@ -258,16 +302,16 @@
 /* Maximum number of opened files (FIDs) */
 #define UD_FS_NUMSERVERFILEOPEN      65
 
-/* Maximum filename length in host filesystem characters */
+/* Maximum filename length in host file system characters */
 #define UD_FS_FILENAMELEN           256     /* full path, this is the VxWorks restriction */
 #define UD_FS_FILENAMECOMPONENTLEN  256     /* of one component */
 
-/* Filesystem name as reported to a CIFS client */
+/* File system name as reported to a CIFS client */
 #define UD_FS_FILESYSTEMNAME    "NTFS"      /* recommended to keep it NTFS to avoid problems with Windows 9x/ME */
 
 /* CIFS requires server to report its File System's ID. NT should report zero, while
-   other filesystems are not specified, so - this number does not play much sense. However,
-   it should be other then 0 if the target FS is not NT. */
+   other file systems are not specified, so - this number is not very critical. But, do notice
+   it should be other then 0 if the target file system is not NT. */
 #define UD_FS_FILESYSTEMID      1
 
 /* File access flags:
@@ -290,7 +334,7 @@
     SYNCHRONIZE             0x00100000  The file handle can waited on to synchronize with the
                                         completion of an input/output request
 
-    these bitsets are different for a file and a directory.
+    these bit sets are different for a file and a directory.
  */
 
 #define UD_FS_DIRECTORYACCESSFLAGS  0x000000A9  /* recommended value */
@@ -317,7 +361,7 @@
 
 #define UD_FS_BUFFERALIGNMENT  0x3      /* recommended value */
 
-/* Filesystem attributes may have any combination of the following values:
+/* File system attributes may have any combination of the following values:
     CM_FS_CASESENSITIVESEARCH  0x00000001
     CM_FS_CASEPRESERVEDNAMES   0x00000002
     CM_FS_PERSISTENTACLS       0x00000004
@@ -328,19 +372,20 @@
 
 #define UD_FS_FILESYSTEMATTRIBUTES 3    /* recommended value (can not use the actual names defined in cmfscifs.h */
 
-#define UD_FS_READAHEAD     /* define this parameter to allow pre-reading (optimistic
-                               locking assumed) */
+#define UD_FS_READAHEAD     /* define this parameter to allow pre-reading (optimistic locking assumed) */
 
+/*#define UD_CS_AVOIDSHAREACCESSCHECK */    /* define this parameter to avoid checking share before approving TreeConnect*/
 #define UD_CS_INCLUDESECURITYDESCRIPTORS    /* define this parameter if SDs are supported */
-#define UD_CS_INCLUDELOCALUSERMANAGEMENT     /* define this parameter to be able to set personal ACL for a local user */
-#define UD_CS_SECURITYDESCRIPTORLENGTH 300  /* maximum length of a SD in bytes */
-#define UD_CS_MAXUSERGROUPS 5               /* maximum number of groups a user may be member of */
+/*#define UD_CS_INCLUDELOCALUSERMANAGEMENT*//* define this parameter to be able to set personal ACL for a local user */
+/*#define UD_CS_AUTHENTICATEANONYMOUS  */   /* allow anonymous user authentication */
 
 #define UD_CS_INCLUDEEXTENDEDSECURITY       /* SPNEGO NTLMSSP support */
 
-/*#define UD_CS_INCLUDEDIRECTTRANSFER*/     /* allow socket-to-file transfer */
+/*#define UD_CS_INCLUDEDIRECTTRANSFER*/		/* allow socket-to-file transfer */
 
-//#define UD_CS_HIDE_NOACCESS_SHARE       /* define this parameter to hide shares for users that have no rights to use them */
+/*#define UD_CS_HIDE_NOACCESS_SHARE*/       /* define this parameter to hide shares for users that have no rights to use them */
+
+/*#define UD_CS_ALLOW_NONENCRYPTED_ACCESS_TO_ENCRYPTED_SHARE*/ /* define this parameter to allow non encrypted access to encrypted share */
 
 /*
     CIFS Server RPC configuration
@@ -354,15 +399,15 @@
 #define UD_CS_INCLUDERPC             /* define this parameter to include any services */
 #define UD_CS_INCLUDERPC_SRVSVC      /* define this parameter to include SRVSVC pipe */
 #define UD_CS_INCLUDERPC_WKSSVC      /* define this parameter to include WKSSVC pipe */
-/*#define UD_CS_INCLUDERPC_SPOOLSS*/     /* define this parameter to include SPOOLSS pipe */
-#define UD_CS_INCLUDERPC_LSARPC      /* define this parameter to include LSA pipe */
-#define UD_CS_INCLUDERPC_SAMRPC     /* define this parameter to include SAMR pipe */
+/*#define UD_CS_INCLUDERPC_SPOOLSS */    /* define this parameter to include SPOOLSS pipe */
+/*#define UD_CS_INCLUDERPC_LSARPC*/      /* define this parameter to include LSA pipe */
+/*#define UD_CS_INCLUDERPC_SAMRPC*/      /* define this parameter to include SAMR pipe */
 #define UD_CS_INCLUDERPC_SRVSVC_EXTENSION     /* define this parameter to include the extension of SRVSVC pipe */
 #define UD_CS_INCLUDERPC_WINREG               /* define this parameter to include WINREG pipe */
 
 /* SPOOLSS parameters */
 
-#define UD_CS_SPOOLSS_MAXOPENPRINTERS 50 /* maximum number of simultaneous OpenPrinter(Ex) operations */
+#define UD_CS_SPOOLSS_MAXOPENPRINTERS 50	  /* maximum number of simultaneous OpenPrinter(Ex) operations */
 
 /*
     CIFS client parameters
@@ -377,39 +422,29 @@
 
 #define UD_CC_CLIENTRESPONSETIMEOUT 15
 
-/* buffer sizes */
+/* maximum number of client retry times*/
+/*#define UD_CC_CLIENTRETRYCOUNT      3*/
 
-#define UD_CC_READBUFFERSIZE        4096/* Size of the file read buffer.
-                                           If set to 0 the buffered read is disabled */
-#define UD_CC_MOUNTTABSIZE          30  /* size of the mount table - defines the number of
-                                           simultaneously existing "mount points" - target-side
-                                           aliases of remote share paths */
-#define UD_CC_SEARCHHANDLETABSIZE   8   /* maximum number of concurrently active search
-                                           operations */
-#define UD_CC_FILEHANDLETABSIZE     32  /* maximum number of concurrently opened files */
-#define UD_CC_SESSIONTABSIZE        16  /* maximum number of sessions */
-#define UD_CC_CONNECTIONTABSIZE     32  /* maximum number of connections */
+/* maximum number of client retry times when browsing*/
+/*#define UD_CC_BROWSERETRYCOUNT      3 */
 
-/* #define UD_CC_INCLUDEDFS */            /* uncomment this line for DFS support in the client */
+/*#define UD_CC_INCLUDEDFS */            /* uncomment this line for DFS support in the client */
+
 
 #define UD_CC_INCLUDEEXTENDEDSECURITY   /* comment this line to restrict */
 /*#define UD_CC_INCLUDEEXTENDEDSECURITY_KERBEROS */
 
-/*#define UD_CC_INCLUDESECURITYDESCRIPTORS */ /* define this parameter to include security descriptors */
-#define UD_CC_INCLUDEDOMAINMEMBERSHIP    /* define this parameter to include domain membership functionality */
-/*#define UD_CC_INCLUDELDAP */                /* define this parameter to include ldap functionality */
-/*#define UD_CC_INCLUDEFSDRIVER */            /* define this parameter to include file system driver functionality (currently FUSE) */
+/*#define UD_CC_INCLUDESECURITYDESCRIPTORS*/  /* define this parameter to include security descriptors */
+#define UD_CC_INCLUDEDOMAINMEMBERSHIP         /* define this parameter to include domain membership functionality */
+/*#define UD_CC_INCLUDELDAP   */              /* define this parameter to include ldap functionality */
+/*#define UD_CC_INCLUDEFSDRIVER*/             /* define this parameter to include file system driver functionality (currently FUSE) */
 
-/*
-    BROWSER client parameters
-    -------------------------
-*/
+#define UD_CC_INCLUDEOLDBROWSERAPI            /* old style browser API */
 
-/* comment out the next line if your configuration does not contain NO browser */
+#define UD_CC_CACHECREDENTIALS                /* include credentials caching mechanism */
 
-#define UD_NQ_INCLUDEBROWSERDAEMON
-#define UD_CC_INCLUDEOLDBROWSERAPI
-
-#define UD_BR_MAXSTOREDDOMAINS  16    /* number of domains cached in browser */
+/* File name for capture output. This parameter is only used when
+   the UD_NQ_INCLUDESMBCAPTURE Macro is defined. */
+#define UD_CM_CAPTURE_FILENAME "nq.pcap"
 
 #endif  /* _UDPARAMS_H_ */

@@ -38,7 +38,7 @@ udDefStop(
 
 void
 udDefGetScopeID(
-    NQ_TCHAR *buffer        /* buffer for the result */
+    NQ_WCHAR *buffer        /* buffer for the result */
     );
 
 /* get wins address information */
@@ -52,7 +52,7 @@ udDefGetWins(
 
 void
 udDefGetDomain(
-    NQ_TCHAR *buffer,       /* buffer for the result */
+    NQ_WCHAR *buffer,       /* buffer for the result */
     NQ_BOOL *isWorkgroup    /* TRUE if the name is a workgroup name */
     );
 
@@ -61,8 +61,8 @@ udDefGetDomain(
 
 void
 udDefGetDnsParams(
-    NQ_TCHAR *domain,       /* The default domain target belongs to */
-    NQ_TCHAR *server        /* The DNS server IP address */
+    NQ_WCHAR *domain,       /* The default domain target belongs to */
+    NQ_WCHAR *server        /* The DNS server IP address */
     );
 #endif /* defined(UD_NQ_USETRANSPORTIPV4) || defined(UD_NQ_USETRANSPORTIPV6) */
 
@@ -70,34 +70,34 @@ udDefGetDnsParams(
 NQ_BOOL                     /* TRUE - got credentials, FALSE - failed */
 udDefGetCredentials(
     const void* resource,   /* URI about to connect to */
-    NQ_TCHAR* userName,     /* buffer for user name */
-    NQ_TCHAR* password,     /* buffer for password */
-    NQ_TCHAR* domain        /* buffer for domain name */
+    NQ_WCHAR* userName,     /* buffer for user name */
+    NQ_WCHAR* password,     /* buffer for password */
+    NQ_WCHAR* domain        /* buffer for domain name */
     );
 
 /* get next share in the list of shares for CS */
 
 NQ_BOOL                     /* TRUE - a share read FALSE - no more shares */
 udDefGetNextShare(
-    NQ_TCHAR* name,         /* buffer for share name */
-    NQ_TCHAR* map,          /* buffer for the map path */
+    NQ_WCHAR* name,         /* buffer for share name */
+    NQ_WCHAR* map,          /* buffer for the map path */
     NQ_BOOL* printQueue,    /* buffer getting 0 for file system and 1 for print queue */
-    NQ_TCHAR* description   /* buffer for the share description */
+    NQ_WCHAR* description   /* buffer for the share description */
     );
 
 /* get next mount in the list of mounted volumes for CC */
 
 NQ_BOOL                     /* TRUE more valumes in the list, FALSE when no more volumes available */
 udDefGetNextMount(
-    NQ_TCHAR* name,         /* buffer for volume name */
-    NQ_TCHAR* map           /* buffer for the map path */
+    NQ_WCHAR* name,         /* buffer for volume name */
+    NQ_WCHAR* map           /* buffer for the map path */
     );
 
 /* check password for a specific user */
 
 NQ_INT              /* See values in udapi.h */
 udDefGetPassword(
-    const NQ_TCHAR* userName,   /* user name */
+    const NQ_WCHAR* userName,   /* user name */
     NQ_CHAR* password,          /* buffer for password */
     NQ_BOOL* pwdIsHashed,       /* TRUE - paasword hashed, FALSE - plain text */
     NQ_UINT32* userNumber       /* >1000 for administrators */
@@ -140,7 +140,7 @@ udDefGetTaskPriorities(
 
 void
 udDefGetServerComment(
-    NQ_TCHAR *buffer        /* buffer for the result */
+    NQ_WCHAR *buffer        /* buffer for the result */
     );
 
 /* get CIFS driver name */
@@ -183,7 +183,7 @@ udDefGetComputerId(
 
 NQ_COUNT                        /* SD length or zero on error */
 udDefLoadShareSecurityDescriptor(
-    const NQ_TCHAR* shareName,  /* share name */
+    const NQ_WCHAR* shareName,  /* share name */
     NQ_BYTE* buffer,            /* buffer to read SD in */
     NQ_COUNT bufferLen          /* buffer length */
     );
@@ -192,7 +192,7 @@ udDefLoadShareSecurityDescriptor(
 
 void
 udDefSaveShareSecurityDescriptor(
-    const NQ_TCHAR* shareName,  /* share name */
+    const NQ_WCHAR* shareName,  /* share name */
     const NQ_BYTE* sd,          /* pointer to SD */
     NQ_COUNT sdLen              /* SD length */
     );
@@ -210,7 +210,7 @@ udDefGetUserCount(
 
 NQ_BOOL                         /* TRUE when user was found */
 udDefGetUserRidByName(
-    const NQ_TCHAR* name,       /* user name */
+    const NQ_WCHAR* name,       /* user name */
     NQ_UINT32* rid              /* buffer for user ID */
     );
 
@@ -219,8 +219,8 @@ udDefGetUserRidByName(
 NQ_BOOL                         /* TRUE when user was found */
 udDefGetUserNameByRid(
     NQ_UINT32 rid,              /* user id */
-    NQ_TCHAR* nameBuffer,       /* buffer for user name */
-    NQ_TCHAR* fullNamebuffer    /* buffer for full user name */
+    NQ_WCHAR* nameBuffer,       /* buffer for user name */
+    NQ_WCHAR* fullNamebuffer    /* buffer for full user name */
     );
 
 /* enumerate users */
@@ -229,9 +229,9 @@ NQ_BOOL                         /* TRUE when user was available */
 udDefGetUserInfo(
     NQ_UINT index,              /* user index (zero based) */
     NQ_UINT32* rid,             /* user id */
-    NQ_TCHAR* name,             /* buffer for user name */
-    NQ_TCHAR* fullName,         /* buffer for full user name */
-    NQ_TCHAR* description       /* buffer for full user name */
+    NQ_WCHAR* name,             /* buffer for user name */
+    NQ_WCHAR* fullName,         /* buffer for full user name */
+    NQ_WCHAR* description       /* buffer for full user name */
     );
 
 /* modify user */
@@ -239,9 +239,9 @@ udDefGetUserInfo(
 NQ_BOOL                        /* TRUE when user was added/modified */
 udDefSetUserInfo(
     NQ_UINT32 rid,                  /* user RID */
-    const NQ_TCHAR* name,           /* user name */
-    const NQ_TCHAR* fullName,       /* full user name */
-    const NQ_TCHAR* description,    /* buffer for full user name */
+    const NQ_WCHAR* name,           /* user name */
+    const NQ_WCHAR* fullName,       /* full user name */
+    const NQ_WCHAR* description,    /* buffer for full user name */
     const NQ_WCHAR* password        /* Unicode text password or NULL */
     );
 
@@ -249,9 +249,9 @@ udDefSetUserInfo(
 
 NQ_BOOL                        /* TRUE when user was added/modified */
 udDefCreateUser(
-    const NQ_TCHAR* name,           /* user name */
-    const NQ_TCHAR* fullName,       /* full user name */
-    const NQ_TCHAR* description     /* user description */
+    const NQ_WCHAR* name,           /* user name */
+    const NQ_WCHAR* fullName,       /* full user name */
+    const NQ_WCHAR* description     /* user description */
     );
 
 /* set user administrative rights */
@@ -280,17 +280,17 @@ udDefDeleteUserByRid(
 
 NQ_BOOL
 udDefSaveShareInformation(
-    const NQ_TCHAR* name,           /* share to modify or NULL for a new share */
-    const NQ_TCHAR* newName,        /* new share name */
-    const NQ_TCHAR* newMap,         /* new share path */
-    const NQ_TCHAR* newDescription  /* new share description */
+    const NQ_WCHAR* name,           /* share to modify or NULL for a new share */
+    const NQ_WCHAR* newName,        /* new share name */
+    const NQ_WCHAR* newMap,         /* new share path */
+    const NQ_WCHAR* newDescription  /* new share description */
     );
 
 /* remove share from the persistent store */
 
 NQ_BOOL
 udDefRemoveShare(
-    const NQ_TCHAR* name            /* share to remove */
+    const NQ_WCHAR* name            /* share to remove */
     );
 
 #endif /* UD_CS_INCLUDERPC_SRVSVC_EXTENSION */
@@ -304,7 +304,7 @@ udDefEventLog (
     NQ_UINT module,                 /* NQ module that originated this event */
     NQ_UINT class,                  /* event class */
     NQ_UINT type,                   /* event type */
-    const NQ_TCHAR* userName,       /* name of the user */
+    const NQ_WCHAR* userName,       /* name of the user */
     const NQ_IPADDRESS* pIp,        /* next side IP address */
     NQ_UINT32 status,               /* zero if the operation has succeeded or error code on failure
                                        for server event this code is the same that will be transmitted

@@ -1385,6 +1385,7 @@ getAttr(
     struct stat *statBuf
     )
 {
+    NQ_TIME tmpTime;
     syMemset(statBuf, 0, sizeof(*statBuf));
 
     /* set st_mode - important */
@@ -1397,13 +1398,26 @@ getAttr(
     if (fileInfo->attributes & CIFS_ATTR_READONLY)
         statBuf->st_mode &= ~(mode_t)(S_IWUSR | S_IWGRP | S_IWOTH);    
 
-    statBuf->st_atime = (time_t)cmCifsUTCToTime(fileInfo->lastAccessTimeLow, fileInfo->lastAccessTimeHigh);
-    statBuf->st_ctime = statBuf->st_mtime = (time_t)cmCifsUTCToTime(fileInfo->lastWriteTimeLow, fileInfo->lastWriteTimeHigh);
+    tmpTime = cmCifsUTCToTime(fileInfo->lastAccessTimeLow, fileInfo->lastAccessTimeHigh);
+    statBuf->st_atime = (time_t)cmTimeConvertMSecToSec(&tmpTime);
+    tmpTime = cmCifsUTCToTime(fileInfo->lastWriteTimeLow, fileInfo->lastWriteTimeHigh);
+    statBuf->st_ctime = statBuf->st_mtime = (time_t)cmTimeConvertMSecToSec(&tmpTime);
 
     statBuf->st_uid = fuse_get_context()->uid;
     statBuf->st_gid = fuse_get_context()->gid;
 
-    statBuf->st_size = (off_t)((fileInfo->attributes & CIFS_ATTR_DIR) ? 4096 : fileInfo->fileSizeLow);
+    if (fileInfo->attributes & CIFS_ATTR_DIR)
+    {
+      statBuf->st_size = (off_t)fileInfo->allocationSizeHigh;
+      statBuf->st_size <<= 32;
+      statBuf->st_size |= (off_t)fileInfo->allocationSizeLow;
+    }
+    else
+    {
+        statBuf->st_size = (off_t)fileInfo->fileSizeHigh;
+        statBuf->st_size <<= 32;
+        statBuf->st_size |= (off_t)fileInfo->fileSizeLow;
+    }
     statBuf->st_nlink = fileInfo->numberOfLinks;
     statBuf->st_blksize = 512;
     statBuf->st_blocks = (statBuf->st_size + 511)/512;

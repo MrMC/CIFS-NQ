@@ -353,18 +353,18 @@ udDefStop(
 
 void
 udDefGetScopeID(
-    NQ_TCHAR* buffer
+    NQ_WCHAR* buffer
     )
 {
     if (!staticData->netBiosConfigFlag)
         parseNetBiosConfig();
     if (staticData->scopeIdPtr != 0)
     {
-        cmAnsiToTchar(buffer, staticData->scopeIdPtr);
+        syAnsiToUnicode(buffer, staticData->scopeIdPtr);
     }
     else
     {
-        cmAnsiToTchar(buffer, "");
+        syAnsiToUnicode(buffer, "");
     }
 }
 
@@ -408,7 +408,7 @@ udDefGetWins(
 #if 0
 void
 udDefGetDomain(
-    NQ_TCHAR *buffer,
+    NQ_WCHAR *buffer,
     NQ_BOOL  *isWorkgroup
     )
 {
@@ -417,7 +417,7 @@ udDefGetDomain(
         parseNetBiosConfig();
     }
 
-    cmAnsiToTchar(buffer, staticData->domainNameOfServer);
+    syAnsiToUnicode(buffer, staticData->domainNameOfServer);
     *isWorkgroup = staticData->isWorkgroupName;
 }
 #endif
@@ -438,18 +438,18 @@ udDefGetDomain(
 
 void
 udDefGetDnsParams(
-    NQ_TCHAR *domain,
-    NQ_TCHAR *server
+    NQ_WCHAR *domain,
+    NQ_WCHAR *server
     )
 {
-    /*cmAnsiToTchar(domain, NQ_DNSDOMAIN);*/
+    /*syAnsiToUnicode(domain, NQ_DNSDOMAIN);*/
     if (!staticData->netBiosConfigFlag)
     {
         parseNetBiosConfig();
     }
-    cmAnsiToTchar(domain, staticData->domainNameOfServer);
+    syAnsiToUnicode(domain, staticData->domainNameOfServer);
 
-    cmAnsiToTchar(server, NQ_DNSADDRESS);
+    syAnsiToUnicode(server, NQ_DNSADDRESS);
 }
 
 #endif /* defined(UD_NQ_USETRANSPORTIPV4) || defined(UD_NQ_USETRANSPORTIPV6) */
@@ -473,14 +473,14 @@ udDefGetDnsParams(
 NQ_BOOL
 udDefGetCredentials(
     const void* resource,
-    NQ_TCHAR* userName,
-    NQ_TCHAR* password,
-    NQ_TCHAR* domain
+    NQ_WCHAR* userName,
+    NQ_WCHAR* password,
+    NQ_WCHAR* domain
     )
 {
-    cmAnsiToTchar(userName, staticData->userName);
-    cmAnsiToTchar(password, staticData->password);
-    cmAnsiToTchar(domain, staticData->domainNameOfClient);
+    syAnsiToUnicode(userName, staticData->userName);
+    syAnsiToUnicode(password, staticData->password);
+    syAnsiToUnicode(domain, staticData->domainNameOfClient);
 
     return TRUE;
 }
@@ -505,10 +505,10 @@ udDefGetCredentials(
 #if 0
 NQ_BOOL
 udDefGetNextShare(
-    NQ_TCHAR* name,
-    NQ_TCHAR* map,
+    NQ_WCHAR* name,
+    NQ_WCHAR* map,
     NQ_BOOL* printQueue,
-    NQ_TCHAR* description
+    NQ_WCHAR* description
     )
 {
     NQ_STATIC char nameA[256];
@@ -531,9 +531,9 @@ udDefGetNextShare(
             else
             {
                 staticData->defaultShareReported = 1;
-                cmAnsiToTchar(name, "Root");
-                cmAnsiToTchar(map, NQ_CONFIGPATH);
-                cmAnsiToTchar(description, "Default root (no configuration file provided)");
+                syAnsiToUnicode(name, "Root");
+                syAnsiToUnicode(map, NQ_CONFIGPATH);
+                syAnsiToUnicode(description, "Default root (no configuration file provided)");
                 *printQueue = FALSE;
                 return TRUE;
             }
@@ -551,9 +551,9 @@ udDefGetNextShare(
             if (!staticData->hiddenShareReported)
             {
                 /*  return default hidden C$ share */
-                cmAnsiToTchar(name, "C$");
-                cmAnsiToTchar(map, NQ_CONFIGPATH);
-                cmAnsiToTchar(description, "Default share");
+                syAnsiToUnicode(name, "C$");
+                syAnsiToUnicode(map, NQ_CONFIGPATH);
+                syAnsiToUnicode(description, "Default share");
                 *printQueue = FALSE;
                 staticData->hiddenShareReported = 1;
                 return TRUE;
@@ -574,9 +574,9 @@ udDefGetNextShare(
                 if (parseDelimiter(&staticData->shareParser, ';'))
                 {
                     parseValue(&staticData->shareParser, descriptionA, 256, (char)0);  /* share description */
-                    cmAnsiToTchar(name, nameA);
-                    cmAnsiToTchar(map, mapA);
-                    cmAnsiToTchar(description, descriptionA);
+                    syAnsiToUnicode(name, nameA);
+                    syAnsiToUnicode(map, mapA);
+                    syAnsiToUnicode(description, descriptionA);
                     *printQueue = 0;
                     return TRUE;   /* a share read */
                 }
@@ -602,8 +602,8 @@ udDefGetNextShare(
 
 NQ_BOOL
 udDefGetNextMount(
-    NQ_TCHAR* name,
-    NQ_TCHAR* map
+    NQ_WCHAR* name,
+    NQ_WCHAR* map
     )
 {
     NQ_STATIC char nameA[256];
@@ -642,8 +642,8 @@ udDefGetNextMount(
             {
                 parseValue(&staticData->mountParser, mapA, 256, ';');   /* share path */
                 parseSkipLine(&staticData->mountParser);
-                cmAnsiToTchar(name, nameA);
-                cmAnsiToTchar(map, mapA);
+                syAnsiToUnicode(name, nameA);
+                syAnsiToUnicode(map, mapA);
                 return TRUE;
             }
         }
@@ -686,10 +686,10 @@ udDefGetTaskPriorities(
 
 void
 udDefGetServerComment(
-    NQ_TCHAR* buffer
+    NQ_WCHAR* buffer
     )
 {
-    cmAnsiToTchar(buffer, NQ_SERVERCOMMENT);
+    syAnsiToUnicode(buffer, NQ_SERVERCOMMENT);
 }
 
 /*
@@ -717,7 +717,7 @@ udDefGetServerComment(
 #if 0
 NQ_INT
 udDefGetPassword(
-    const NQ_TCHAR* userName,
+    const NQ_WCHAR* userName,
     NQ_CHAR* password,
     NQ_BOOL* pwdIsHashed,
     NQ_UINT32* userNumber
@@ -731,7 +731,7 @@ udDefGetPassword(
 
     /* start parsing passwords */
 
-    cmTcharToAnsi(userNameA, userName);
+    syUnicodeToAnsi(userNameA, userName);
 
     for (i = 0; i < strlen(userNameA); i++)
     {
@@ -932,7 +932,7 @@ udDefGetComputerId(
 
 NQ_COUNT
 udDefLoadShareSecurityDescriptor(
-    const NQ_TCHAR* shareName,
+    const NQ_WCHAR* shareName,
     NQ_BYTE* buffer,
     NQ_COUNT bufferLen
     )
@@ -943,7 +943,7 @@ udDefLoadShareSecurityDescriptor(
     int file;
     NQ_COUNT res = 0;
 
-    cmTcharToAnsi(nameA, shareName);
+    syUnicodeToAnsi(nameA, shareName);
 
     file = open(staticData->shareSdFile, O_RDONLY, 0777); /* start parsing */
     if (ERROR == file)
@@ -1018,7 +1018,7 @@ udDefLoadShareSecurityDescriptor(
 
 void
 udDefSaveShareSecurityDescriptor(
-    const NQ_TCHAR* shareName,
+    const NQ_WCHAR* shareName,
     const NQ_BYTE* sd,
     NQ_COUNT sdLen
     )
@@ -1027,7 +1027,7 @@ udDefSaveShareSecurityDescriptor(
     int file;
     int recNum;
 
-    cmTcharToAnsi(nameA, shareName);
+    syUnicodeToAnsi(nameA, shareName);
 
     if (sdLen > SD_SDLEN)
         return;
@@ -1159,7 +1159,7 @@ udDefGetUserCount(
 
 NQ_BOOL
 udDefGetUserRidByName(
-    const NQ_TCHAR* name,
+    const NQ_WCHAR* name,
     NQ_UINT32* rid
     )
 {
@@ -1172,7 +1172,7 @@ udDefGetUserRidByName(
 
     /* start parsing passwords */
 
-    cmTcharToAnsi(userNameA, name);
+    syUnicodeToAnsi(userNameA, name);
 
     for (i = 0; i < strlen(userNameA); i++)
     {
@@ -1251,8 +1251,8 @@ udDefGetUserRidByName(
 NQ_BOOL
 udDefGetUserNameByRid(
     NQ_UINT32 rid,
-    NQ_TCHAR* nameBuffer,
-    NQ_TCHAR* fullNameBuffer
+    NQ_WCHAR* nameBuffer,
+    NQ_WCHAR* fullNameBuffer
     )
 {
     ParseContext userParser;    /* parser for reading the password list */
@@ -1304,8 +1304,8 @@ udDefGetUserNameByRid(
 
         if ((NQ_INT)rid == (NQ_INT)atol(userNumText))
         {
-            cmAnsiToTchar(nameBuffer, name);
-            cmAnsiToTchar(fullNameBuffer, name);
+            syAnsiToUnicode(nameBuffer, name);
+            syAnsiToUnicode(fullNameBuffer, name);
             parseStop(&userParser);
             return TRUE; /* user found */
         }
@@ -1332,9 +1332,9 @@ NQ_BOOL
 udDefGetUserInfo(
     NQ_UINT index,
     NQ_UINT32* rid,
-    NQ_TCHAR* shortName,
-    NQ_TCHAR* fullName,
-    NQ_TCHAR* description
+    NQ_WCHAR* shortName,
+    NQ_WCHAR* fullName,
+    NQ_WCHAR* description
     )
 {
     ParseContext userParser;    /* parser for reading the password list */
@@ -1387,9 +1387,9 @@ udDefGetUserInfo(
         if (index-- <= 0)
         {
             *rid = (NQ_UINT32)atol(userNumText);
-            cmAnsiToTchar(shortName, name);
-            cmAnsiToTchar(fullName, name);
-            cmAnsiToTchar(description, ((NQ_INT)*rid) < 0? "Administrator":"Ordinary user");
+            syAnsiToUnicode(shortName, name);
+            syAnsiToUnicode(fullName, name);
+            syAnsiToUnicode(description, ((NQ_INT)*rid) < 0? "Administrator":"Ordinary user");
             parseStop(&userParser);
             return TRUE; /* user found */
         }
@@ -1416,9 +1416,9 @@ NQ_BOOL
 udDefSetUserInfo
 (
     NQ_UINT32 rid,
-    const NQ_TCHAR* name,
-    const NQ_TCHAR* fullName,
-    const NQ_TCHAR* description,
+    const NQ_WCHAR* name,
+    const NQ_WCHAR* fullName,
+    const NQ_WCHAR* description,
     const NQ_WCHAR* password
     )
 {
@@ -1433,7 +1433,7 @@ udDefSetUserInfo
     int oldUser = 0;                    /* user exists */
     NQ_INT nextRid;
 
-    cmTcharToAnsi(userNameA, name);
+    syUnicodeToAnsi(userNameA, name);
 
     /* create temporary file */
     tempFile = fopen((const char*)staticData->tempFileName, "a+");
@@ -1540,9 +1540,9 @@ udDefSetUserInfo
 
 NQ_BOOL
 udDefCreateUser(
-    const NQ_TCHAR* name,
-    const NQ_TCHAR* fullName,
-    const NQ_TCHAR* description
+    const NQ_WCHAR* name,
+    const NQ_WCHAR* fullName,
+    const NQ_WCHAR* description
     )
 {
     ParseContext userParser;            /* parser for reading the password list */
@@ -1554,7 +1554,7 @@ udDefCreateUser(
     long maxRid = 0;
     long nextRid;
 
-    cmTcharToAnsi(userNameA, name);
+    syUnicodeToAnsi(userNameA, name);
 
     /* create temporary file */
     tempFile = fopen((const char*)staticData->tempFileName, "a+");
@@ -1852,10 +1852,10 @@ udDefDeleteUserByRid(
 
 NQ_BOOL
 udDefSaveShareInformation(
-    const NQ_TCHAR* name,
-    const NQ_TCHAR* newName,
-    const NQ_TCHAR* newMap,
-    const NQ_TCHAR* newDescription
+    const NQ_WCHAR* name,
+    const NQ_WCHAR* newName,
+    const NQ_WCHAR* newMap,
+    const NQ_WCHAR* newDescription
     )
 {
     NQ_STATIC char nameA[UD_FS_MAXSHARELEN];
@@ -1874,7 +1874,7 @@ udDefSaveShareInformation(
     unlink((const char*)staticData->tempFileName);
     if (NULL != name)
     {
-        cmTcharToAnsi(nameA, name);
+        syUnicodeToAnsi(nameA, name);
 
         defFile = fopen((const char*)staticData->cifsFile, "r");
         if (NULL != defFile)
@@ -1910,9 +1910,9 @@ udDefSaveShareInformation(
     {
         return TRUE;
     }
-    cmTcharToAnsi(newNameA, newName);
-    cmTcharToAnsi(mapA, newMap);
-    cmTcharToAnsi(descriptionA, newDescription);
+    syUnicodeToAnsi(newNameA, newName);
+    syUnicodeToAnsi(mapA, newMap);
+    syUnicodeToAnsi(descriptionA, newDescription);
     fprintf(tempFile, "%s;%s;%s\n", newNameA, mapA, descriptionA);
     fclose(tempFile);
     unlink((const char*)staticData->cifsFile);
@@ -1934,7 +1934,7 @@ udDefSaveShareInformation(
 
 NQ_BOOL
 udDefRemoveShare(
-    const NQ_TCHAR* name
+    const NQ_WCHAR* name
     )
 {
     NQ_STATIC char nameA[UD_FS_MAXSHARELEN];
@@ -1948,7 +1948,7 @@ udDefRemoveShare(
     }
 
     unlink((const char*)staticData->tempFileName);
-    cmTcharToAnsi(nameA, name);
+    syUnicodeToAnsi(nameA, name);
 
     defFile = fopen((const char*)staticData->cifsFile, "r");
     if (NULL == defFile)
@@ -2007,7 +2007,7 @@ udDefEventLog (
     NQ_UINT module,
     NQ_UINT eventClass,
     NQ_UINT type,
-    const NQ_TCHAR* userName,
+    const NQ_WCHAR* userName,
     const NQ_IPADDRESS* pIp,
     NQ_UINT32 status,
     const NQ_BYTE* parameters

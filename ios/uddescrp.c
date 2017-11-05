@@ -34,10 +34,10 @@
  *====================================================================
  */
 
-int
+NQ_INT
 udGetSecurityDescriptor(
-    int file,
-    unsigned long information,
+    NQ_INT file,
+    NQ_UINT32 information,
     void* buffer
     )
 {
@@ -62,10 +62,10 @@ udGetSecurityDescriptor(
 
 NQ_STATUS
 udSetSecurityDescriptor(
-    int file,
-    unsigned long information,
+    NQ_INT file,
+    NQ_UINT32 information,
     const void* buffer,
-    unsigned long len
+    NQ_UINT32 len
     )
 {
     return -1;

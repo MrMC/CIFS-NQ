@@ -45,9 +45,9 @@ sySaslContextInvalidate(
 /* credentials callback */
 typedef void SYSaslCallback(
     void* resouce,      /* credentaisl context */
-    NQ_TCHAR* user,     /* user name */
-    NQ_TCHAR* password, /* password */
-    NQ_TCHAR* domain    /* domain */
+    NQ_WCHAR* user,     /* user name */
+    NQ_WCHAR* password, /* password */
+    NQ_WCHAR* domain    /* domain */
     );
 
 /* Security mechanism ID */

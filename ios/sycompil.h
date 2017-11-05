@@ -24,7 +24,7 @@
 /*
     C calling convention
     --------------------
- This is essentual when compiled with C++ compiler
+ This is essential when compiled with C++ compiler
  you may use either of the two definitions depending on your compiler
 
  */
@@ -178,19 +178,19 @@
 
  */
 
-//#define SY_FORCEALLOCATION
+#define SY_FORCEALLOCATION
 
 
 /*
     Stack saving option
-    The next definition controls stakc usage. When defined
+    The next definition controls stack usage. When defined
     it presumes that stack is big enough (about 10K required on stack).
     When commented it saves stack by defining some data as static
 
  */
 
 /* #define SY_BIGSTACK */
-
+#define syMalloc(_size)   		malloc(_size)
 #define syCalloc(_num, _size)   calloc(_num, _size)
 #define syFree(_ptr)            free(_ptr)
 
@@ -198,7 +198,6 @@
 /*
     64-bit support
     Define SY_INT32 if on your platform sizeof(long) != 4
-
 */
 
 #define SY_INT32 int

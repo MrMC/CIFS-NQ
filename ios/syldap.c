@@ -123,9 +123,9 @@ syLdStop(
  */
 NQ_STATUS                           /* error code */
 syLdConnect(
-        const NQ_TCHAR * domainT,    /* domain name */
-        const NQ_TCHAR * userT,      /* user account name */
-        const NQ_TCHAR * passwordT,  /* account password */ 
+        const NQ_WCHAR * domainT,    /* domain name */
+        const NQ_WCHAR * userT,      /* user account name */
+        const NQ_WCHAR * passwordT,  /* account password */ 
         LDConnectionHandle * handle  /* resulted handle */ 
         )
 {
@@ -150,9 +150,9 @@ syLdConnect(
         return NQ_FAIL;
     }
 
-    cmTcharToAnsi(user, userT);
-    cmTcharToAnsi(pwd, passwordT);
-    cmTcharToAnsi(domain, domainT);
+    syUnicodeToAnsi(user, userT);
+    syUnicodeToAnsi(pwd, passwordT);
+    syUnicodeToAnsi(domain, domainT);
     /*udSetCredentials(user, pwd, domain);*/
 
     /* set ldap debug level */

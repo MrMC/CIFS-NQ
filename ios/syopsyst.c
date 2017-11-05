@@ -17,6 +17,7 @@
  * LAST AUTHOR   : $Author:$
  ********************************************************************/
 // add by ryu
+#include <net/if.h>
 #include <ifaddrs.h>
 #include <arpa/inet.h>
 
@@ -24,6 +25,14 @@
 #include "syapi.h"
 #include "udapi.h"
 #include "cmapi.h"
+
+/* #define SYOPSYST_DEBUG */
+#ifdef SYOPSYST_DEBUG
+ #define syfPrintf(arg) fprintf arg
+#else /* SYOPSYST_DEBUG */
+ #define syfPrintf(arg)
+#endif /* SYOPSYST_DEBUG */
+
 
 #include <errno.h> 
 //#include <sys/sendfile.h>
@@ -35,7 +44,7 @@
 /* IPv6 related includes here */
 #endif /* UD_NQ_USETRANSPORTIPV6 */
 
-#if (defined(SY_UNICODEFILESYSTEM) && defined(UD_CM_UNICODEAPPLICATION)) || defined(UD_CC_INCLUDELDAP)
+#if (defined(SY_UNICODEFILESYSTEM) && defined(UD_CM_UNICODEAPPLICATION)) || defined(UD_CC_INCLUDELDAP) || defined(UD_NQ_CODEPAGEUTF8)
 #include <iconv.h>
 #endif
 
@@ -43,19 +52,25 @@
 #define UNICODEFILENAMES
 #endif
 
+#ifdef UD_NQ_CODEPAGEUTF8
+	 static iconv_t utf16LE_to_Utf8;
+	 static iconv_t utf8_to_Utf16LE;
+#endif /* UD_NQ_CODEPAGEUTF8 */ 
+
+
 /* 64 bit offsets support */
-/*#define LONG_FILES_SUPPORT*/
-
+#define LONG_FILES_SUPPORT
 #ifdef LONG_FILES_SUPPORT
-#define stat        stat64
-#define fstat       fstat64
-#define lseek       lseek64
-#define ftruncate   ftruncate64
+#define loff_t int64_t
+#define stat64 stat
+#define fstat64 fstat
+#define lseek64 lseek
+#define ftruncate64 ftruncate
 
-#define OPEN_RDONLY          (O_RDONLY | O_LARGEFILE)
-#define OPEN_WRONLY          (O_WRONLY | O_LARGEFILE)
-#define OPEN_RDWR            (O_RDWR | O_LARGEFILE)
-#define OPEN_RDWR_CREAT      (O_RDWR | O_CREAT | O_LARGEFILE)
+#define OPEN_RDONLY          (O_RDONLY)
+#define OPEN_WRONLY          (O_WRONLY)
+#define OPEN_RDWR            (O_RDWR)
+#define OPEN_RDWR_CREAT      (O_RDWR | O_CREAT)
 #else
 #define OPEN_RDONLY          (O_RDONLY)
 #define OPEN_WRONLY          (O_WRONLY)
@@ -95,9 +110,9 @@ static StaticData* staticData = &staticDataSrc;
 #endif /* SY_FORCEALLOCATION */
 
 /* check that file name is valid */
-static int checkFileName(const NQ_TCHAR * name)
+static int checkFileName(const NQ_WCHAR * name)
 {
-		return NULL == cmTStrrchr(name, cmTChar(':'));
+		return NULL == syWStrrchr(name, cmWChar(':'));
 }
 
 /* Convert file name from UTF-16 LE to UTF-8
@@ -263,7 +278,7 @@ syInit(
 {
     /* allocate memory */
 #ifdef SY_FORCEALLOCATION
-    staticData = syCalloc(1, sizeof(*staticData));
+    staticData = (StaticData*) syCalloc(1, sizeof(*staticData));
     if (staticData == NULL)
     {
         TRCE();
@@ -273,6 +288,8 @@ syInit(
 #ifdef UD_CS_INCLUDEDIRECTTRANSFER
     if ( pipe(staticData->pipe) < 0 ) 
     {
+        if (staticData != NULL)
+            syFree(staticData);
         TRCE();
         return FALSE;
     }
@@ -333,11 +350,12 @@ syUnixMode2DosAttr(
 
     if ((mode & S_IWUGO) == 0)
         attributes |= SY_ATTR_READONLY;
-/*    if ((mode & S_IXOTH) != 0)
-        attributes |= SY_ATTR_HIDDEN;
-      if ((mode & S_IXGRP) != 0)
-        attributes |= SY_ATTR_SYSTEM;*/
-    if ((mode & S_IXUSR) != 0)
+/*	Note: the next attributes are incorrect
+    if ((attributes & SY_ATTR_HIDDEN) != 0)
+        mode |= S_IXOTH;
+    if ((attributes & SY_ATTR_SYSTEM) != 0)
+        mode |= S_IXGRP;*/
+    if ((mode & S_IXUSR) != 0 && (mode & S_IFDIR) == 0)
         attributes |= SY_ATTR_ARCHIVE;
 
     return (attributes == 0 ? SY_ATTR_NORMAL : attributes);
@@ -368,7 +386,8 @@ dos2Unix(
 
     if ((attributes & SY_ATTR_READONLY) == 0)
         mode |= S_IWUGO;
-/*    if ((attributes & SY_ATTR_HIDDEN) != 0)
+/*	Note: the next attributes are incorrect
+    if ((attributes & SY_ATTR_HIDDEN) != 0)
         mode |= S_IXOTH;
     if ((attributes & SY_ATTR_SYSTEM) != 0)
         mode |= S_IXGRP;*/
@@ -439,7 +458,7 @@ sySetLastNqError(
 
 int
 syGetFileInformationByName(
-    const NQ_TCHAR* fileName,
+    const NQ_WCHAR* fileName,
     SYFileInformation* fileInfo
     )
 {
@@ -450,7 +469,7 @@ syGetFileInformationByName(
     if (stat(staticData->utf8Name, &tmp) == -1)
         return NQ_FAIL;
 #else
-    cmTcharToAnsi(staticData->asciiName, fileName);
+    syUnicodeToAnsi(staticData->asciiName, fileName);
     cmAnsiToFs(staticData->asciiName, sizeof(staticData->asciiName));
     if (stat(staticData->asciiName, &tmp) == -1)
         return NQ_FAIL;
@@ -479,7 +498,7 @@ syGetFileInformationByName(
 int
 syGetFileInformation(
     SYFile file,
-    const NQ_TCHAR* fileName,
+    const NQ_WCHAR* fileName,
     SYFileInformation* fileInfo
     )
 {
@@ -510,7 +529,7 @@ syGetFileInformation(
 
 int
 sySetFileInformation(
-    const NQ_TCHAR* fileName,
+    const NQ_WCHAR* fileName,
     SYFile file,
     const SYFileInformation* fileInfo
     )
@@ -526,7 +545,7 @@ sySetFileInformation(
         if ((file = open(staticData->utf8Name, OPEN_RDONLY, 0777)) == -1)
             return NQ_FAIL;
 #else
-        cmTcharToAnsi(staticData->asciiName, fileName);
+        syUnicodeToAnsi(staticData->asciiName, fileName);
         cmAnsiToFs(staticData->asciiName, sizeof(staticData->asciiName));
         if ((file = open(staticData->asciiName, OPEN_RDONLY, 0777)) == -1)
             return NQ_FAIL;
@@ -550,18 +569,20 @@ sySetFileInformation(
         return NQ_FAIL;
     }
 
-    if (   (fileInfo->lastAccessTime != 0 && fileInfo->lastAccessTime != (NQ_UINT32)statBuf.st_atime)
-        || (fileInfo->lastWriteTime  != 0 && fileInfo->lastWriteTime  != (NQ_UINT32)statBuf.st_mtime)
+    if (   (cmTimeConvertMSecToSec((NQ_TIME *)&fileInfo->lastAccessTime) != 0 && cmTimeConvertMSecToSec((NQ_TIME *)&fileInfo->lastAccessTime) != (NQ_UINT32)statBuf.st_atime)
+        || (cmTimeConvertMSecToSec((NQ_TIME *)&fileInfo->lastWriteTime)  != 0 && cmTimeConvertMSecToSec((NQ_TIME *)&fileInfo->lastWriteTime)  != (NQ_UINT32)statBuf.st_mtime)
        )
     {
-        if (fileInfo->lastAccessTime == 0)
+    	NQ_TIME zero = {0, 0};
+
+        if (0 == cmU64Cmp((NQ_TIME *)&fileInfo->lastAccessTime, &zero))
             timeBuf.actime = statBuf.st_atime;
         else
-            timeBuf.actime = (time_t)fileInfo->lastAccessTime;
-        if (fileInfo->lastWriteTime == 0)
+            timeBuf.actime = (time_t)cmTimeConvertMSecToSec((NQ_TIME *)&fileInfo->lastAccessTime);
+        if (0 == cmU64Cmp((NQ_TIME *)&fileInfo->lastWriteTime, &zero))
             timeBuf.modtime = statBuf.st_mtime;
         else
-            timeBuf.modtime = (time_t)fileInfo->lastWriteTime;
+            timeBuf.modtime = (time_t)cmTimeConvertMSecToSec((NQ_TIME *)&fileInfo->lastWriteTime);
 #ifdef UNICODEFILENAMES
         if (utime(staticData->utf8Name, &timeBuf) == -1)
         {
@@ -601,7 +622,7 @@ sySetFileInformation(
 
 int
 syGetVolumeInformation(
-    const NQ_TCHAR* name,
+    const NQ_WCHAR* name,
     SYVolumeInformation *info
     )
 {
@@ -612,17 +633,17 @@ syGetVolumeInformation(
     if (statfs(staticData->utf8Name, &tmp) < 0)
         return NQ_FAIL;
 #else
-    cmTcharToAnsi(staticData->asciiName, name);
+    syUnicodeToAnsi(staticData->asciiName, name);
     cmAnsiToFs(staticData->asciiName, sizeof(staticData->asciiName));
     if (statfs(staticData->asciiName, &tmp) < 0)
         return NQ_FAIL;
 #endif /* UNICODEFILENAMES */
 
-    info->fileSystemId = UD_FS_FILESYSTEMID;
-    info->creationTime = 0L;                    /* simulate 1-1-1970 */
-    info->serialNumber = 0L;                    /* we do not report serial number */
-    info->blockSize = (NQ_UINT32)tmp.f_bsize;
-    info->blocksPerUnit = 1;
+    info->fileSystemIdLow = UD_FS_FILESYSTEMID;
+    info->creationTimeLow = 0L;                    /* simulate 1-1-1970 */
+    info->serialNumberLow = 0L;                    /* we do not report serial number */
+    info->blockSizeLow = (NQ_UINT32)tmp.f_bsize;
+    info->blocksPerUnitLow = 1;
     info->totalUnitsLow = (NQ_UINT32)tmp.f_blocks;
     info->freeUnitsLow = (NQ_UINT32)tmp.f_bfree;
     info->totalUnitsHigh = 0L;
@@ -673,79 +694,38 @@ syGetMacAddress(
  *====================================================================
  */
 
-static struct ifreq *next_ifr (struct ifreq *ifr)
+/*static struct ifreq *next_ifr (struct ifreq *ifr)
 {
     char *ptr = (char *)ifr;
-    ptr += (sizeof (*ifr) /* - sizeof (struct sockaddr) + ifr->ifr_ifru.ifru_addr.sa_len*/ );
+    ptr += (sizeof (*ifr)  - sizeof (struct sockaddr) + ifr->ifr_ifru.ifru_addr.sa_len );
     return (struct ifreq *)ptr;
-}
+}*/
 
 #define MAX_EXT_ADDRESSES (UD_NS_MAXADAPTERS + 5)
 
-int
+NQ_STATUS
 syGetAdapter(
     NQ_INDEX adapterIdx,    /* adapter number (zero based) */
+	NQ_INDEX * osIndex,     /* buffer for adapter index as defined by the OS */
     NQ_IPADDRESS4* pIp,     /* buffer for adapter IP in NBO */
     NQ_IPADDRESS6 *ip6,     /* buffer for adapter IPv6 in NBO */
     NQ_IPADDRESS4* pSubnet, /* buffer for subnet address in NBO */
+	NQ_IPADDRESS4* pBcast, 	/* buffer for bcast address in NBO */
     NQ_IPADDRESS4* pWins    /* buffer for wins address in NBO (may be 0 for a B-node) */
     )
 {
-    
-    struct ifaddrs *interfaces = NULL;
-    struct ifaddrs *temp_addr = NULL;
-    int success = 0;
-    
-    // retrieve the current interfaces - returns 0 on success
-    success = getifaddrs(&interfaces);
-#ifdef DEBEG
-    printf(" >>>>>> retrieve the current interfaces - returns %d on success <<<<<<<<\n",success);
-#endif
-    if (success == 0) {
-        temp_addr = interfaces;
-        while(temp_addr != NULL) {
-            if(temp_addr->ifa_addr->sa_family == AF_INET) {
-//#ifdef DEBEG
-                printf(" >>>>>> ifname:%s <<<<<<<<\n",temp_addr->ifa_name);
-//#endif
-                // Check if interface is en0 which is the wifi connection on the iPhone
-                if(strcmp(temp_addr->ifa_name,"en0") == 0) {
-                 
-#if 1 // Get Backup List Request‚Ìˆ¶æ‚ª•s³‚É‚È‚éŒ‚ÌC³
-                    *pIp = ((struct sockaddr_in *)temp_addr->ifa_addr)->sin_addr.s_addr;
-                    *pSubnet = ((struct sockaddr_in*)temp_addr->ifa_netmask)->sin_addr.s_addr;
-#else
-                    *pIp = inet_ntoa(((struct sockaddr_in *)temp_addr->ifa_addr)->sin_addr);
-                    *pSubnet = ((struct sockaddr_in*)temp_addr->ifa_broadaddr)->sin_addr.s_addr;
-#endif
-//#ifdef DEBEG
-                    printf(" >>>>>>  en0 IP=0x%p subnetip=0x%p <<<<<<<<\n", pIp, pSubnet);
-//#endif
-                }
-            }
-            temp_addr = temp_addr->ifa_next;
-        }
-    }
-     
-    
-    // Free memory
-    freeifaddrs(interfaces);
-    
-    //*pIp = 0x030babc0;
-    //*pSubnet = 0x00ffffff;
-
-    *pWins = udGetWins();
-    
-    return NQ_SUCCESS;
-    
-    int idx = 0;
+    unsigned int idx = 0;                    /* as counted by NQ */
+    unsigned int osIdx = 0;            /* as counted by the OS */
     int status;
-    struct ifconf trIfconf;
-    static struct ifreq IfreqList[4*MAX_EXT_ADDRESSES];
-    struct ifreq *pifreq;
     unsigned long nelem;
-    /*int ntRetVal;*/
     int ntSockFd;
+    int result = NQ_FAIL;
+
+    struct ifaddrs* pIfa;
+    struct ifaddrs* saved = NULL;
+#ifdef UD_NQ_USETRANSPORTIPV6
+    struct in6_addr any6 = IN6ADDR_ANY_INIT;
+#endif /* UD_NQ_USETRANSPORTIPV6 */
 
     /*
      * nelem is set to the maximum interfaces
@@ -757,119 +737,111 @@ syGetAdapter(
 
     ntSockFd = socket(AF_INET, SOCK_DGRAM, 0);
 
-    trIfconf.ifc_len = (int)(nelem*sizeof(*pifreq));
-    trIfconf.ifc_req = IfreqList;
-    status = ioctl(ntSockFd, SIOCGIFCONF, (&(trIfconf)));
-    if (status < 0 || trIfconf.ifc_len == 0)
+    /* check socket error */
+    if (-1 == ntSockFd)
+    {
+       syfPrintf((stderr, "[%s:%d][%s()] %d %s\n", __FILE__, __LINE__, __func__, errno, strerror(errno)));
+       goto Exit;
+    }
+
+    status = getifaddrs(&pIfa);
+    if (status < 0)
+    {
+        syfPrintf((stderr, "[%s:%d][%s()] %d %s\n", __FILE__, __LINE__, __func__, errno, strerror(errno)));
+        goto Exit;
+    }
+
+    if (0 == status)
+    {
+		saved = pIfa;
+    	for (idx = 0; adapterIdx > 0 && idx <= *osIndex; pIfa = pIfa->ifa_next, ++idx )
+    	{
+    		/* do nothing */
+    	}
+    	*osIndex = idx;
+
+		for (idx = 0 , osIdx = *osIndex; pIfa != NULL && osIdx < nelem ; pIfa = pIfa->ifa_next, ++osIdx)
+		{
+#ifdef UD_NQ_USETRANSPORTIPV6
+			memset(ip6, 0, 16);
+#endif /* UD_NQ_USETRANSPORTIPV6 */
+			*pIp = CM_IPADDR_ZERO4;
+			*pSubnet = CM_IPADDR_ZERO4;
+			if (pIfa->ifa_addr && (pIfa->ifa_addr->sa_family == AF_INET || pIfa->ifa_addr->sa_family == AF_INET6))
+			{
+				/*
+				 * Don't bother with interfaces that have been disabled
+				 */
+				if (!(pIfa->ifa_flags & IFF_UP))
+				{
+					continue;
+				}
+
+				/*
+				 * Don't use the loop back interface
+				 */
+				if (pIfa->ifa_flags & IFF_LOOPBACK)
+				{
+					continue;
+				}
+
+				/*
+				 * If its not an internet inteface then dont use it.
+				 */
+
+				if(0 && pIfa->ifa_addr->sa_family != AF_INET)
+				{
+					continue;
+				}
+
+				/*
+				 * If this is an interface that supports
+				 * broadcast fetch the broadcast address.
+				 */
+				if (!(pIfa->ifa_flags & IFF_BROADCAST))
+				{
+					continue;
+				}
+
+				*pWins = udGetWins();
+				*osIndex = osIdx;
+				if (pIfa->ifa_addr != NULL)
+				{
+					if (pIfa->ifa_addr->sa_family == AF_INET)
+					{
+						/* Get interface IP Address */
+						*pIp = ((struct sockaddr_in*)pIfa->ifa_addr)->sin_addr.s_addr;
+						/* Get interface mask Address */
+						*pSubnet = ((struct sockaddr_in*)pIfa->ifa_netmask)->sin_addr.s_addr;
+						/* Get interface broadcast Address */
+						*pBcast = ((struct sockaddr_in*)pIfa->ifa_broadaddr)->sin_addr.s_addr;
+					}
+#ifdef UD_NQ_USETRANSPORTIPV6
+					else if (pIfa->ifa_addr->sa_family == AF_INET6)
+					{
+						struct sockaddr_in6* p6 = (struct sockaddr_in6*)pIfa->ifa_addr;
+						if (memcmp(p6->sin6_addr.s6_addr16, &any6, sizeof(any6)) == 0)
+							continue;
+						memcpy(ip6, p6->sin6_addr.s6_addr16, 16);
+					}
+#endif /* UD_NQ_USETRANSPORTIPV6 */
+					result = NQ_SUCCESS;
+					goto Exit;
+				}
+			}
+		}
+    }
+
+Exit:
+	if( NULL != saved )
+		freeifaddrs(saved);
+
+    if( -1 != ntSockFd )
     {
         close(ntSockFd);
-        return NQ_FAIL;
     }
 
-    //nelem = trIfconf.ifc_len/sizeof(struct ifreq);
-
-    for (pifreq = IfreqList;
-         ( ((long)pifreq-(long)IfreqList < trIfconf.ifc_len) && (idx < MAX_EXT_ADDRESSES) );
-         pifreq=next_ifr(pifreq))
-    {
-        struct ifreq flags = *pifreq;
-
-        status = ioctl(ntSockFd, SIOCGIFFLAGS,  &flags );
-        if (status)
-        {
-            continue;
-        }
-
-        /*
-         * dont bother with interfaces that have been disabled
-         */
-        if (!(flags.ifr_flags & IFF_UP))
-        {
-            continue;
-        }
-
-        /*
-         * dont use the loop back interface
-         */
-        if (flags.ifr_flags & IFF_LOOPBACK)
-        {
-            continue;
-        }
-
-        /*
-         * If its not an internet inteface then dont use it.
-         */
-
-        if(0 && pifreq->ifr_addr.sa_family != AF_INET)
-        {
-            continue;
-        }
-
-        /*
-         * If this is an interface that supports
-         * broadcast fetch the broadcast address.
-         */
-        if (!(flags.ifr_flags & IFF_BROADCAST))
-        {
-            continue;
-        }
-
-        status = ioctl(ntSockFd, SIOCGIFADDR, &flags );
-        if (status)
-        {
-            continue;
-        }
-
-        /* Get interface IP Address */
-        *pIp = ((struct sockaddr_in*)&flags.ifr_addr)->sin_addr.s_addr;
-
-        status = ioctl(ntSockFd, SIOCGIFNETMASK, &flags );
-        if (status)
-        {
-            continue;
-        }
-
-        /* Get interface broadcast Address */
-
-        *pSubnet = ((struct sockaddr_in*)&flags.ifr_broadaddr)->sin_addr.s_addr;
-
-        *pWins = udGetWins();
-        if (idx++ == adapterIdx)
-        {
-            memset(ip6, 0, 16);
-#ifdef UD_NQ_USETRANSPORTIPV6
-            struct ifaddrs* pIfa;
-            struct ifaddrs* saved;
-            struct in6_addr any = IN6ADDR_ANY_INIT;
-
-            status = getifaddrs(&pIfa);
-            if (0 == status)
-            {
-                saved = pIfa;
-                for (; pIfa != NULL; pIfa = pIfa->ifa_next)
-                {
-                    if (pIfa->ifa_addr->sa_family == AF_INET6 && 0 == strcmp(pIfa->ifa_name, flags.ifr_name))
-                    {
-                        struct sockaddr_in6* p6 = (struct sockaddr_in6*)pIfa->ifa_addr;
-                        
-                        if (memcmp(p6->sin6_addr.s6_addr16, &any, sizeof(any)) == 0)
-                            continue;
-                        memcpy(ip6, p6->sin6_addr.s6_addr16, 16);
-                        break;
-                    }
-                }
-
-                freeifaddrs(saved);
-            }
-
-#endif /* UD_NQ_USETRANSPORTIPV6 */
-
-            close(ntSockFd);
-            return NQ_SUCCESS;        }
-    }
-
-    close(ntSockFd);
-    return NQ_FAIL;
+    return result;
 }
 
 #if (0)
@@ -992,6 +964,19 @@ syGetIPv6ScopeId(
 
 #endif /* UD_NQ_USETRANSPORTIPV6 */
 
+
+NQ_TIME syGetTimeInMsec(void)
+{
+	NQ_TIME curTime;
+	struct timeval tv;
+
+	gettimeofday(&tv, NULL);
+	cmU64MultU32U32(&curTime, (NQ_UINT32)tv.tv_sec, 1000);
+	curTime.low += (NQ_UINT32)(tv.tv_usec/1000);
+
+	return curTime;
+}
+
 /*
  *====================================================================
  * PURPOSE: Get time offset
@@ -1024,6 +1009,17 @@ syGetTimeZone(
   return (utc.tm_hour - local.tm_hour) * 60 + utc.tm_min - local.tm_min;
 }
 
+NQ_TIME syConvertTimeSpecToTimeInMsec(void * val)
+{
+	NQ_TIME curTime;
+	struct timespec * tv = (struct timespec *)val;
+
+	cmU64MultU32U32(&curTime, (NQ_UINT32)tv->tv_sec, 1000);
+	curTime.low += (NQ_UINT32)(tv->tv_nsec/1000000);
+
+	return curTime;
+}
+
 /*
  *====================================================================
  * PURPOSE: Decompose system time into fragments
@@ -1040,7 +1036,7 @@ syGetTimeZone(
 
 void
 syDecomposeTime(
-    NQ_TIME time,
+    NQ_UINT32 time,
     SYTimeFragments* decomposed
     )
 {
@@ -1070,7 +1066,7 @@ syDecomposeTime(
  *====================================================================
  */
 
-NQ_TIME
+NQ_UINT32
 syComposeTime(
     const SYTimeFragments* decomposed
     )
@@ -1084,7 +1080,7 @@ syComposeTime(
     time.tm_min    = decomposed->min;
     time.tm_sec    = decomposed->sec;
 
-    return (NQ_TIME)mktime(&time);
+    return (NQ_UINT32)mktime(&time);
 }
 
 #ifdef UD_NQ_USETRANSPORTIPV6
@@ -1310,11 +1306,9 @@ syCreateSocket(
         case CM_IPADDR_IPV4:
 #endif /* UD_NQ_USETRANSPORTIPV6 */
             return socket(AF_INET, ((stream)? SOCK_STREAM : SOCK_DGRAM), 0);
-
 #ifdef UD_NQ_USETRANSPORTIPV6
         case CM_IPADDR_IPV6:
             return socket(AF_INET6, ((stream)? SOCK_STREAM : SOCK_DGRAM), 0);
-
         default:
             TRC1P("Invalid socket family: %d", family);
             return ERROR;
@@ -1527,7 +1521,7 @@ syConnectSocket(
 {
     char buffer[MAX_SOCKADDR_SIZE];
     struct sockaddr *saddr = (struct sockaddr*)buffer;
-    int size, val0 = 0;
+    int size, val0 = 0, val1 = 1;
 
     if (!buildSockaddr(saddr, &size, ip, port))
         return NQ_FAIL;
@@ -1536,8 +1530,10 @@ syConnectSocket(
         return NQ_FAIL;
 
     setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, (char*)&val0, sizeof(val0));
+    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&val1, sizeof(val1));
     return NQ_SUCCESS;
 }
+
 
 /*
  *====================================================================
@@ -1672,6 +1668,58 @@ syRecvSocket(
 
 /*
  *====================================================================
+ * PURPOSE: Receive from a datagram or a TCP stream or time out
+ *--------------------------------------------------------------------
+ * PARAMS:  IN socket id
+ *          OUT receive buffer
+ *          IN buffer length
+ *          IN timeout
+ *
+ * RETURNS: NQ_FAIL or number of bytes received
+ *
+ * NOTES:
+ *
+ *====================================================================
+ */
+
+NQ_INT
+syRecvSocketWithTimeout(
+    SYSocketHandle sock,
+    unsigned char* buf,
+    unsigned int len,
+    unsigned int secs
+    )
+{
+    int res;                         /* operation result */
+    fd_set socketSet;                /* for select */
+    struct timeval tv;               /* timeout */
+
+    tv.tv_sec = (time_t)secs;
+    tv.tv_usec = 0;
+
+    FD_ZERO(&socketSet);
+    FD_SET(sock, &socketSet);
+    res = select (FD_SETSIZE, &socketSet, NULL, NULL, &tv);
+#ifdef SYOPSYST_DEBUG
+    if (NQ_FAIL == res)
+        syfPrintf((stderr, "[%s:%d][%s()] %d %s\n", __FILE__, __LINE__, __func__, errno, strerror(errno)));
+#endif /* SYOPSYST_DEBUG */
+
+    if (res > 0)
+    {
+        res = (int)recv(sock, (char*)buf, len, 0);
+#ifdef SYOPSYST_DEBUG
+        if (NQ_FAIL == res)
+            syfPrintf((stderr, "[%s:%d][%s()] %d %s\n", __FILE__, __LINE__, __func__, errno, strerror(errno)));
+#endif /* SYOPSYST_DEBUG */
+    }
+
+    return res;
+}
+
+
+/*
+ *====================================================================
  * PURPOSE: Accept client socket
  *--------------------------------------------------------------------
  * PARAMS:  IN server socket id
@@ -1701,7 +1749,49 @@ syAcceptSocket(
 
     return newSock;
 }
+#ifdef CM_NQ_STORAGE
+/*
+ *====================================================================
+ * PURPOSE: Insert GMT time to strTime as string in fmt format.
+ *--------------------------------------------------------------------
+ * PARAMS:  OUT time string buffer
+ *             IN  buffer size
+ *             IN  time
+ *             IN  string format
+ *
+ * RETURNS: TRUE on success ,FALSE on error
+ *
+ * NOTES:
+ *====================================================================
+ */
+NQ_BOOL
+syGmtToString(NQ_BYTE * strTime, NQ_COUNT size, NQ_UINT32 t, const NQ_CHAR * fmt)
+{
+    struct tm *tmp;
+    char outstr[size];
+    NQ_BOOL result = FALSE;
+    time_t tt = (time_t)t;
 
+    tmp = gmtime(&tt);
+    if (NULL == tmp)
+    {
+        syfPrintf((stderr, "[%s:%d][%s()] %d %s\n", __FILE__, __LINE__, __func__, errno, strerror(errno)));
+        goto Exit;
+    }
+
+    if(0 == strftime(outstr, sizeof(outstr), fmt, tmp))
+    {
+        syfPrintf((stderr, "[%s:%d][%s()] %d %s\n", __FILE__, __LINE__, __func__, errno, strerror(errno)));
+        goto Exit;
+    }
+    syMemcpy(strTime, outstr, size);
+
+    result = TRUE;
+
+Exit:
+    return result;
+}
+#endif
 /*
  *====================================================================
  * PURPOSE: Open directory by name
@@ -1717,19 +1807,19 @@ syAcceptSocket(
 
 SYDirectory
 syOpenDirectory(
-    const NQ_TCHAR* dirName
+    const NQ_WCHAR* dirName
     )
 {
-    const NQ_TCHAR root[] = {cmTChar('/'), cmTChar(0)};
+    const NQ_WCHAR root[] = {cmWChar('/'), cmWChar('\0')};
 
-    if (*dirName == cmTChar(0))
+    if (*dirName == cmWChar(0))
         dirName = root;
         
 #ifdef UNICODEFILENAMES
     filenameToUtf8(dirName);
     return opendir(staticData->utf8Name);
 #else
-    cmTcharToAnsi(staticData->asciiName, dirName);
+    syUnicodeToAnsi(staticData->asciiName, dirName);
     cmAnsiToFs(staticData->asciiName, sizeof(staticData->asciiName));
     return opendir(staticData->asciiName);
 #endif /* UNICODEFILENAMES */
@@ -1752,21 +1842,21 @@ syOpenDirectory(
 
 NQ_STATUS
 syFirstDirectoryFile(
-    const NQ_TCHAR* dirName,
+    const NQ_WCHAR* dirName,
     SYDirectory* pDir,
-    const NQ_TCHAR** fileName
+    const NQ_WCHAR** fileName
     )
 {
-    const NQ_TCHAR root[] = {cmTChar('/'), cmTChar(0)};
+    const NQ_WCHAR root[] = {cmWChar('/'), cmWChar('\0')};
 
-    if (*dirName == cmTChar(0))
+    if (*dirName == cmWChar(0))
         dirName = root;
 
  #ifdef UNICODEFILENAMES
     filenameToUtf8(dirName);
     *pDir = opendir(staticData->utf8Name);
 #else
-    cmTcharToAnsi(staticData->asciiName, dirName);
+    syUnicodeToAnsi(staticData->asciiName, dirName);
     cmAnsiToFs(staticData->asciiName, sizeof(staticData->asciiName));
     *pDir = opendir(staticData->asciiName);
 #endif /* UNICODEFILENAMES */
@@ -1791,7 +1881,7 @@ syFirstDirectoryFile(
 NQ_STATUS
 syNextDirectoryFile(
     SYDirectory dir,
-    const NQ_TCHAR** fileName
+    const NQ_WCHAR** fileName
     )
 {
     struct dirent* de;
@@ -1805,7 +1895,7 @@ syNextDirectoryFile(
     }
     else
     {
-        static NQ_TCHAR tcharName[CM_BUFFERLENGTH(NQ_TCHAR, UD_FS_FILENAMELEN)];
+        static NQ_WCHAR tcharName[CM_BUFFERLENGTH(NQ_WCHAR, UD_FS_FILENAMELEN)];
 
 #ifdef UNICODEFILENAMES
         strcpy(staticData->utf8Name, de->d_name);
@@ -1813,7 +1903,7 @@ syNextDirectoryFile(
 #else
         strcpy(staticData->asciiName, de->d_name);
         cmFsToAnsi(staticData->asciiName, sizeof(staticData->asciiName));
-        cmAnsiToTchar(tcharName, staticData->asciiName);
+        syAnsiToUnicode(tcharName, staticData->asciiName);
 #endif /* UNICODEFILENAMES */
         *fileName = tcharName;
         return NQ_SUCCESS;
@@ -1838,7 +1928,7 @@ syNextDirectoryFile(
 
 SYFile
 syOpenFileForRead(
-    const NQ_TCHAR* name,
+    const NQ_WCHAR* name,
     NQ_BOOL denyread,
     NQ_BOOL denyexecute,
     NQ_BOOL denywrite
@@ -1848,7 +1938,7 @@ syOpenFileForRead(
     filenameToUtf8(name);
     return open(staticData->utf8Name, OPEN_RDONLY);
 #else
-    cmTcharToAnsi(staticData->asciiName, name);
+    syUnicodeToAnsi(staticData->asciiName, name);
     cmAnsiToFs(staticData->asciiName, sizeof(staticData->asciiName));
     return open(staticData->asciiName, OPEN_RDONLY);
 #endif /* UNICODEFILENAMES */
@@ -1872,7 +1962,7 @@ syOpenFileForRead(
 
 SYFile
 syOpenFileForWrite(
-    const NQ_TCHAR* name,
+    const NQ_WCHAR* name,
     NQ_BOOL denyread,
     NQ_BOOL denyexecute,
     NQ_BOOL denywrite
@@ -1882,7 +1972,7 @@ syOpenFileForWrite(
     filenameToUtf8(name);
     return open(staticData->utf8Name, OPEN_WRONLY);
 #else
-    cmTcharToAnsi(staticData->asciiName, name);
+    syUnicodeToAnsi(staticData->asciiName, name);
     cmAnsiToFs(staticData->asciiName, sizeof(staticData->asciiName));
     return open(staticData->asciiName, OPEN_WRONLY);
 #endif /* UNICODEFILENAMES */
@@ -1906,7 +1996,7 @@ syOpenFileForWrite(
 
 SYFile
 syOpenFileForReadWrite(
-    const NQ_TCHAR* name,
+    const NQ_WCHAR* name,
     NQ_BOOL denyread,
     NQ_BOOL denyexecute,
     NQ_BOOL denywrite
@@ -1916,7 +2006,7 @@ syOpenFileForReadWrite(
     filenameToUtf8(name);
     return open(staticData->utf8Name, OPEN_RDWR);
 #else
-    cmTcharToAnsi(staticData->asciiName, name);
+    syUnicodeToAnsi(staticData->asciiName, name);
     cmAnsiToFs(staticData->asciiName, sizeof(staticData->asciiName));
     return open(staticData->asciiName, OPEN_RDWR);
 #endif /* UNICODEFILENAMES */
@@ -1937,14 +2027,14 @@ syOpenFileForReadWrite(
 
 NQ_STATUS
 syDeleteDirectory(
-    const NQ_TCHAR* name
+    const NQ_WCHAR* name
     )
 {
 #ifdef UNICODEFILENAMES
     filenameToUtf8(name);
     return rmdir(staticData->utf8Name) == OK? NQ_SUCCESS : NQ_FAIL;
 #else
-    cmTcharToAnsi(staticData->asciiName, name);
+    syUnicodeToAnsi(staticData->asciiName, name);
     cmAnsiToFs(staticData->asciiName, sizeof(staticData->asciiName));
     return rmdir(staticData->asciiName) == OK ? NQ_SUCCESS : NQ_FAIL;
 #endif /* UNICODEFILENAMES */
@@ -1965,14 +2055,14 @@ syDeleteDirectory(
 
 NQ_STATUS
 syCreateDirectory(
-    const NQ_TCHAR* name
+    const NQ_WCHAR* name
     )
 {
 #ifdef UNICODEFILENAMES
     filenameToUtf8(name);
     return mkdir(staticData->utf8Name, 0766) == OK ? NQ_SUCCESS : NQ_FAIL;
 #else
-    cmTcharToAnsi(staticData->asciiName, name);
+    syUnicodeToAnsi(staticData->asciiName, name);
     cmAnsiToFs(staticData->asciiName, sizeof(staticData->asciiName));
     return mkdir(staticData->asciiName, 0766) == OK ? NQ_SUCCESS : NQ_FAIL;
 #endif /* UNICODEFILENAMES */
@@ -1994,19 +2084,19 @@ syCreateDirectory(
 
 NQ_STATUS
 syRenameFile(
-    const NQ_TCHAR* old,
-    const NQ_TCHAR* new
+    const NQ_WCHAR* oldName,
+    const NQ_WCHAR* newName
     )
 {
 #ifdef UNICODEFILENAMES
-    filenameToUtf8(new);
+    filenameToUtf8(newName);
     strcpy(staticData->newName, staticData->utf8Name);
-    filenameToUtf8(old);
+    filenameToUtf8(oldName);
     return rename(staticData->utf8Name, staticData->newName) == OK ? NQ_SUCCESS : NQ_FAIL;
 #else
-    cmTcharToAnsi(staticData->asciiName, old);
+    syUnicodeToAnsi(staticData->asciiName, oldName);
     cmAnsiToFs(staticData->asciiName, sizeof(staticData->asciiName));
-    cmTcharToAnsi(staticData->newName, new);
+    syUnicodeToAnsi(staticData->newName, newName);
     cmAnsiToFs(staticData->newName, sizeof(staticData->newName));
     return rename(staticData->asciiName, staticData->newName) == OK ? NQ_SUCCESS : NQ_FAIL;
 #endif /* UNICODEFILENAMES */
@@ -2030,7 +2120,7 @@ syRenameFile(
 
 SYFile
 syCreateFile(
-    const NQ_TCHAR* name,
+    const NQ_WCHAR* name,
     NQ_BOOL denyread,
     NQ_BOOL denyexecute,
     NQ_BOOL denywrite
@@ -2045,7 +2135,7 @@ syCreateFile(
     filenameToUtf8(name);
     return open(staticData->utf8Name, OPEN_RDWR_CREAT, 0700);
 #else
-    cmTcharToAnsi(staticData->asciiName, name);
+    syUnicodeToAnsi(staticData->asciiName, name);
     cmAnsiToFs(staticData->asciiName, sizeof(staticData->asciiName));
     return open(staticData->asciiName, OPEN_RDWR_CREAT, 0700);
 #endif /* UNICODEFILENAMES */
@@ -2177,9 +2267,14 @@ sySeekFileCurrent(
     NQ_INT32 offHigh
     )
 {
+#ifdef LONG_FILES_SUPPORT
+    loff_t pos = (loff_t)off + ((loff_t)offHigh * ((loff_t)1 << 32));
+    pos = lseek64(file, (loff_t)pos, SEEK_CUR);
+#else
     off_t pos;
-    pos = lseek(file, off, SEEK_CUR);
-    return (pos == ERROR)? (NQ_UINT32)NQ_FAIL : (NQ_UINT32)pos;
+    pos = lseek(file, (off_t)off, SEEK_CUR);
+#endif
+    return (pos == ERROR) ? (NQ_UINT32)NQ_FAIL : (NQ_UINT32)pos;
 }
 
 /*
@@ -2206,12 +2301,11 @@ sySeekFileStart(
 #ifdef LONG_FILES_SUPPORT
     loff_t pos = (loff_t)off + ((loff_t)offHigh * ((loff_t)1 << 32));
     pos = lseek64(file, (loff_t)pos, SEEK_SET);
-    return (pos == ERROR)? (NQ_UINT32)NQ_FAIL : (NQ_UINT32)pos;
 #else
     off_t pos;
     pos = lseek(file, (off_t)off, SEEK_SET);
-    return (pos == ERROR)? (NQ_UINT32)NQ_FAIL : (NQ_UINT32)pos;
 #endif
+    return (pos == ERROR) ? (NQ_UINT32)NQ_FAIL : (NQ_UINT32)pos;
 }
 
 /*
@@ -2236,18 +2330,33 @@ sySeekFileEnd(
     )
 {
     struct stat s;
-    off_t pos;
-    
+
     if (fstat(file, &s) != 0)
         return (NQ_UINT32)NQ_FAIL;
 
+#ifdef LONG_FILES_SUPPORT
+    {
+        /* avoid negative resulting file offset */
+    	loff_t pos;
+
+    	pos = s.st_size + (loff_t)off + ((loff_t)offHigh * ((loff_t)1 << 32));
+		if (pos < 0)
+			pos = 0;
+
+		pos = lseek64(file, (loff_t)pos, SEEK_SET);
+		return (pos == ERROR) ? (NQ_UINT32)NQ_FAIL : (NQ_UINT32)pos;
+    }
+#else
     /* avoid negative resulting file offset */
-    off += (NQ_INT32)s.st_size;    
+    off += (NQ_INT32)s.st_size;
     if (off < 0)
         off = 0;
-            
-    pos = lseek(file, off, SEEK_SET);     
-    return (pos == ERROR)? (NQ_UINT32)NQ_FAIL : (NQ_UINT32)pos;
+    {
+		off_t pos;
+		pos = lseek(file, (off_t)off, SEEK_SET);
+		return (pos == ERROR) ? (NQ_UINT32)NQ_FAIL : (NQ_UINT32)pos;
+    }
+#endif
 }
 
 /*====================================================================
@@ -2272,7 +2381,7 @@ syTruncateFile(
 {
     struct stat fileStat;
 #ifdef LONG_FILES_SUPPORT
-    off64_t len = (loff_t)offLow + ((loff_t)offHigh * ((loff_t)1 << 32));
+    loff_t len = (loff_t)offLow + ((loff_t)offHigh * ((loff_t)1 << 32));
 #endif
     
     if (fstat(file, &fileStat) == ERROR)
@@ -2341,13 +2450,13 @@ syGetDnsParams(
     NQ_IPADDRESS *server       /* The DNS server IP address */
     )
 {
-    NQ_TCHAR tDomain[CM_NQ_HOSTNAMESIZE];
-    NQ_TCHAR tServer[CM_IPADDR_MAXLEN];
+    NQ_WCHAR DomainW[CM_NQ_HOSTNAMESIZE];
+    NQ_WCHAR ServerW[CM_IPADDR_MAXLEN];
     NQ_CHAR  aServer[CM_IPADDR_MAXLEN];
 
-    udGetDnsParams(tDomain, tServer);
-    cmTcharToAnsi(domain, tDomain);
-    cmTcharToAnsi(aServer, tServer);
+    udGetDnsParams(DomainW, ServerW);
+    syUnicodeToAnsi(domain, DomainW);
+    syUnicodeToAnsi(aServer, ServerW);
     cmAsciiToIp(aServer, server);
 }
 #endif /* defined(UD_NQ_USETRANSPORTIPV4) || defined(UD_NQ_USETRANSPORTIPV6) */
@@ -2372,20 +2481,30 @@ statToFileInformation(
     SYFileInformation* to
     )
 {
-    /*to->lastChangeTime = (NQ_UINT32)from->st_ctime;*/
-    to->lastAccessTime = (NQ_UINT32)from->st_atime;
-    to->lastChangeTime = to->lastWriteTime = (NQ_UINT32)from->st_mtime;
+	NQ_TIME mTime = syConvertTimeSpecToTimeInMsec((void *)&from->st_mtime);
+	NQ_TIME aTime = syConvertTimeSpecToTimeInMsec((void *)&from->st_atime);
+	NQ_TIME cTime = syConvertTimeSpecToTimeInMsec((void *)&from->st_ctime);
+
+    to->lastAccessTime = aTime;
+    to->lastChangeTime = to->lastWriteTime = mTime;
 
     /* since POSIX does not support creation time, we set it to the least of the three file
        times */
-    to->creationTime   = (NQ_UINT32)from->st_ctime;
-    if (((NQ_UINT32)from->st_mtime) < to->creationTime)
-        to->creationTime = (NQ_UINT32)from->st_mtime;
-    if (((NQ_UINT32)from->st_atime) < to->creationTime)
-        to->creationTime = (NQ_UINT32)from->st_atime;
+    to->creationTime   = cTime;
+    if (cmU64Cmp(&mTime, &to->creationTime) < 0)
+        to->creationTime = mTime;
+    if (cmU64Cmp(&aTime, &to->creationTime) < 0)
+        to->creationTime = aTime;
 
     to->attributes = (NQ_UINT32)syUnixMode2DosAttr((int)from->st_mode);
     to->isDeleted = 0;
+#ifdef LONG_FILES_SUPPORT
+    to->fileIdHigh     = (NQ_UINT32)(from->st_ino >> 32);
+    to->fileIdLow      = (NQ_UINT32)(from->st_ino & 0xFFFFFFFF);
+#else
+    to->fileIdHigh     = 0;
+    to->fileIdLow      = (NQ_UINT32)from->st_ino;
+#endif /* LONG_FILES_SUPPORT */
 
     if ((to->attributes & SY_ATTR_DIRECTORY) != 0)
     {
@@ -2469,14 +2588,14 @@ syCloseDirectory(
 
 NQ_STATUS
 syDeleteFile(
-    const NQ_TCHAR* name
+    const NQ_WCHAR* name
     )
 {
 #ifdef UNICODEFILENAMES
     filenameToUtf8(name);
     return unlink(staticData->utf8Name) == OK ? NQ_SUCCESS : NQ_FAIL;
 #else
-    cmTcharToAnsi(staticData->asciiName, name);
+    syUnicodeToAnsi(staticData->asciiName, name);
     cmAnsiToFs(staticData->asciiName, sizeof(staticData->asciiName));
     return unlink(staticData->asciiName) == OK ? NQ_SUCCESS : NQ_FAIL;
 #endif /* UNICODEFILENAMES */
@@ -2561,7 +2680,7 @@ syDtEndPacket(
 --
 */
 
-#ifdef SPLICE_AVAILABLE
+#if defined(USE_DT_WRITE) && defined(SPLICE_AVAILABLE)
 
 static size_t nqSplice(int from, int to, size_t len)
 {
@@ -2601,13 +2720,13 @@ static size_t nqSplice(int from, int to, size_t len)
     return total_sent;
 }
 
-#endif /* SPLICE_AVAILABLE */
+#endif /* defined(USE_DT_WRITE) && defined(SPLICE_AVAILABLE) */
 
 #ifdef SENDFILE_AVAILABLE
 
 static size_t nqSendFile(int from, int to, size_t len)
 {
-    return sendfile(to, from, NULL, len);
+    return (size_t)sendfile(to, from, NULL, len);
 }
 
 #endif /* SENDFILE_AVAILABLE */
@@ -2644,10 +2763,10 @@ syDtFromSocket(
   
 		while (*len > 0)
 		{
-				cnt1 = recv(sock, (char*)buf, *len, 0);
+            cnt1 = (NQ_COUNT)recv(sock, (char*)buf, *len, 0);
 				if (cnt1==ERROR)
 				  	return NQ_FAIL;
-				cnt2 = write(file, (char*)buf, cnt1);
+                cnt2 = (NQ_COUNT)write(file, (char*)buf, cnt1);
 				if (cnt2 == ERROR || cnt2 != cnt1)
 				  	return NQ_FAIL;
 				*len -= cnt2;
@@ -2682,7 +2801,7 @@ syDtToSocket(
     )
 {
 #if defined(USE_DT_READ) && defined(SENDFILE_AVAILABLE)
-    *len = nqSendFile(file, sock, *len);
+    *len = (NQ_COUNT)nqSendFile(file, sock, *len);
     return ERROR == *len? NQ_FAIL : NQ_SUCCESS;
 #else /* defined(USE_DT_READ) && defined(SENDFILE_AVAILABLE) */
     static NQ_BYTE buf[65700];
@@ -2771,26 +2890,60 @@ syUTF8ToUnicodeN(
 }
 #endif /* UD_CC_INCLUDELDAP */
 
+#ifdef MUTEX_DEBUG /* debug mutex issues. */
+void
+syMutexDelete(SYMutex* _m)
+{
+    int ret = pthread_mutex_destroy(_m);
+    if( 0 != ret )
+    {
+    	LOGERR(CM_TRC_LEVEL_MESS_NORMAL,"Trying to delete a mutex that is taken: %d, ret: %d, err: %s", _m, ret, strerror(ret));
+    }
+}
+void
+syMutexTake(SYMutex* _m)
+{
+    pthread_mutex_lock(_m);
+
+    LOGERR(CM_TRC_LEVEL_MESS_NORMAL,"Lock mutex: %p", _m);
+}
+void
+syMutexGive(SYMutex* _m)
+{
+    pthread_mutex_unlock(_m);
+
+    LOGERR(CM_TRC_LEVEL_MESS_NORMAL,"Unlock mutex: %p", _m);
+}
+
+#endif /* MUTEX_DEBUG */
+
 void
 syMutexCreate(SYMutex* _m)
 {
+
     pthread_mutexattr_t attr; 
+
+#ifdef MUTEX_DEBUG
+    LOGERR(CM_TRC_LEVEL_MESS_NORMAL,"Create mutex: %p", _m);
+#endif
 
     pthread_mutexattr_init(&attr); 
     pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE); 
     pthread_mutex_init(_m, &attr); 
+    pthread_mutexattr_destroy(&attr);
+
 }
 
 NQ_STATUS sySendMulticast(
-                          SYSocketHandle socket,
-                          const NQ_BYTE * buffer,
-                          NQ_COUNT length,
-                          const NQ_IPADDRESS *ip,
-                          NQ_PORT port)
-{
+    SYSocketHandle socket, 
+    const NQ_BYTE * buffer, 
+    NQ_COUNT length, 
+    const NQ_IPADDRESS *ip,
+    NQ_PORT port)
+{   
     NQ_STATUS res;          /* operation result */
     struct ip_mreq mreg;
-    
+
     mreg.imr_multiaddr.s_addr = (in_addr_t)CM_IPADDR_GET4(*ip);
     mreg.imr_interface.s_addr = INADDR_ANY;
     setsockopt (socket, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreg, sizeof(mreg));
@@ -2799,29 +2952,90 @@ NQ_STATUS sySendMulticast(
     return res;
 }
 
+void sySubscribeToMulticast(SYSocketHandle socket,
+		const NQ_IPADDRESS *ip
+		)
+{
+	struct ip_mreq mreg;
+
+	mreg.imr_multiaddr.s_addr = (in_addr_t)CM_IPADDR_GET4(*ip);
+	mreg.imr_interface.s_addr = INADDR_ANY;
+	setsockopt (socket, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreg, sizeof(mreg));
+}
+
+#ifdef SY_SEMAPHORE_AVAILABLE
 NQ_INT
 sySemaphoreTimedTake(SYSemaphore *sem , NQ_INT timeout)
 {
 	struct timespec semTimeout;
-    
-	semTimeout.tv_sec = syGetTime();
+
+	semTimeout.tv_sec = (time_t)syGetTimeInSec();
 	semTimeout.tv_sec += timeout;
 	semTimeout.tv_nsec = 0;
-    
-	/*if (sem_timedwait( sem , &semTimeout))
+
+	if (sem_timedwait( sem , &semTimeout))
 	{
+		NQ_INT semErr = errno;
+		if (ETIMEDOUT != semErr)
+		{
+			LOGERR(CM_TRC_LEVEL_ERROR, "semaphore error: %d. %s", semErr, strerror(semErr));
+		}
 		return NQ_FAIL;
-	}*/ /* TODO: implement something like sem_timedwait */
+	}
 	return NQ_SUCCESS;
 }
+#endif /* SY_SEMAPHORE_AVAILABLE */
+
 
 void syThreadStart(SYThread *taskIdPtr, void (*startpoint)(void), NQ_BOOL background)
 {
 	pthread_attr_t attr;
-    
+
 	pthread_attr_init(&attr);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	pthread_create(taskIdPtr, &attr, (void * (*)(void *))startpoint, NULL);
 	pthread_attr_destroy(&attr);
 }
+
+#ifdef UD_NQ_CODEPAGEUTF8
+	
+void initCodePageUTF8()
+{
+	utf16LE_to_Utf8 = iconv_open("UTF-8", "UTF-16LE");
+	utf8_to_Utf16LE = iconv_open("UTF-16LE", "UTF-8");
+}
+
+NQ_UINT32 convertCodePageUTF8toUtf16LE(NQ_CHAR **inBuf, NQ_UINT32 *inBytesLeft, NQ_CHAR **outBuf, NQ_UINT32 *outBytesLeft)
+{
+	NQ_UINT32 size;
+	
+	size = (NQ_UINT32)iconv(utf8_to_Utf16LE, inBuf, (size_t*)inBytesLeft, outBuf, (size_t*)outBytesLeft);
+#ifdef SY_DEBUGMODE
+	if (size == -1)
+	{
+		int errsv = errno;
+		LOGERR(CM_TRC_LEVEL_ERROR, "failed conversion utf8_to_Utf16LE, error: %d %s\n", errsv, strerror(errsv));
+	}	
+#endif
+
+	return size;
+}
+NQ_UINT32 convertCodePageUtf16LEtoUTF8(NQ_CHAR **inBuf, NQ_UINT32 *inBytesLeft, NQ_CHAR **outBuf, NQ_UINT32 *outBytesLeft)
+{
+	NQ_UINT32 size;
+	
+	size = (NQ_UINT32)iconv(utf16LE_to_Utf8, inBuf, (size_t*)inBytesLeft, outBuf, (size_t*)outBytesLeft);
+#ifdef SY_DEBUGMODE
+	if (size == -1)
+	{
+		int errsv = errno;
+		LOGERR(CM_TRC_LEVEL_ERROR, "failed conversion utf16LE_to_Utf8, error: %d %s", errsv, strerror(errsv));
+	}
+#endif
+	return size;
+}
+					
+#endif /* UD_NQ_CODEPAGEUTF8 */
+
+
 

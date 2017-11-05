@@ -31,7 +31,7 @@
 struct cifsErrorMap
 {
     unsigned int sysError;      /* system error */
-    unsigned long smbError;     /* SMB error */
+    NQ_UINT32 smbError;     /* SMB error */
 }
 
 /* The table(s) of system errors mapped to SMB erros. */
@@ -111,9 +111,9 @@ nqToSysErrorMap[] =
  *====================================================================
  */
 
-unsigned long
+NQ_UINT32
 udGetSmbError(
-    unsigned long sysErr
+    NQ_UINT32 sysErr
     )
 {
     unsigned int i;    /* just an index */
@@ -144,9 +144,9 @@ udGetSmbError(
  *====================================================================
  */
 
-unsigned long
+NQ_UINT32
 udNqToSystemError(
-    unsigned long ntErr
+    NQ_UINT32 ntErr
     )
 {
     unsigned int i;          /* just an index */

@@ -286,7 +286,7 @@ udBrowserDaemonClosed(
 
 void
 udGetScopeID(
-    NQ_TCHAR *buffer
+    NQ_WCHAR *buffer
     )
 {
     udDefGetScopeID(buffer);
@@ -326,7 +326,7 @@ udGetWins(
 
 void
 udGetDomain(
-    NQ_TCHAR *buffer,
+    NQ_WCHAR *buffer,
     NQ_BOOL  *isWorkgroup
     )
 {
@@ -349,8 +349,8 @@ udGetDomain(
 
 void
 udGetDnsParams(
-    NQ_TCHAR *domain,
-    NQ_TCHAR *server
+    NQ_WCHAR *domain,
+    NQ_WCHAR *server
     )
 {
     udDefGetDnsParams(domain, server);
@@ -376,9 +376,9 @@ udGetDnsParams(
 NQ_BOOL
 udGetCredentials(
     const void* resource,
-    NQ_TCHAR* userName,
-    NQ_TCHAR* password,
-    NQ_TCHAR* domain
+    NQ_WCHAR* userName,
+    NQ_WCHAR* password,
+    NQ_WCHAR* domain
     )
 {
     return udDefGetCredentials(resource, userName, password, domain);
@@ -400,12 +400,12 @@ udGetCredentials(
 
 void
 udGetFileSystemName(
-    const NQ_TCHAR* shareName,
-    const NQ_TCHAR* sharePath,
-    NQ_TCHAR* fileSystemName
+    const NQ_WCHAR* shareName,
+    const NQ_WCHAR* sharePath,
+    NQ_WCHAR* fileSystemName
     )
 {
-    cmAnsiToTchar(fileSystemName, UD_FS_FILESYSTEMNAME);
+    syAnsiToUnicode(fileSystemName, UD_FS_FILESYSTEMNAME);
 }
 
 /*
@@ -426,10 +426,10 @@ udGetFileSystemName(
 
 NQ_BOOL
 udGetNextShare(
-    NQ_TCHAR* name,
-    NQ_TCHAR* map,
+    NQ_WCHAR* name,
+    NQ_WCHAR* map,
     NQ_BOOL* printQueue,
-    NQ_TCHAR* description
+    NQ_WCHAR* description
     )
 {
     return udDefGetNextShare(name, map, printQueue, description);
@@ -451,8 +451,8 @@ udGetNextShare(
 
 NQ_BOOL
 udGetNextMount(
-    NQ_TCHAR* name,
-    NQ_TCHAR* map
+    NQ_WCHAR* name,
+    NQ_WCHAR* map
     )
 {
     return udDefGetNextMount(name, map);
@@ -542,7 +542,7 @@ udGetTaskPriorities(
 
 void
 udGetServerComment(
-    NQ_TCHAR *buffer
+    NQ_WCHAR *buffer
     )
 {
     udDefGetServerComment(buffer);
@@ -573,7 +573,7 @@ udGetServerComment(
 
 NQ_INT
 udGetPassword(
-    const NQ_TCHAR* userName,
+    const NQ_WCHAR* userName,
     NQ_CHAR* password,
     NQ_BOOL* pwdIsHashed,
     NQ_UINT32* userNumber
@@ -655,7 +655,7 @@ udServerDataIn(
 
 void
 udServerShareConnect(
-    const NQ_TCHAR* share
+    const NQ_WCHAR* share
     )
 {
 }
@@ -674,7 +674,7 @@ udServerShareConnect(
 
 void
 udServerShareDisconnect(
-    const NQ_TCHAR* share
+    const NQ_WCHAR* share
     )
 {
 }
@@ -857,7 +857,7 @@ udGetComputerId(
 
 NQ_COUNT
 udLoadShareSecurityDescriptor(
-    const NQ_TCHAR* shareName,
+    const NQ_WCHAR* shareName,
     NQ_BYTE* buffer,
     NQ_COUNT bufferLen
     )
@@ -881,7 +881,7 @@ udLoadShareSecurityDescriptor(
 
 void
 udSaveShareSecurityDescriptor(
-    const NQ_TCHAR* shareName,
+    const NQ_WCHAR* shareName,
     const NQ_BYTE* sd,
     NQ_COUNT sdLen
     )
@@ -926,7 +926,7 @@ udGetUserCount(
 
 NQ_BOOL
 udGetUserRidByName(
-    const NQ_TCHAR* name,
+    const NQ_WCHAR* name,
     NQ_UINT32* rid
     )
 {
@@ -950,8 +950,8 @@ udGetUserRidByName(
 NQ_BOOL
 udGetUserNameByRid(
     NQ_UINT32 rid,
-    NQ_TCHAR* nameBuffer,
-    NQ_TCHAR* fullNameBuffer
+    NQ_WCHAR* nameBuffer,
+    NQ_WCHAR* fullNameBuffer
     )
 {
     return udDefGetUserNameByRid(rid, nameBuffer, fullNameBuffer);
@@ -977,9 +977,9 @@ NQ_BOOL
 udGetUserInfo(
     NQ_UINT index,
     NQ_UINT32* rid,
-    NQ_TCHAR* name,
-    NQ_TCHAR* fullName,
-    NQ_TCHAR* description
+    NQ_WCHAR* name,
+    NQ_WCHAR* fullName,
+    NQ_WCHAR* description
     )
 {
     return udDefGetUserInfo(index, rid, name, fullName, description);
@@ -1004,9 +1004,9 @@ udGetUserInfo(
 NQ_BOOL
 udSetUserInfo(
     NQ_UINT32 rid,
-    const NQ_TCHAR* name,
-    const NQ_TCHAR* fullName,
-    const NQ_TCHAR* description,
+    const NQ_WCHAR* name,
+    const NQ_WCHAR* fullName,
+    const NQ_WCHAR* description,
     const NQ_WCHAR* password
     )
 {
@@ -1029,9 +1029,9 @@ udSetUserInfo(
 
 NQ_BOOL
 udCreateUser(
-    const NQ_TCHAR* name,
-    const NQ_TCHAR* fullName,
-    const NQ_TCHAR* description
+    const NQ_WCHAR* name,
+    const NQ_WCHAR* fullName,
+    const NQ_WCHAR* description
     )
 {
     return udDefCreateUser(name, fullName, description);
@@ -1110,10 +1110,10 @@ udSetUserAsAdministrator(
 
 NQ_BOOL
 udSaveShareInformation(
-    const NQ_TCHAR* name,
-    const NQ_TCHAR* newName,
-    const NQ_TCHAR* newMap,
-    const NQ_TCHAR* newDescription
+    const NQ_WCHAR* name,
+    const NQ_WCHAR* newName,
+    const NQ_WCHAR* newMap,
+    const NQ_WCHAR* newDescription
     )
 {
     return udDefSaveShareInformation(name, newName, newMap, newDescription);
@@ -1133,7 +1133,7 @@ udSaveShareInformation(
 
 NQ_BOOL
 udRemoveShare(
-    const NQ_TCHAR* name
+    const NQ_WCHAR* name
     )
 {
     return udDefRemoveShare(name);
@@ -1171,7 +1171,7 @@ udEventLog (
     NQ_UINT module,
     NQ_UINT class,
     NQ_UINT type,
-    const NQ_TCHAR* userName,
+    const NQ_WCHAR* userName,
     const NQ_IPADDRESS* pIp,
     NQ_UINT32 status,
     const NQ_BYTE* parameters

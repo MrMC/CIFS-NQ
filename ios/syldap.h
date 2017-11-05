@@ -29,9 +29,9 @@ syLdStop(
 /* connect to AD */
 NQ_STATUS                           /* error code */
 syLdConnect(
-        const NQ_TCHAR * domain,    /* domain name */
-        const NQ_TCHAR * user,      /* user account name */
-        const NQ_TCHAR * password,  /* account password */ 
+        const NQ_WCHAR * domain,    /* domain name */
+        const NQ_WCHAR * user,      /* user account name */
+        const NQ_WCHAR * password,  /* account password */ 
         void **  handle             /* resulted handle */ 
         );
 
