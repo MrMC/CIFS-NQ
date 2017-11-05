@@ -97,8 +97,6 @@ void ccDfsShutdown(void);
    Newly allocated host name NULL on error.                   */
 const NQ_WCHAR * ccDfsResolveHost(const NQ_WCHAR * host);
 
-#ifdef UD_CC_INCLUDEDFS
-
 #define CC_DFS_NUMOFRETRIES (50 * CC_CONFIG_RETRYCOUNT) /* number of retries for DFS resolving, to decide on invalid DFS links */
 
 /* Description
@@ -118,7 +116,6 @@ const NQ_WCHAR * ccDfsResolveHost(const NQ_WCHAR * host);
    DFS result structure. NULL in the path field designates an
    error.                                                       */
 CCDfsResult ccDfsResolvePath(CCMount *pMount, CCShare *pShare, const NQ_WCHAR *file, CCDfsContext *context);
-#endif /* UD_CC_INCLUDEDFS */
 
 /* Description
    Dispose DFS results. Effectively it disposes file path

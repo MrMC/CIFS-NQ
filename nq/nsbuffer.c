@@ -114,7 +114,10 @@ nsInitMessageBufferPool(
     syMutexCreate(&staticData->recvDatagramGuard);
 #ifndef CM_NQ_STORAGE
     syMutexCreate(&staticData->bufGuard);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     sySemaphoreCreate(&staticData->overflowGuard, NUM_BUFFERS);
+#pragma GCC diagnostic pop
 
     for (i=0; i<NUM_BUFFERS; i++)
     {
@@ -151,8 +154,11 @@ nsReleaseMessageBufferPool(
     {
         udReleaseBuffer(i, NUM_BUFFERS, (NQ_BYTE*)staticData->freeBufs[i], UD_NS_BUFFERSIZE);
     }
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     syMutexDelete(&staticData->bufGuard);
     sySemaphoreDelete(staticData->overflowGuard);
+#pragma GCC diagnostic pop
 #endif
     syMutexDelete(&staticData->sendDatagramGuard);
     syMutexDelete(&staticData->recvDatagramGuard);
@@ -261,8 +267,11 @@ nsResetBufferPool(
 
     staticData->firstFree = 0;
     staticData->lastFree = -1;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     sySemaphoreDelete(staticData->overflowGuard);
     sySemaphoreCreate(&staticData->overflowGuard, NUM_BUFFERS);
+#pragma GCC diagnostic pop
 
     syMutexGive(&staticData->bufGuard);
 } 

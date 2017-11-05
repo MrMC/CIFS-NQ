@@ -17,6 +17,7 @@
  * LAST AUTHOR   : $Author:$
  ********************************************************************/
 
+#include "ndexname.h"
 #include "ndinname.h"
 #include "ndframes.h"
 #include "nsapi.h"

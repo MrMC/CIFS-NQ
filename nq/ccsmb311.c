@@ -16,6 +16,7 @@
 #include "ccapi.h"
 #include "ccsmb20.h"
 #include "ccsmb30.h"
+#include "ccsmb311.h"
 #include "cctransport.h"
 #include "ccserver.h"
 #include "ccuser.h"
@@ -47,6 +48,7 @@ static NQ_STATUS doQuerySecurityDescriptor(CCFile * pFile, CMSdSecurityDescripto
 
 static  CCCifsSmb dialect;
 
+#ifdef UD_CC_INCLUDESECURITYDESCRIPTORS
 static const Command commandDescriptors[] = /* SMB2 descriptor */
 {
 		{ 128, 36, 65, NULL, NULL}, 				/* SMB2 NEGOTIATE 0x0000 */
@@ -69,10 +71,11 @@ static const Command commandDescriptors[] = /* SMB2 descriptor */
 		{ 80, 33, 2, NULL, NULL},					/* SMB2 SET_INFO 0x0011 */
 		{ 100, 24, 0, NULL, NULL },					/* SMB2 OPLOCK_BREAK 0x0012 */
 };
+#endif /* UD_CC_INCLUDESECURITYDESCRIPTORS */
 
 /* -- API Functions */
 
-NQ_BOOL ccSmb311Start()
+NQ_BOOL ccSmb311Start(void)
 {
 	CCCifsSmb 	tempDialect;
 
@@ -90,7 +93,7 @@ NQ_BOOL ccSmb311Start()
 	return TRUE;
 }
 
-NQ_BOOL ccSmb311Shutdown()
+NQ_BOOL ccSmb311Shutdown(void)
 {
 	return TRUE;
 }

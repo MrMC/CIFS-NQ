@@ -447,6 +447,7 @@ void cmTraceFuncLeave(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line
     }
 }
 
+void cmTraceStart(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *name);
 void cmTraceStart(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *name)
 {
     if (level <= traceLevelThreshold && !shutdwn && initialized)
@@ -460,6 +461,7 @@ void cmTraceStart(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ
     }
 }
 
+void cmTraceStop(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *name);
 void cmTraceStop(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_UINT level, const NQ_CHAR *name)
 {
     if (level <= traceLevelThreshold && !shutdwn && initialized)
@@ -507,11 +509,13 @@ void cmTraceDump(const NQ_CHAR *file, const NQ_CHAR *function, NQ_UINT line, NQ_
     }
 }
 
+void cmTraceThresholdSet(NQ_UINT newValue);
 void cmTraceThresholdSet(NQ_UINT newValue)
 {
     traceLevelThreshold = newValue;
 }
 
+NQ_UINT cmTraceThresholdGet(void);
 NQ_UINT cmTraceThresholdGet(void)
 {
     return traceLevelThreshold;

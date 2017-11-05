@@ -15,6 +15,7 @@
 
 #include "ccapi.h"
 #include "ccsmb20.h"
+#include "ccsmb30.h"
 #include "cctransport.h"
 #include "ccserver.h"
 #include "ccuser.h"
@@ -83,7 +84,7 @@ static  CCCifsSmb dialect;
 
 /* -- API Functions */
 
-NQ_BOOL ccSmb30Start()
+NQ_BOOL ccSmb30Start(void)
 {
 	CCCifsSmb 	tempDialect;
 
@@ -103,7 +104,7 @@ NQ_BOOL ccSmb30Start()
 	return TRUE;
 }
 
-NQ_BOOL ccSmb30Shutdown()
+NQ_BOOL ccSmb30Shutdown(void)
 {
 	return TRUE;
 }
@@ -116,7 +117,7 @@ const CCCifsSmb * ccSmb30GetCifs(void)
 
 /* -- Static functions -- */
 
-void ccComposeEncryptionNonce(NQ_BYTE * buf ,NQ_UINT32 midLow)
+static void ccComposeEncryptionNonce(NQ_BYTE * buf ,NQ_UINT32 midLow)
 {
 	CMBufferWriter	writer;
 	CMTime	time;

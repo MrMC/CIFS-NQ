@@ -54,19 +54,19 @@ ccSrvsvcGetPipe(
 
 /* initialize this module */
 
-NQ_BOOL ccSrvsvcStart();
+NQ_BOOL ccSrvsvcStart(void);
 
 /* stp using this module */
 
-void ccSrvsvcShutdown();
+void ccSrvsvcShutdown(void);
 
 /* start enumerating list of shares over a previously opened pipe */
 
-void ccSrvsvcLock();
+void ccSrvsvcLock(void);
 
 /* start enumerating list of shares over a previously opened pipe */
 
-void ccSrvsvcUnlock();
+void ccSrvsvcUnlock(void);
 
 /* enumerate list of shares over a previously opened pipe */
 

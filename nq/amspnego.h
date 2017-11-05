@@ -28,9 +28,9 @@
 
 #ifdef UD_NQ_INCLUDECIFSCLIENT
 
-void amSpnegoClientSetDefaultLevels();
+void amSpnegoClientSetDefaultLevels(void);
 void amSpnegoClientSetAuthLevel(NQ_INT level);
-NQ_INT amSpnegoClientGetAuthLevel();
+NQ_INT amSpnegoClientGetAuthLevel(void);
 
 #ifdef UD_CC_INCLUDEEXTENDEDSECURITY
 

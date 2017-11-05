@@ -907,6 +907,7 @@ csComTreeConnectAndX(
  * <b>Disconnect existing tree</b>
  * Also called from cs2trcn.c (SMB2_TREE_DISCONNECT)
  */
+void csDoTreeDisconnect(CSTree *tree);
 void csDoTreeDisconnect(CSTree *tree)
 {
     if (!tree->share->ipcFlag)

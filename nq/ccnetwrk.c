@@ -199,7 +199,7 @@ static NQ_BOOL disposeItem(CMItem * pItem)
     return TRUE;
 }
 
-NQ_STATUS addShareNameCallback(const NQ_WCHAR * name, void * list)
+static NQ_STATUS addShareNameCallback(const NQ_WCHAR * name, void * list)
 {
     ShareCallbackItem *    params = (ShareCallbackItem *)list;
     CMList * pList;   			/* casted pointer */
@@ -689,7 +689,7 @@ static void arrangeEnumeration(NetEnum * pEnum)
     pEnum->next = (NetItem *)pEnum->items.first;
 }
 
-NQ_BOOL getShareInfo(const NQ_WCHAR * server, const NQ_WCHAR * share, NQ_UINT16 * type, NQ_BYTE * remarkBuffer, NQ_INT bufferSize, NQ_BOOL unicode)
+static NQ_BOOL getShareInfo(const NQ_WCHAR * server, const NQ_WCHAR * share, NQ_UINT16 * type, NQ_BYTE * remarkBuffer, NQ_INT bufferSize, NQ_BOOL unicode)
 {
     NQ_INT retryCount;
     NQ_STATUS status;
@@ -982,12 +982,14 @@ void ccNetworkSetDefaultDomainW(const NQ_WCHAR * domain)
     }
 }
 
-const NQ_CHAR * ccNetworkGetDefaultDomainA()
+const NQ_CHAR * ccNetworkGetDefaultDomainA(void);
+const NQ_CHAR * ccNetworkGetDefaultDomainA(void)
 {
     return staticData->theDomainA;
 }
 
-const NQ_WCHAR* ccNetworkGetDefaultDomainW()
+const NQ_WCHAR* ccNetworkGetDefaultDomainW(void);
+const NQ_WCHAR* ccNetworkGetDefaultDomainW(void)
 {
     return staticData->theDomainW;
 }

@@ -16,6 +16,7 @@
  ********************************************************************/
 
 #include "csauth.h"
+#include "cs2disp.h"
 
 #if defined(UD_NQ_INCLUDECIFSSERVER) && defined(UD_NQ_INCLUDESMB2)
 

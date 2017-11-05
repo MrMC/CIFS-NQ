@@ -14,6 +14,7 @@
  **************************************************************************/
 
 #include "ccerrors.h"
+#include "ccapi.h"
 
 /* -- Static data and definitions -- */
 

@@ -23,6 +23,10 @@
 #include "cmbufman.h"
 #include "cmrpcdef.h"
 
+#if defined(__clang__)
+#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+#endif
+
 #ifdef UD_NQ_INCLUDECIFSCLIENT
 
 /* --- Static definitions, functions & data --- */
@@ -91,7 +95,7 @@ static NQ_INT parseFragmentHeader(const NQ_BYTE * data, CMRpcPacketDescriptor * 
     return pPack->packetType;
 }
 
-NQ_HANDLE connectPipe(const NQ_WCHAR * hostName, const AMCredentialsW * pCredentials, const CCDcerpcPipeDescriptor * pipeDesc, NQ_BOOL doDfs)
+static NQ_HANDLE connectPipe(const NQ_WCHAR * hostName, const AMCredentialsW * pCredentials, const CCDcerpcPipeDescriptor * pipeDesc, NQ_BOOL doDfs)
 {
     CCServer * pServer = NULL;             /* pointer to server */
     CCShare * pShare = NULL;               /* pointer to IPC$ share */

@@ -108,7 +108,7 @@ cmNetBiosGetScope(
 /* get the system scope id length */
 
 NQ_UINT
-cmNetBiosGetScopelength(
+cmNetBiosGetScopeLength(
     void
     );
 

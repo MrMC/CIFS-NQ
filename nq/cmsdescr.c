@@ -16,6 +16,10 @@
  * CREATED BY    : Mark Rabinovich
  * LAST AUTHOR   : $Author:$
  ********************************************************************/
+#if defined(__clang__)
+#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+#endif
+
 #if defined(UD_NQ_INCLUDECIFSSERVER) || defined (UD_CS_INCLUDERPC)
 #include "cs2disp.h"
 #endif
@@ -2462,7 +2466,7 @@ static void dumpAcl(const NQ_CHAR *title, NQ_BYTE *buffer, NQ_INT length, NQ_INT
         CMSdAce *ace = (CMSdAce *)(acl + 1);
         NQ_UINT32 i;
 
-        syPrintf("offset=%d, ACL revision: %d, size: %d, aces: %ld\n",
+      syPrintf("offset=%d, ACL revision: %d, size: %d, aces: %u\n",
                 offset, acl->revision, acl->size, acl->numAces);
 
         for (i = 0; i < acl->numAces; i++)
@@ -2476,7 +2480,7 @@ static CMSdAce *dumpAce(const CMSdAce *ace)
 {
     NQ_BYTE *next;
 
-    syPrintf("    ACE type: %d, flags: 0x%02X, size: %d, access: 0x%08lX, trustee: ",
+  syPrintf("    ACE type: %d, flags: 0x%02X, size: %d, access: 0x%08X, trustee: ",
            (NQ_INT)ace->type, (NQ_INT)ace->flags, ace->size, ace->accessMask);
 
     next = dumpDomainSid(&ace->trustee);

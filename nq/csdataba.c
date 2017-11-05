@@ -358,7 +358,7 @@ addShare(
 
 #ifdef UD_NQ_INCLUDESMB3
 
-NQ_BOOL csIsServerEncrypted()
+NQ_BOOL csIsServerEncrypted(void)
 {
     return staticData->isGlobalEncryption;
 }
@@ -3487,6 +3487,7 @@ nqCleanUserServerConnectionsA(
 
 NQ_BOOL
 csIsMessageSigningEnabled(
+  void
   )
 {
     return staticData->signingEnabled;
@@ -3495,12 +3496,13 @@ csIsMessageSigningEnabled(
 
 NQ_BOOL
 csIsMessageSigningRequired(
+  void
   )
 {
     return staticData->signingRequired;
 }
 
-void
+static void
 csSetMessageSigningRequired(
 		NQ_BOOL isTRUE
 		)
@@ -3508,7 +3510,7 @@ csSetMessageSigningRequired(
 	staticData->signingRequired = isTRUE;
 }
 
-void
+static void
 csSetMessageSigningEnabled(
 		NQ_BOOL isTRUE
   )

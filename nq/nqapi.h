@@ -290,8 +290,8 @@ NQ_BOOL nqEnumerateOpenFilesW(NQ_UINT index, FileDataW_t *fileData);   /* UNICOD
    request.                                                      */
 
 typedef struct {
-    NQ_TCHAR userName[256];                 /* User name buffer. This buffer should be 256 characters long at least. */
-    NQ_TCHAR shareName[UD_FS_MAXSHARELEN];  /* Share name buffer. This buffer should be 256 characters long at least. */
+    NQ_WCHAR userName[256];                 /* User name buffer. This buffer should be 256 characters long at least. */
+    NQ_WCHAR shareName[UD_FS_MAXSHARELEN];  /* Share name buffer. This buffer should be 256 characters long at least. */
     NQ_IPADDRESS ip;                        /* Next side (client) IP address. */
     NQ_BOOL ipc;                            /* IPC flag. This flag is TRUE for the IPC$ share and FALSE for
                                                a file share.                                                */
@@ -305,9 +305,9 @@ typedef struct {
    entry is created by NQ Server upon a successful file open.                                                      */
 
 typedef struct {
-    NQ_TCHAR userName[256];                 /* User name buffer. */
-    NQ_TCHAR fileName[UD_FS_FILENAMELEN];   /* File name buffer. This buffer will be filled with full file path. should be 300 characters long at least.  */
-    NQ_TCHAR shareName[UD_FS_MAXSHARELEN];  /* Share name buffer. his buffer should be 256 characters long at least. */
+    NQ_WCHAR userName[256];                 /* User name buffer. */
+    NQ_WCHAR fileName[UD_FS_FILENAMELEN];   /* File name buffer. This buffer will be filled with full file path. should be 300 characters long at least.  */
+    NQ_WCHAR shareName[UD_FS_MAXSHARELEN];  /* Share name buffer. his buffer should be 256 characters long at least. */
     NQ_IPADDRESS ip;                        /* Next side (client) IP address. */
     NQ_UINT16 access;                       /* Access bits as indicated by the open operation. */
 } NQOpenFileEntry;
@@ -323,7 +323,7 @@ typedef struct {
      * This function is only available when NQ was compiled with
        Event Log support as indicated by the UD_NQ_INCLUDEEVENTLOG
        parameter (see <link References, Referenced Documents>).
-     * This function uses NQ_TCHAR strings whose definition
+     * This function uses NQ_WCHAR strings whose definition
        depends on the UD_CM_UNICODEAPPLICATION parameter (see <link References, Referenced Documents>). */
 
 NQ_COUNT                            
@@ -343,7 +343,7 @@ nqEnumerateConnectedShares (
      * This function is only available when NQ was compiled with
        Event Log support as indicated by the UD_NQ_INCLUDEEVENTLOG
        parameter (see <link References, Referenced Documents>).
-     * This function uses NQ_TCHAR strings whose definition
+     * This function uses NQ_WCHAR strings whose definition
        depends on the UD_CM_UNICODEAPPLICATION parameter (see <link References, Referenced Documents>). */
 
 NQ_COUNT                            
@@ -364,7 +364,7 @@ nqEnumerateOpenFiles (
    isDomainUser :  TRUE for a domain or FALSE for a local user.
    
    Note
-   This function uses NQ_TCHAR strings whose definition depends
+   This function uses NQ_WCHAR strings whose definition depends
    on the UD_CM_UNICODEAPPLICATION parameter (see <link References, Referenced Documents>). */
 
 #ifdef UD_CM_UNICODEAPPLICATION

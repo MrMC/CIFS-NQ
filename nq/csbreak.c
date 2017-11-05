@@ -24,6 +24,7 @@
 #include "cssignin.h"
 #include "csutils.h"
 #include "cs2disp.h"
+#include "csbreak.h"
 
 #ifdef UD_NQ_INCLUDECIFSSERVER
 

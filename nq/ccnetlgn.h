@@ -36,7 +36,7 @@ typedef struct
 }
 CCNetlogonCredential;
 
-const CCDcerpcPipeDescriptor * ccNetlogonGetPipe();
+const CCDcerpcPipeDescriptor * ccNetlogonGetPipe(void);
 
 NQ_UINT32 ccNetrServerReqChallenge(
     NQ_HANDLE netlogon,

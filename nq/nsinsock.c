@@ -112,8 +112,11 @@ nsInitInternalSockets(
     syMutexCreate(&staticData->poolGuardND);
     syMutexCreate(&staticData->poolGuardDD);
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     sySemaphoreCreate(&staticData->overflowGuardND, UD_NS_NUMNDCHANNELS);
     sySemaphoreCreate(&staticData->overflowGuardDD, UD_NS_NUMDDCHANNELS);
+#pragma GCC diagnostic pop
 
     syMutexTake(&staticData->poolGuardND);
     syMutexTake(&staticData->poolGuardDD);
@@ -216,8 +219,11 @@ nsExitInternalSockets(
     syMutexGive(&staticData->poolGuardDD);
     syMutexDelete(&staticData->poolGuardND);
     syMutexDelete(&staticData->poolGuardDD);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     sySemaphoreDelete(staticData->overflowGuardND);
     sySemaphoreDelete(staticData->overflowGuardDD);
+#pragma GCC diagnostic pop
 
     /* release memory */
 #ifdef SY_FORCEALLOCATION

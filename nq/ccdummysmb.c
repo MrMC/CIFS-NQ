@@ -134,16 +134,19 @@ static const CCCifsSmb dialect =
 
 /* -- API Functions */
 
-NQ_BOOL ccSmbStart()
+NQ_BOOL ccSmbStart(void);
+NQ_BOOL ccSmbStart(void)
 {
 	return TRUE;
 }
 
-NQ_BOOL ccSmbShutdown()
+NQ_BOOL ccSmbShutdown(void);
+NQ_BOOL ccSmbShutdown(void)
 {
 	return TRUE;
 }
 
+const CCCifsSmb *ccSmbDummyGetCifs(void);
 const CCCifsSmb *ccSmbDummyGetCifs(void)
 {
 	return &dialect;

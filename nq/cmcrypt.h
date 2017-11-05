@@ -629,10 +629,10 @@ void aes128GcmEncrypt(NQ_BYTE *key,
 	);
 
 #ifdef NQ_DEBUG
-void testAesGCM();
-void testSha512();
-void testCalcMessageHash();
-void testSignKeyDerivationAndSigning ();
+void testAesGCM(void);
+void testSha512(void);
+void testCalcMessageHash(void);
+void testSignKeyDerivationAndSigning(void);
 #endif
 
 #endif

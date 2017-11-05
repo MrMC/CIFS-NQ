@@ -69,7 +69,7 @@ static StaticData staticDataSrc;
 static StaticData* staticData = &staticDataSrc;
 #endif /* SY_FORCEALLOCATION */
 
-NQ_BOOL ccDomainStart()
+NQ_BOOL ccDomainStart(void)
 {
 	NQ_BOOL result = TRUE;
 
@@ -94,7 +94,7 @@ Exit:
 	return result;
 }
 
-void ccDomainShutdown()
+void ccDomainShutdown(void)
 {
 	LOGFB(CM_TRC_LEVEL_FUNC_COMMON);
 

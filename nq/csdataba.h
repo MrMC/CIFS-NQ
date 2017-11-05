@@ -348,8 +348,8 @@ csErrorGetLast(
 
 NQ_STATUS
 csInitDatabase(
-    void (*pause)(),    /* callback for pausing the server */
-    void (*resume)()    /* callback for resuming the server */
+    void (*pause)(void),    /* callback for pausing the server */
+    void (*resume)(void)    /* callback for resuming the server */
     );
 
 /* release database */
@@ -801,7 +801,7 @@ const CMUuid *cs2GetServerUuid(void);
 const CMTime *cs2GetServerStartTime(void);
 
 #ifdef UD_NQ_INCLUDESMB3
-NQ_BOOL csIsServerEncrypted();
+NQ_BOOL csIsServerEncrypted(void);
 void csSetServerEncryption(NQ_BOOL encrypt);
 #endif /* UD_NQ_INCLUDESMB3 */
 
@@ -825,12 +825,14 @@ csGetHiddenShareByMap(
 
 NQ_BOOL
 csIsMessageSigningEnabled(
+  void
   );
 
 /* whether message signing is enabled and required */
 
 NQ_BOOL
 csIsMessageSigningRequired(
+  void
   );
 
 void

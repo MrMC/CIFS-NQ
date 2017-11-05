@@ -186,7 +186,7 @@ isLocalUserOk(
     actual pass-through authentication implementation
 */
 
-NQ_UINT getCurrentSessionKey(NQ_BYTE ** key, NQ_BYTE **nonce)
+static NQ_UINT getCurrentSessionKey(NQ_BYTE ** key, NQ_BYTE **nonce)
 {
     CSSession* session = csGetSessionBySocket();     /* session structure */
     if (NULL == session)                             /* malformed command or there was no Negotiate yet */

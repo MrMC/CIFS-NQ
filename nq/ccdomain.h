@@ -24,9 +24,9 @@
     #define ccNetLogon ccNetLogonA
 #endif
 
-NQ_BOOL ccDomainStart();
+NQ_BOOL ccDomainStart(void);
 
-void ccDomainShutdown();
+void ccDomainShutdown(void);
 
 /* net logon (Ansi)*/
 

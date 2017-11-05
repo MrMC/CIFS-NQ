@@ -2382,7 +2382,7 @@ static const NQ_UINT32 AES_Table_4[256] = {
 							(buf)[1] = (NQ_BYTE)((in) >> 16);\
 							(buf)[2] = (NQ_BYTE)((in) >>  8);\
 							(buf)[3] = (NQ_BYTE)(in); }
-void AES_128_ExpandKey(NQ_UINT32 expandedKey[44], const NQ_BYTE key[16])
+static void AES_128_ExpandKey(NQ_UINT32 expandedKey[44], const NQ_BYTE key[16])
 {
 	NQ_INT  	i = 0;
 	NQ_UINT32 	temp;
@@ -2406,7 +2406,7 @@ void AES_128_ExpandKey(NQ_UINT32 expandedKey[44], const NQ_BYTE key[16])
 		expandedKey[(i*4) + 7] = expandedKey[(i*4) + 3] ^ expandedKey[(i*4) + 6];
 	}
 }
-void AES_Encryption( NQ_BYTE state[16] , NQ_UINT32 key[44] , NQ_BYTE out[16])
+static void AES_Encryption( NQ_BYTE state[16] , NQ_UINT32 key[44] , NQ_BYTE out[16])
 {
 	NQ_UINT32 st0, st1, st2, st3, tmp0, tmp1, tmp2, tmp3;
 
@@ -2491,7 +2491,7 @@ NQ_BYTE const_Rb[16] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x87
 };
 
-void AES_XOR_128( const NQ_BYTE *a, const NQ_BYTE *b, NQ_BYTE *out)
+static void AES_XOR_128( const NQ_BYTE *a, const NQ_BYTE *b, NQ_BYTE *out)
 {
 	NQ_INT i;
 
@@ -2501,7 +2501,7 @@ void AES_XOR_128( const NQ_BYTE *a, const NQ_BYTE *b, NQ_BYTE *out)
 	}
 }
 
-void AES_CMAC_ShiftBitLeft(NQ_BYTE *input,NQ_BYTE *output)
+static void AES_CMAC_ShiftBitLeft(NQ_BYTE *input,NQ_BYTE *output)
 {
 	NQ_INT	i;
 	NQ_BYTE	overflow = 0;
@@ -2515,7 +2515,7 @@ void AES_CMAC_ShiftBitLeft(NQ_BYTE *input,NQ_BYTE *output)
 	return;
 }
 
-void AES_CMAC_GenSubKey(NQ_BYTE *key, NQ_BYTE *K1, NQ_BYTE *K2)
+static void AES_CMAC_GenSubKey(NQ_BYTE *key, NQ_BYTE *K1, NQ_BYTE *K2)
 {
 	NQ_BYTE L[16];
 	NQ_BYTE Z[16];
@@ -2547,7 +2547,7 @@ void AES_CMAC_GenSubKey(NQ_BYTE *key, NQ_BYTE *K1, NQ_BYTE *K2)
 	return;
 }
 
-void AES_CMAC_Padding ( const NQ_BYTE * lastByte, NQ_BYTE * pad, NQ_UINT length )
+static void AES_CMAC_Padding ( const NQ_BYTE * lastByte, NQ_BYTE * pad, NQ_UINT length )
 {
 	NQ_UINT         i;
 
@@ -2581,7 +2581,7 @@ typedef struct{
 	NQ_INT 	flag;
 }cmac_context;
 
-void aes_cmac_init( const NQ_BYTE * key, NQ_UINT length, cmac_context * context)
+static void aes_cmac_init( const NQ_BYTE * key, NQ_UINT length, cmac_context * context)
 {
 	syMemset(context->mainKey , 0 , 16);
 	syMemset(context->key1 , 0 , 16);
@@ -2607,7 +2607,7 @@ void aes_cmac_init( const NQ_BYTE * key, NQ_UINT length, cmac_context * context)
 	}
 }
 
-void aes_cmac_update(cmac_context * ctx , const NQ_BYTE * buffer ,  NQ_UINT length)
+static void aes_cmac_update(cmac_context * ctx , const NQ_BYTE * buffer ,  NQ_UINT length)
 {
 	NQ_UINT currentRounds = 0;
 	NQ_COUNT	i = 0;
@@ -2685,7 +2685,7 @@ void aes_cmac_update(cmac_context * ctx , const NQ_BYTE * buffer ,  NQ_UINT leng
 	}
 }
 
-void aes_cmac_final(cmac_context * ctx , NQ_BYTE * mac)
+static void aes_cmac_final(cmac_context * ctx , NQ_BYTE * mac)
 {
 	NQ_BYTE Y[16];
 
@@ -4144,7 +4144,7 @@ d##3 = TE0(s##3) ^ TE1(s##0) ^ TE2(s##1) ^ TE3(s##2) ^ rk[4 * i + 3]
 	s3 = TE41(t3) ^ TE42(t0) ^ TE43(t1) ^ TE44(t2) ^ rk[3];
 	PUTU32(ct + 12, s3);
 }
-void * aesEncryptInit(const NQ_BYTE *key, NQ_COUNT len, NQ_BYTE* keyBuffer)
+static void * aesEncryptInit(const NQ_BYTE *key, NQ_COUNT len, NQ_BYTE* keyBuffer)
 {
 	NQ_UINT32 *rk;
 	NQ_INT res;
@@ -4168,12 +4168,12 @@ Error:
 Error1:
 	return NULL;
 }
-void aesEncrypt(void *ctx, const NQ_BYTE *plain, NQ_BYTE *encrypted)
+static void aesEncrypt(void *ctx, const NQ_BYTE *plain, NQ_BYTE *encrypted)
 {
 	NQ_UINT32 *rk = (NQ_UINT32 *)ctx;
 	rijndaelEncrypt((const NQ_UINT32 *)ctx, (NQ_INT)rk[AES_PRIV_NR_POS], plain, encrypted);
 }
-void aesEncrypt_deinit(void *ctx, NQ_BOOL isExternalKeyBuf)
+static void aesEncrypt_deinit(void *ctx, NQ_BOOL isExternalKeyBuf)
 {
 	if (!isExternalKeyBuf)
 		cmBufManGive((NQ_BYTE *)ctx);
@@ -4374,7 +4374,7 @@ static void aesGcmGHash(const NQ_BYTE *hash, const NQ_BYTE *aad, NQ_COUNT aad_le
 /**
  * aesGcmAuthEncrypt - GCM-AE_K(IV, P, A)
  */
-NQ_INT aesGcmAuthEncrypt(const NQ_BYTE *key, NQ_COUNT key_len, const NQ_BYTE *iv, NQ_COUNT ivLen, const NQ_BYTE *plain,
+static NQ_INT aesGcmAuthEncrypt(const NQ_BYTE *key, NQ_COUNT key_len, const NQ_BYTE *iv, NQ_COUNT ivLen, const NQ_BYTE *plain,
 			NQ_COUNT plain_len, const NQ_BYTE *aad, NQ_COUNT aad_len, NQ_BYTE *encrypted, NQ_BYTE *tag)
 {
 	NQ_BYTE hash[AES_BLOCK_SIZE];
@@ -4555,7 +4555,7 @@ static const NQ_BYTE aad2 [] = {0x2b, 0x96, 0x80, 0xb8, 0x86, 0xb3, 0xef, 0xb7, 
 static const NQ_BYTE encryptededText2 [] = {0xe2, 0xb7, 0xe5, 0xed, 0x5f, 0xf2, 0x7f, 0xc8, 0x66, 0x41, 0x48, 0xf5, 0xa6, 0x28, 0xa4, 0x6d};
 static const NQ_BYTE signature2 [] = {0xcb, 0xf2, 0x01, 0x51, 0x84, 0xff, 0xfb, 0x82, 0xf2, 0x65, 0x1c, 0x36};
 
-void testAesGCM()
+void testAesGCM(void)
 {
 	NQ_BYTE signature[20];
 	NQ_BYTE encryptionResult[20];
@@ -5146,7 +5146,7 @@ static const NQ_BYTE sha512_tv4_digest [] =
 };
 
 
-void testSha512()
+void testSha512(void)
 {
 	NQ_BYTE digestResult [SHA512_DIGEST_SIZE];
 
@@ -5224,7 +5224,7 @@ static const NQ_BYTE digest2 [] =
 };
 
 
-void testCalcMessageHash()
+void testCalcMessageHash(void)
 {
 	NQ_BYTE digestResult [SHA512_DIGEST_SIZE];
 	
@@ -5280,7 +5280,7 @@ static const NQ_BYTE expectedHeaderSig [] =
 	0xEB, 0xE1, 0x46, 0xDA, 0x12, 0x0B, 0xA2, 0x5F, 0xC3, 0x37, 0x6A, 0x49, 0xDF, 0xE3, 0x1B, 0xC1
 };
 
-void testSignKeyDerivationAndSigning ()
+void testSignKeyDerivationAndSigning(void)
 {
 	NQ_BYTE signingKey[SMB_SESSIONKEY_LENGTH];  /* a key for SIZE_Ts */
 	NQ_BYTE headerSignature[SMB_SESSIONKEY_LENGTH];

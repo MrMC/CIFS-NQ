@@ -73,7 +73,7 @@ static NQ_INT currAuthenticationLevel = AM_MAXSECURITYLEVEL;         /* level se
 
 static NQ_BOOL enableNonSecureAuthMethods = FALSE;
 
-void amSpnegoClientSetDefaultLevels()
+void amSpnegoClientSetDefaultLevels(void)
 {
     syMemcpy(levels, defaults, sizeof(levels));
 }
@@ -870,7 +870,7 @@ Parameters
 context :  Pointer to SPNEGO context.
 Returns
 One of the constants defined in this module.                */
-NQ_STATUS checkStatus(void * context)
+static NQ_STATUS checkStatus(void * context)
 {
     SecurityContext * pContext = (SecurityContext*)context;    /* casted pointer */
 

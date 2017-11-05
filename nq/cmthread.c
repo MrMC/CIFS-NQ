@@ -396,7 +396,10 @@ NQ_BOOL cmThreadCondSet(CMThreadCond * cond)
     NQ_BOOL result = FALSE;
 
 #ifdef SY_SEMAPHORE_AVAILABLE
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 	result = ( sySemaphoreCreate(&cond->sem, 0) == NQ_SUCCESS );
+#pragma GCC diagnostic pop
 #else
 	cond->inSock = syCreateSocket(FALSE, CM_IPADDR_IPV4);
 	cond->outSock = syCreateSocket(FALSE, CM_IPADDR_IPV4);
@@ -510,7 +513,10 @@ Exit:
 NQ_BOOL cmThreadCondRelease(CMThreadCond * cond)
 {
 #ifdef SY_SEMAPHORE_AVAILABLE
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 	sySemaphoreDelete(cond->sem);
+#pragma GCC diagnostic pop
 #else
 	syCloseSocket(cond->inSock);
 	syCloseSocket(cond->outSock);

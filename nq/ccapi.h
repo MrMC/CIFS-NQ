@@ -1659,7 +1659,7 @@ NQ_BOOL ccNetworkResetHandle(NQ_HANDLE handle);
    Note
    Currently, this function always return TRUE.	*/
 
-   NQ_BOOL ccTransportRestartRecieveThread();
+   NQ_BOOL ccTransportRestartRecieveThread(void);
 
 /* Description
   This function is called by application to set the current

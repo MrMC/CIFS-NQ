@@ -123,23 +123,23 @@ static const CCDcerpcPipeDescriptor pipeDescriptor =
 
 /* -- API functions -- */
 
-NQ_BOOL ccSrvsvcStart()
+NQ_BOOL ccSrvsvcStart(void)
 {
 	syMutexCreate(&guard);
 	return TRUE;
 }
 
-void ccSrvsvcShutdown()
+void ccSrvsvcShutdown(void)
 {
 	syMutexDelete(&guard);
 }
 
-void ccSrvsvcLock()
+void ccSrvsvcLock(void)
 {
 	syMutexTake(&guard);
 }
 
-void ccSrvsvcUnlock()
+void ccSrvsvcUnlock(void)
 {
 	syMutexGive(&guard);
 }

@@ -908,9 +908,8 @@ closeServerSockets(
 
 #if SY_DEBUGMODE
 
-void
-csDumpSockets(
-    )
+void csDumpSockets(void);
+void csDumpSockets(void)
 {
     NQ_UINT i;
 
